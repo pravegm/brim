@@ -873,8 +873,17 @@ final class SceneGlass {
             let desired = rimY + 12 + stamp.size.height * 0.5
             stamp.position = CGPoint(x: clampedLocalX(halfWidth: stamp.size.width * 0.5, f),
                                      y: min(desired, limit - top))
+            // The `.streak` event arrives in the same step as `.served`, before the snapshot carrying the result is
+            // drawn, so a pop placed then didn't know where the stamp would go and landed on it (round-3 Duo frame
+            // store-s2). It waits here until the stamp is in place.
+            if let p = pendingStreak {
+                pendingStreak = nil
+                showStreak(p.n, reduceMotion: p.reduceMotion, safeX: p.safeX, keepOutTop: p.keepOutTop)
+            }
         }
     }
+
+    private var pendingStreak: (n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat)?
 
     /// Highest world y the stamp's ink reaches (with its pop overshoot); nil when no stamp shows. For tests and UI.
     var stampReachWorld: CGFloat? {
@@ -932,6 +941,10 @@ final class SceneGlass {
 
     /// The streak pop — never on the crease band (ROUND-3 decision 3; see `streakPlacement`).
     func showStreak(_ n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat) {
+        if stamp.isHidden {
+            pendingStreak = (n: n, reduceMotion: reduceMotion, safeX: safeX, keepOutTop: keepOutTop)
+            return
+        }
         let art = SceneArt.streak(n)
         let node = SKSpriteNode(texture: art.texture, size: art.size)
         node.zPosition = 41
