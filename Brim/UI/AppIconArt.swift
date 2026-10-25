@@ -80,18 +80,19 @@ private enum IconPainter {
         ctx.fill(Path(CGRect(x: 0, y: y - 22, width: 1024, height: 44)), with: .linearGradient(
             Gradient(stops: [
                 .init(color: Color(brimHex: 0xC9835E).opacity(0), location: 0),
-                .init(color: Color(brimHex: 0xC9835E).opacity(0.22), location: 0.48),
+                .init(color: Color(brimHex: 0xC9835E).opacity(0.34), location: 0.48),
                 .init(color: Color(brimHex: 0xC9835E).opacity(0.0), location: 1),
             ]),
             startPoint: CGPoint(x: 0, y: y - 22), endPoint: CGPoint(x: 0, y: y + 22)))
+        // REVIEW-1 P2-5: a 5-unit seam with a soft shadow, so "foldable" survives at home-screen size.
         var dark = Path()
-        dark.move(to: CGPoint(x: 0, y: y - 1))
-        dark.addLine(to: CGPoint(x: 1024, y: y - 1))
-        ctx.stroke(dark, with: .color(Color(brimHex: 0xB8704C).opacity(0.30)), lineWidth: 3)
+        dark.move(to: CGPoint(x: 0, y: y - 1.5))
+        dark.addLine(to: CGPoint(x: 1024, y: y - 1.5))
+        ctx.stroke(dark, with: .color(Color(brimHex: 0xB8704C).opacity(0.5)), lineWidth: 5)
         var light = Path()
-        light.move(to: CGPoint(x: 0, y: y + 3))
-        light.addLine(to: CGPoint(x: 1024, y: y + 3))
-        ctx.stroke(light, with: .color(Color.white.opacity(0.55)), lineWidth: 2.5)
+        light.move(to: CGPoint(x: 0, y: y + 3.5))
+        light.addLine(to: CGPoint(x: 1024, y: y + 3.5))
+        ctx.stroke(light, with: .color(Color.white.opacity(0.6)), lineWidth: 3)
     }
 
     // MARK: Glass

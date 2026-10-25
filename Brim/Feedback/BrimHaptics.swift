@@ -58,21 +58,30 @@ enum HapticBook {
         return HapticCue(notes: [.tap(i, Float(0.3 + 0.4 * SoundBook.clamp01(fill)))])
     }
 
-    static let pourStart = HapticCue(notes: [.tap(0.35, 0.6)])
+    /// The pour starts: a gentle detent, a crisp click that settles (felt most on the touch fallback, where the finger
+    /// has no hinge to feel).
+    static let pourStart = HapticCue(notes: [.tap(0.42, 0.78), .tap(0.14, 0.5, at: 0.03)])
     static let arrival = HapticCue(notes: [.tap(0.3, 0.45)])
+    /// Lock-in: the stream has landed with the top inside the Perfect band. A soft, crisp tick (the Perfect's double
+    /// tap confirms it a beat later).
+    static let lockedIn = HapticCue(notes: [.tap(0.32, 0.88)])
+    /// The flat gate opened: a soft confirm click, a low latch then a lighter catch.
+    static let flatArmed = HapticCue(notes: [.tap(0.4, 0.42), .tap(0.2, 0.7, at: 0.048)])
     /// Perfect: a crisp double tap.
     static let perfect = HapticCue(notes: [.tap(0.9, 0.9), .tap(0.75, 0.95, at: 0.075)])
     static let great = HapticCue(notes: [.tap(0.6, 0.7)])
     static let good = HapticCue(notes: [.tap(0.45, 0.55)])
     /// Short: a soft, dull thud.
     static let short = HapticCue(notes: [.tap(0.45, 0.1), .buzz(0.3, 0.05, duration: 0.12)])
-    /// Spill: a heavy wobbly buzz (three decaying hits over a wobbling rumble).
+    /// Spill (once, the instant it overflows): a heavy wobbly buzz — three decaying hits over a wobbling rumble that
+    /// runs out with the overflow sheet (~0.55 s).
     static let spill = HapticCue(
-        notes: [.tap(1.0, 0.35), .tap(0.7, 0.3, at: 0.09), .tap(0.45, 0.25, at: 0.2), .buzz(0.65, 0.15, duration: 0.38)],
+        notes: [.tap(1.0, 0.35), .tap(0.7, 0.3, at: 0.09), .tap(0.45, 0.25, at: 0.2), .buzz(0.65, 0.15, duration: 0.55)],
         wobble: [HapticPoint(time: 0, value: 1), HapticPoint(time: 0.05, value: 0.45),
                  HapticPoint(time: 0.1, value: 0.95), HapticPoint(time: 0.15, value: 0.4),
                  HapticPoint(time: 0.2, value: 0.8), HapticPoint(time: 0.26, value: 0.3),
-                 HapticPoint(time: 0.32, value: 0.5), HapticPoint(time: 0.38, value: 0)]
+                 HapticPoint(time: 0.32, value: 0.55), HapticPoint(time: 0.4, value: 0.25),
+                 HapticPoint(time: 0.47, value: 0.3), HapticPoint(time: 0.55, value: 0)]
     )
     /// Serve: the coaster thump (lands with the slide, ~0.3 s after the result).
     static let serve = HapticCue(notes: [.tap(0.65, 0.2, at: 0.3), .buzz(0.35, 0.1, at: 0.3, duration: 0.06)])

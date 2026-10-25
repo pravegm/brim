@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct BrimApp: App {
+    /// Portrait on phones; every orientation but upside down on a Duo (App/OrientationLock.swift).
+    @UIApplicationDelegateAdaptor(BrimAppDelegate.self) private var appDelegate
     @StateObject private var store: ProgressStore
     @StateObject private var settings: SettingsStore
     @StateObject private var controller: GameController

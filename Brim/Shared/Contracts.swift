@@ -28,33 +28,42 @@ public struct WorldLayout: Equatable, Sendable {
     public var jugPivot: CGPoint
     /// Whether this canvas has a real fold (Duo). False = touch fallback.
     public var hasFold: Bool
+    /// The part of the world actually on screen (the scene is aspect-FILLED into the canvas, so narrower phones crop
+    /// the left and right edges). Anything the player must see — jug, stream, the glass under the spout, puddles,
+    /// stamps — must stay inside this rect. Glasses may enter/leave from outside it.
+    public var visibleRect: CGRect
 
-    public init(size: CGSize, creaseMinY: CGFloat, creaseMaxY: CGFloat, counterY: CGFloat, jugPivot: CGPoint, hasFold: Bool) {
+    public init(size: CGSize, creaseMinY: CGFloat, creaseMaxY: CGFloat, counterY: CGFloat, jugPivot: CGPoint, hasFold: Bool,
+                visibleRect: CGRect? = nil) {
         self.size = size; self.creaseMinY = creaseMinY; self.creaseMaxY = creaseMaxY
         self.counterY = counterY; self.jugPivot = jugPivot; self.hasFold = hasFold
+        self.visibleRect = visibleRect ?? CGRect(origin: .zero, size: size)
     }
 
+    // ONE world for every device, shaped like the iPhone Duo's inner canvas in tabletop pose (669 × 951 pt).
+    // Round 2 decision (REVIEW-1 P0-1/P0-2): the Duo frame is composed once and other iPhones show the same world
+    // aspect-filled, cropping the sides (an iPhone 18 Pro sees x ≈ 116…554).
     public static let worldWidth: CGFloat = 670
-    /// Distance from the crease bottom down to the counter top.
-    public static let creaseToCounter: CGFloat = 330
+    public static let worldHeight: CGFloat = 952
+    public static let creaseBottom: CGFloat = 456      // creaseMinY
+    public static let creaseTop: CGFloat = 496         // creaseMaxY (40 pt band, the physical fold on a Duo)
+    public static let counter: CGFloat = 104           // glass base line on the flat half
+    public static let pivot = CGPoint(x: 352, y: 640)  // jug pivot on the raised half
 
-    /// Standard layout for a canvas of `canvas` points whose crease (if any) spans `crease` in canvas y measured from
-    /// the TOP (UIKit). Pass nil for phones without a fold.
+    /// Layout for a play canvas of `canvas` points. `hasFold` = this is a Duo inner display (a hinge was seen).
+    public static func make(canvas: CGSize, hasFold: Bool) -> WorldLayout {
+        let size = CGSize(width: worldWidth, height: worldHeight)
+        let cw = max(canvas.width, 1), ch = max(canvas.height, 1)
+        let scale = max(cw / size.width, ch / size.height)          // aspect fill
+        let visW = min(size.width, cw / scale), visH = min(size.height, ch / scale)
+        let visible = CGRect(x: (size.width - visW) / 2, y: (size.height - visH) / 2, width: visW, height: visH)
+        return WorldLayout(size: size, creaseMinY: creaseBottom, creaseMaxY: creaseTop, counterY: counter,
+                           jugPivot: pivot, hasFold: hasFold, visibleRect: visible)
+    }
+
+    /// Round 1 signature, kept so older call sites compile: a non-nil crease means a fold.
     public static func make(canvas: CGSize, creaseFromTop: ClosedRange<CGFloat>?) -> WorldLayout {
-        let scale = worldWidth / max(canvas.width, 1)
-        let h = canvas.height * scale
-        let minY: CGFloat
-        let maxY: CGFloat
-        if let c = creaseFromTop {
-            maxY = h - c.lowerBound * scale
-            minY = h - c.upperBound * scale
-        } else {
-            minY = h * 0.5; maxY = h * 0.5
-        }
-        let counter = max(70, minY - creaseToCounter)
-        return WorldLayout(size: CGSize(width: worldWidth, height: h), creaseMinY: minY, creaseMaxY: maxY,
-                           counterY: counter, jugPivot: CGPoint(x: worldWidth * 0.56, y: maxY + 95),
-                           hasFold: creaseFromTop != nil)
+        make(canvas: canvas, hasFold: creaseFromTop != nil)
     }
 }
 
@@ -237,6 +246,9 @@ public struct GameSnapshot: Sendable {
     public var ordersTotal: Int?           // nil in Rush
     public var perfects: Int
     public var telemetry: PourTelemetry
+    /// Round 2: true until the player has laid the phone flat (lid tilt inside the dead zone) once at the start of a
+    /// run or after a resume; no outflow while true. The UI shows "Lay it flat to start".
+    public var needsFlat: Bool = false
 }
 
 /// Continuous values Feedback maps to sound/haptics every frame.
@@ -275,6 +287,9 @@ public enum GameEvent: Sendable {
     case jugSwapped                                     // empty jug replaced (shifts)
     case jugEmpty                                       // Rush: run ends
     case nearingLine(glassID: Int)                      // still pouring with the top at ≥ 60% of the line (hint)
+    case lockedIn(glassID: Int)                         // round 2: the stream finished landing with the top inside
+                                                        // the Perfect band (instant cue before the verdict)
+    case flatArmed                                      // round 2: the start gate opened (phone laid flat)
     case finished(RunResult)
 }
 

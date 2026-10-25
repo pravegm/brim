@@ -39,6 +39,13 @@ final class GameSession {
         var vy: Double
         var life: Double
         var radius: Double
+        var glassID: Int        // -1 = thrown up from the counter; else kept inside that glass's mouth
+    }
+
+    /// Spilt drink pooled on the counter. Drawn as a run of points (see `CoreTuning.puddlePointSpacing`).
+    private struct Puddle {
+        var x: Double
+        var volume: Double
     }
 
     private struct Plan {
@@ -76,12 +83,15 @@ final class GameSession {
         var nearingSent: Bool
         var lastLanding: Double
         var lineOpacity: Double
+        var lockSent: Bool
     }
 
     // MARK: - Configuration
 
     private var rng: CoreRNG
     private let jug: JugShape
+    /// Drink volume (glass pt²) of a full jug: polygon area × `jugVolumeScale` (× `rushVolumeBoost` in Rush).
+    private let jugVolume: Double
     private let isRush: Bool
     private let isPractice: Bool
     private let maxStrikes: Int
@@ -93,6 +103,9 @@ final class GameSession {
 
     private var phase: SessionPhase = .intro
     private var time: Double = 0
+    /// The flat gate (Duo only): no outflow, jug upright, patience paused, until the lid tilt is inside the dead zone.
+    private var needsFlat: Bool = false
+    private let usesFlatGate: Bool
 
     // Jug
     private var jugLiquid: Liquid
@@ -114,11 +127,13 @@ final class GameSession {
     private var lipY: Double = 0
     private var exitDX: Double = 1
     private var exitDY: Double = 0
+    /// Seconds since the jug could last deliver (head > 0); the spout rope snaps after `CoreTuning.ropeMaxTime`.
+    private var headlessTime: Double = 0
 
     // Stream and splashes
     private var particles: [Particle] = []
     private var sprays: [Spray] = []
-    private var puddles: [CGPoint] = []
+    private var puddles: [Puddle] = []
     private var lastCounterLanding: Double = -10
 
     // Glasses and orders
@@ -162,8 +177,9 @@ final class GameSession {
         switch mode {
         case .shift(let id):
             let level: Level = LevelCatalog.level(id) ?? LevelCatalog.levels[0]
+            let belt: Double? = level.conveyorSpeed.map { (s: Double) -> Double in s * CoreTuning.beltScale }
             for o in level.orders {
-                plans.append(Plan(order: o, belt: level.conveyorSpeed, band: level.perfectBand))
+                plans.append(Plan(order: o, belt: belt, band: level.perfectBand))
             }
             start = CoreMath.clamp(level.jugFill, 0.05, 1.0)
             fixedCount = plans.count
@@ -184,8 +200,12 @@ final class GameSession {
         self.isRush = rush
         self.isPractice = practice
         self.maxStrikes = strikesAllowed
-        self.jug = rush ? JugGeometry.big : JugGeometry.standard
+        let shape: JugShape = rush ? JugGeometry.big : JugGeometry.standard
+        self.jug = shape
+        self.jugVolume = Double(shape.capacity) * CoreTuning.jugVolumeScale * (rush ? CoreTuning.rushVolumeBoost : 1.0)
         self.jugFill = start
+        self.usesFlatGate = layout.hasFold && !practice
+        self.needsFlat = layout.hasFold && !practice
 
         let firstLiquid: LiquidID = plans.first?.order.liquid ?? .water
         self.jugLiquid = LiquidCatalog.liquid(firstLiquid)
@@ -206,7 +226,13 @@ final class GameSession {
         let safeDt: Double = dt.isFinite ? dt : 0
         let frameDt: Double = CoreMath.clamp(safeDt, 0, CoreTuning.maxFrameDt)
         let lidTilt: Double = tilt.isFinite ? tilt : 0
-        let angle: Double = Rules.jugAngle(forLidTilt: lidTilt)
+        if needsFlat && frameDt > 0 && lidTilt < Rules.deadZone && phase != .finished {
+            needsFlat = false
+            events.append(.flatArmed)
+        }
+        // Until the gate opens the jug stays upright whatever the hinge says (a tipped jug with no stream would be
+        // a physically impossible frame).
+        let angle: Double = needsFlat ? 0 : Rules.jugAngle(forLidTilt: lidTilt)
         if frameDt > 0 {
             let count: Int = max(1, Int((frameDt / CoreTuning.maxSubstep - 1e-9).rounded(.up)))
             let h: Double = frameDt / Double(count)
@@ -271,8 +297,10 @@ final class GameSession {
         return CoreMath.clamp(outflow / CoreTuning.flowNormRef, 0, 1)
     }
 
+    /// Resting position of the jug's pivot (its spout lip) before the crease lift.
     private func baseAnchor() -> CGPoint {
-        return CGPoint(x: layout.jugPivot.x, y: layout.jugPivot.y - CGFloat(CoreTuning.jugAnchorDrop))
+        return CGPoint(x: layout.jugPivot.x + CGFloat(CoreTuning.lipOffsetX),
+                       y: layout.jugPivot.y - CGFloat(CoreTuning.lipDrop))
     }
 
     /// World pivot for this angle (lifted so the jug clears the crease).
@@ -316,11 +344,13 @@ final class GameSession {
     }
 
     private func updateOutflow(_ h: Double, events: inout [GameEvent]) {
-        let canPour: Bool = phase == .playing && swapTimer <= 0 && jugFill > 0
+        let canPour: Bool = phase == .playing && swapTimer <= 0 && jugFill > 0 && !needsFlat
         var target: Double = 0
+        var deliverable: Bool = false
         if canPour {
             let head: Double = Double(JugGeometry.head(jug, angle: geometryAngle(jugAngle), fill: jugFill))
             if head > 0 {
+                deliverable = true
                 target = min(CoreTuning.flowCap, CoreTuning.flowK * pow(head, 1.5))
             }
             if jugLiquid.reposeDegrees > 0 {
@@ -343,15 +373,30 @@ final class GameSession {
             avalanche = 0
         }
 
-        if swapTimer > 0 || phase == .finished {
+        headlessTime = deliverable ? 0 : headlessTime + h
+        if swapTimer > 0 || phase == .finished || needsFlat {
             outflow = 0
         } else {
-            let tau: Double = max(0.005, jugLiquid.lagTau)
+            let lag: Double = max(0, jugLiquid.lagTau)
+            var tau: Double
+            if target >= outflow {
+                tau = CoreTuning.riseTauBase + CoreTuning.riseTauPerLag * lag
+            } else if deliverable {
+                // Tipping back while it still pours: the surface lags briefly.
+                tau = CoreTuning.declineTauPerLag * lag
+            } else {
+                // The jug can't deliver any more: only the rope in the spout drains, thins and snaps.
+                tau = CoreMath.clamp(CoreTuning.ropeTauPerLag * lag, CoreTuning.ropeTauMin, CoreTuning.ropeTauMax)
+            }
+            tau = max(0.005, tau)
             outflow += (target - outflow) * (1 - exp(-h / tau))
-            if target <= 0 && outflow < CoreTuning.outflowCutoff { outflow = 0 }
+            if !deliverable {
+                let snap: Double = CoreTuning.outflowCutoff + CoreTuning.ropeSnapPerLag * lag
+                if outflow < snap || headlessTime >= CoreTuning.ropeMaxTime { outflow = 0 }
+            }
         }
 
-        let cap: Double = Double(jug.capacity)
+        let cap: Double = jugVolume
         let available: Double = jugFill * cap
         var dv: Double = outflow * h
         if dv > available { dv = available }
@@ -538,7 +583,8 @@ final class GameSession {
             events.append(.splashInGlass(glassID: glasses[gi].id, x: CGFloat(p.x), strength: strength))
         }
         glasses[gi].lastLanding = time
-        maybeSpray(x: p.x, y: surfaceY, flow: p.flow, spread: max(4, glasses[gi].rimHalf - 6), centerX: glasses[gi].x)
+        glasses[gi].lockSent = false
+        maybeSpray(x: p.x, y: surfaceY, flow: p.flow, glassID: glasses[gi].id)
         checkOverflow(gi, events: &events)
     }
 
@@ -547,24 +593,29 @@ final class GameSession {
         if isDrop || time - lastCounterLanding > CoreTuning.splashEdgeGap {
             let strength: Double = isDrop ? 0.2 : CoreMath.clamp(0.2 + 0.8 * flow.squareRoot(), 0, 1)
             events.append(.splashOnCounter(x: CGFloat(x), strength: strength))
-            addPuddle(x: footX)
         }
+        addSpill(x: footX, volume: volume)
         lastCounterLanding = time
-        maybeSpray(x: x, y: y, flow: flow, spread: 0, centerX: x)
+        maybeSpray(x: x, y: y, flow: flow, glassID: -1)
     }
 
-    private func maybeSpray(x: Double, y: Double, flow: Double, spread: Double, centerX: Double) {
+    private func maybeSpray(x: Double, y: Double, flow: Double, glassID: Int) {
         if sprays.count >= CoreTuning.maxDroplets { return }
         let chance: Double = CoreTuning.splashChanceBase + CoreTuning.splashChancePerFlow * flow
         if !rng.chance(chance) { return }
         var sx: Double = x + rng.range(-3, 3)
-        if spread > 0 { sx = CoreMath.clamp(sx, centerX - spread, centerX + spread) }
+        var spreadV: Double = 90
+        if glassID >= 0, let gi = glassIndex(id: glassID) {
+            let inner: Double = max(2, glasses[gi].rimHalf - CoreTuning.splashMouthInset)
+            sx = CoreMath.clamp(sx, glasses[gi].x - inner, glasses[gi].x + inner)
+            spreadV = 55
+        }
         let power: Double = 0.5 + flow
         let s: Spray = Spray(x: sx, y: y + 1,
-                             vx: rng.range(-90, 90) * power,
+                             vx: rng.range(-spreadV, spreadV) * power,
                              vy: rng.range(140, 320) * power,
                              life: rng.range(CoreTuning.splashLifeMin, CoreTuning.splashLifeMax),
-                             radius: rng.range(1.2, 3.0))
+                             radius: rng.range(1.2, 3.0), glassID: glassID)
         sprays.append(s)
     }
 
@@ -578,18 +629,101 @@ final class GameSession {
             s.x += s.vx * h
             s.y += s.vy * h
             s.life -= h
-            if s.life > 0 && s.y > floorY { kept.append(s) }
+            if s.life <= 0 || s.y <= floorY { continue }
+            if s.glassID >= 0 {
+                // Splash crown droplets stay inside the mouth (they bounce off the inner wall) and fall back in.
+                guard let gi = glassIndex(id: s.glassID) else { continue }
+                let g: Glass = glasses[gi]
+                let inner: Double = max(2, g.rimHalf - CoreTuning.splashMouthInset)
+                if s.x < g.x - inner {
+                    s.x = g.x - inner
+                    s.vx = abs(s.vx) * 0.4
+                } else if s.x > g.x + inner {
+                    s.x = g.x + inner
+                    s.vx = -abs(s.vx) * 0.4
+                }
+                let surface: Double = g.floorY + visibleTop(g)
+                if s.vy < 0 && s.y <= surface { continue }
+            }
+            kept.append(s)
         }
         sprays = kept
     }
 
-    private func addPuddle(x: Double) {
-        let px: CGFloat = CGFloat(CoreMath.clamp(x, 8, Double(layout.size.width) - 8))
-        for q in puddles {
-            if abs(Double(q.x - px)) < CoreTuning.puddleMergeDistance { return }
+    // MARK: - Puddles
+
+    private func puddleRadius(_ volume: Double) -> Double {
+        return CoreMath.clamp(CoreTuning.puddleBaseRadius + CoreTuning.puddleRadiusPerSqrtVolume * max(0, volume).squareRoot(),
+                              CoreTuning.puddleBaseRadius, CoreTuning.puddleMaxRadius)
+    }
+
+    /// Pools `volume` of spilt drink at counter x (joins a nearby puddle or starts one).
+    private func addSpill(x: Double, volume: Double) {
+        if volume <= 0 { return }
+        var best: Int = -1
+        var bestD: Double = Double.greatestFiniteMagnitude
+        var i: Int = 0
+        while i < puddles.count {
+            let d: Double = abs(puddles[i].x - x)
+            if d < puddleRadius(puddles[i].volume) + CoreTuning.puddleJoinMargin && d < bestD {
+                best = i
+                bestD = d
+            }
+            i += 1
         }
-        puddles.append(CGPoint(x: px, y: layout.counterY))
-        if puddles.count > CoreTuning.maxPuddles { puddles.removeFirst() }
+        if best >= 0 {
+            // Volume-weighted centre, so a puddle creeps toward where it is fed.
+            let v0: Double = puddles[best].volume
+            let total: Double = v0 + volume
+            puddles[best].x = (puddles[best].x * v0 + x * volume) / max(1e-9, total)
+            puddles[best].volume = total
+            clampPuddle(best)
+        } else {
+            puddles.append(Puddle(x: x, volume: volume))
+            clampPuddle(puddles.count - 1)
+        }
+        // Keep the encoded point count bounded: drop the oldest puddles first.
+        while puddles.count > 1 && puddlePointCount() > CoreTuning.maxPuddlePoints {
+            puddles.removeFirst()
+        }
+    }
+
+    @discardableResult
+    private func clampPuddle(_ i: Int) -> Int {
+        let r: Double = puddleRadius(puddles[i].volume)
+        let lo: Double = CoreTuning.safeMinX + r
+        let hi: Double = CoreTuning.safeMaxX - r
+        puddles[i].x = lo <= hi ? CoreMath.clamp(puddles[i].x, lo, hi) : (CoreTuning.safeMinX + CoreTuning.safeMaxX) * 0.5
+        return i
+    }
+
+    private func puddlePoints(_ p: Puddle) -> Int {
+        let half: Double = max(0, puddleRadius(p.volume) - CoreTuning.puddlePointInset)
+        return 1 + Int((2 * half / CoreTuning.puddlePointSpacing).rounded(.down))
+    }
+
+    private func puddlePointCount() -> Int {
+        var n: Int = 0
+        for p in puddles { n += puddlePoints(p) }
+        return n
+    }
+
+    /// Snapshot encoding: each puddle → a run of points `puddlePointSpacing` apart along the counter line, centred on
+    /// the puddle and spanning ± (radius − inset). Puddles never overlap their runs by less than one spacing.
+    private func encodedPuddles() -> [CGPoint] {
+        var out: [CGPoint] = []
+        let y: CGFloat = layout.counterY
+        for p in puddles {
+            let n: Int = puddlePoints(p)
+            let span: Double = Double(n - 1) * CoreTuning.puddlePointSpacing
+            var k: Int = 0
+            while k < n {
+                let x: Double = p.x - span * 0.5 + Double(k) * CoreTuning.puddlePointSpacing
+                out.append(CGPoint(x: CGFloat(x), y: y))
+                k += 1
+            }
+        }
+        return out
     }
 
     private func checkOverflow(_ gi: Int, events: inout [GameEvent]) {
@@ -600,10 +734,15 @@ final class GameSession {
         let foamSpill: Double = min(glasses[gi].foam, excess)
         glasses[gi].foam -= foamSpill
         glasses[gi].volume = max(0, glasses[gi].volume - (excess - foamSpill))
+        // Everything over the brim sheets down the glass and pools around its foot.
+        addSpill(x: glasses[gi].x, volume: excess)
         if !glasses[gi].overflowed {
             glasses[gi].overflowed = true
             events.append(.overflowStarted(glassID: glasses[gi].id))
-            addPuddle(x: glasses[gi].x + glasses[gi].rimHalf + glasses[gi].wall + 10)
+            // Live spill: judged the instant it goes over the rim (the overflow keeps sheeting while it leaves).
+            if glasses[gi].phase == .filling && phase == .playing && pendingFinish == nil {
+                serve(gi, events: &events)
+            }
         }
     }
 
@@ -640,17 +779,20 @@ final class GameSession {
                 updateFilling(i, h, events: &events)
             case .served:
                 if let belt = glasses[i].belt { glasses[i].x += belt * h }
-                if glasses[i].phaseTime >= CoreTuning.resultHold {
+                let streamBusy: Bool = glasses[i].belt == nil && (outflow > 0 || !particles.isEmpty)
+                let waited: Bool = glasses[i].phaseTime >= CoreTuning.resultHold + CoreTuning.changeoverWaitMax
+                if glasses[i].phaseTime >= CoreTuning.resultHold && (!streamBusy || waited) {
                     glasses[i].phase = .leaving
                     glasses[i].phaseTime = 0
                     glasses[i].startX = glasses[i].x
                     if glasses[i].belt == nil { spawnNextGlass(events: &events, initial: false) }
                 }
             case .leaving:
-                let u: Double = glasses[i].phaseTime / CoreTuning.leaveDuration
+                let u: Double = CoreMath.clamp(glasses[i].phaseTime / CoreTuning.leaveDuration, 0, 1)
                 let drift: Double = (glasses[i].belt ?? 0) * glasses[i].phaseTime
-                glasses[i].x = glasses[i].startX + drift
-                    + (CoreTuning.leaveToX - glasses[i].startX) * CoreMath.easeInQuad(u)
+                let k: Double = CoreTuning.leaveLinear
+                let ease: Double = k * u + (1 - k) * u * u
+                glasses[i].x = glasses[i].startX + drift + (CoreTuning.leaveToX - glasses[i].startX) * ease
             }
             i += 1
         }
@@ -684,6 +826,23 @@ final class GameSession {
 
         if phase != .playing || pendingFinish != nil { return }
 
+        // Overflowed before it was in place (it slid in under a running stream): judge it now.
+        if glasses[i].overflowed {
+            serve(i, events: &events)
+            return
+        }
+
+        let foamH: Double = top - Double(GlassMath.height(glasses[i].shape, forVolume: CGFloat(glasses[i].volume)))
+        let settled: Bool = foamH <= CoreTuning.foamSettledFraction * interior
+
+        // Lock-in cue: the stream has finished landing (nothing pouring, nothing in the air) with the settled top
+        // inside the Perfect band. Fires the moment it is true, ~serveIdle before the verdict.
+        if !glasses[i].lockSent && idleTime > 0 && glasses[i].pouredIn >= CoreTuning.minServeVolume && settled
+            && inBand {
+            glasses[i].lockSent = true
+            events.append(.lockedIn(glassID: glasses[i].id))
+        }
+
         if glasses[i].belt != nil {
             // Conveyor: judged once the mouth has passed the stream.
             if glasses[i].x - glasses[i].rimHalf > glasses[i].landingX + CoreTuning.conveyorExitMargin {
@@ -692,7 +851,7 @@ final class GameSession {
             return
         }
 
-        if let p = glasses[i].patienceLeft {
+        if let p = glasses[i].patienceLeft, !needsFlat {
             let left: Double = p - h
             glasses[i].patienceLeft = max(0, left)
             if left <= 0 {
@@ -702,8 +861,6 @@ final class GameSession {
         }
 
         if glasses[i].pouredIn >= CoreTuning.minServeVolume && idleTime >= CoreTuning.serveIdle {
-            let foamH: Double = top - Double(GlassMath.height(glasses[i].shape, forVolume: CGFloat(glasses[i].volume)))
-            let settled: Bool = foamH <= CoreTuning.foamSettledFraction * interior
             if settled || idleTime >= CoreTuning.serveIdle + CoreTuning.foamServeGrace {
                 serve(i, events: &events)
             }
@@ -759,8 +916,9 @@ final class GameSession {
             events.append(.strike(strikes))
         }
 
-        if isRush && j == .perfect {
-            let add: Double = min(CoreTuning.rushRefill, 1 - jugFill)
+        if isRush && (j == .perfect || j == .great) {
+            let want: Double = j == .perfect ? CoreTuning.rushRefill : CoreTuning.rushRefillGreat
+            let add: Double = min(want, 1 - jugFill)
             if add > 0 {
                 jugFill += add
                 events.append(.jugRefilled(fraction: add))
@@ -831,26 +989,8 @@ final class GameSession {
         let interior: Double = Double(shape.interiorHeight)
         let rimHalf: Double = Double(shape.rimHalfWidth)
         let floorY: Double = Double(layout.counterY + shape.baseThickness)
-        let landing: Double = referenceLandingX(rimY: floorY + interior, liquid: liquid)
-        var arriveX: Double = landing
-        if let belt = plan.belt {
-            let leadIn: Double = CoreMath.clamp(belt * 0.9, 10, CoreTuning.conveyorLeadIn)
-            arriveX = landing - rimHalf - leadIn
-        }
-        let prefill: Double = CoreMath.clamp(plan.order.prefill, 0, 0.95)
-        let preVolume: Double = Double(GlassMath.volume(shape, upTo: CGFloat(prefill * interior)))
-        let g: Glass = Glass(id: nextGlassID, order: plan.order, shape: shape, liquid: liquid, belt: plan.belt,
-                             band: plan.band, capacity: capacity, interior: interior, rimHalf: rimHalf,
-                             wall: Double(shape.wall), floorY: floorY, landingX: landing, arriveX: arriveX,
-                             x: CoreTuning.arriveFromX, startX: CoreTuning.arriveFromX, phase: .arriving, phaseTime: 0,
-                             volume: preVolume, foam: 0, pouredIn: 0,
-                             patienceLeft: plan.belt == nil ? plan.order.patience : nil,
-                             arrivedAt: nil, overflowed: false, result: nil, inBand: false, nearingSent: false,
-                             lastLanding: -10, lineOpacity: 1)
-        nextGlassID += 1
-        glasses.append(g)
 
-        // The jug for this drink.
+        // The jug for this drink (decided first: the glass is placed for the fill it will be poured from).
         if initial {
             jugLiquid = liquid
             jugFill = startFill
@@ -865,19 +1005,55 @@ final class GameSession {
                 beginSwap(to: liquid, fill: jugFills[liquid.id] ?? startFill, events: &events)
             }
         }
+        let pourFill: Double = pendingLiquid != nil ? pendingFill : jugFill
+
+        let landing: Double = referenceLandingX(rimY: floorY + interior, liquid: liquid, fill: pourFill)
+        var arriveX: Double = landing
+        if let belt = plan.belt {
+            let leadIn: Double = CoreMath.clamp(belt * 0.9, 10, CoreTuning.conveyorLeadIn)
+            arriveX = landing - rimHalf - leadIn
+        }
+        let prefill: Double = CoreMath.clamp(plan.order.prefill, 0, 0.95)
+        let preVolume: Double = Double(GlassMath.volume(shape, upTo: CGFloat(prefill * interior)))
+        let g: Glass = Glass(id: nextGlassID, order: plan.order, shape: shape, liquid: liquid, belt: plan.belt,
+                             band: plan.band, capacity: capacity, interior: interior, rimHalf: rimHalf,
+                             wall: Double(shape.wall), floorY: floorY, landingX: landing, arriveX: arriveX,
+                             x: CoreTuning.arriveFromX, startX: CoreTuning.arriveFromX, phase: .arriving, phaseTime: 0,
+                             volume: preVolume, foam: 0, pouredIn: 0,
+                             patienceLeft: plan.belt == nil ? plan.order.patience : nil,
+                             arrivedAt: nil, overflowed: false, result: nil, inBand: false, nearingSent: false,
+                             lastLanding: -10, lineOpacity: 1, lockSent: false)
+        nextGlassID += 1
+        glasses.append(g)
     }
 
-    /// Where the reference stream (`CoreTuning.refPourAngle/refPourFlow`) crosses height `rimY`, plus the bias.
-    private func referenceLandingX(rimY: Double, liquid: Liquid) -> Double {
-        let angle: Double = CoreTuning.refPourAngle
+    /// Where a stream leaving the lip at `angle` with normalized `flow` crosses height `rimY`.
+    private func landingX(angle: Double, flow: Double, rimY: Double, liquid: Liquid) -> Double {
         let a: CGPoint = anchor(forAngle: angle)
         let lip: CGPoint = JugGeometry.transform(point: jug.lip, jug: jug, angle: angle, at: a)
         let dir: (Double, Double) = exitDirection(angle: angle)
-        let speed: Double = exitSpeed(flow: CoreTuning.refPourFlow, liquid: liquid)
-        let vx: Double = dir.0 * speed
-        let vy: Double = dir.1 * speed
-        let t: Double = GameSession.fallTime(fromY: Double(lip.y), vy: vy, toY: rimY)
-        return Double(lip.x) + vx * t + CoreTuning.glassPlacementBias
+        let speed: Double = exitSpeed(flow: flow, liquid: liquid)
+        let t: Double = GameSession.fallTime(fromY: Double(lip.y), vy: dir.1 * speed, toY: rimY)
+        return Double(lip.x) + dir.0 * speed * t
+    }
+
+    /// The glass's stop x: the middle of the landing range over the pours this jug fill will really use (from its
+    /// pour point to `placementAngleSpan` beyond it, flows 0.15…0.9), plus the bias. Deterministic.
+    private func referenceLandingX(rimY: Double, liquid: Liquid, fill: Double) -> Double {
+        let geoStart: Double = JugGeometry.pourThreshold(jug, fill: CoreMath.clamp(fill, 0.02, 1), step: 1)
+        let start: Double = min(geoStart + liquid.reposeDegrees, 125)
+        var lo: Double = Double.greatestFiniteMagnitude
+        var hi: Double = -Double.greatestFiniteMagnitude
+        let maxAngle: Double = Rules.jugAngle(forLidTilt: 90)
+        for k in 0...4 {
+            let angle: Double = min(maxAngle, start + CoreTuning.placementAngleSpan * Double(k) / 4.0)
+            for f in [0.15, 0.5, 0.9] {
+                let x: Double = landingX(angle: angle, flow: f, rimY: rimY, liquid: liquid)
+                lo = min(lo, x)
+                hi = max(hi, x)
+            }
+        }
+        return (lo + hi) * 0.5 + CoreTuning.glassPlacementBias
     }
 
     private static func fallTime(fromY y0: Double, vy: Double, toY y1: Double) -> Double {
@@ -914,12 +1090,12 @@ final class GameSession {
         let line: Double = round2(rng.range(0.45, tier >= 2 ? 0.9 : 0.85))
         let shape: GlassShape = GlassCatalog.shape(glass)
         let needed: Double = Double(GlassMath.volume(shape, upTo: shape.interiorHeight * CGFloat(line)))
-        let sizeFactor: Double = CoreMath.clamp((needed / 5000).squareRoot(), 0.8, 1.5)
+        let sizeFactor: Double = CoreMath.clamp((needed / CoreTuning.rushPatienceVolumeRef).squareRoot(), 0.8, 1.5)
         let viscosity: Double = 1 + LiquidCatalog.liquid(liquid).lagTau
-        var patience: Double? = max(4.5, 9.0 - 0.8 * Double(tier)) * sizeFactor * viscosity
+        var patience: Double? = max(5.0, 9.5 - 0.7 * Double(tier)) * sizeFactor * viscosity
         var belt: Double? = nil
         if tier >= 3 && rng.chance(tier >= 4 ? 0.5 : 0.35) {
-            belt = min(40, 18 + 4 * Double(tier - 3))
+            belt = min(40, 18 + 4 * Double(tier - 3)) * CoreTuning.beltScale
             patience = nil
         }
         var prefill: Double = 0
@@ -980,7 +1156,12 @@ final class GameSession {
             let px: Double = lipX + exitDX * speed * t
             let gx: Double = g.x + vel * t
             if abs(px - gx) < g.rimHalf - 1 {
-                incoming += outflow * max(0, jugLiquid.lagTau) + emitAccumulator
+                // If the jug goes upright now, only the spout rope still drains (exp. decay, cut at ropeMaxTime).
+                let lag: Double = max(0, jugLiquid.lagTau)
+                let ropeTau: Double = CoreMath.clamp(CoreTuning.ropeTauPerLag * lag, CoreTuning.ropeTauMin,
+                                                     CoreTuning.ropeTauMax)
+                let tail: Double = outflow * ropeTau * (1 - exp(-CoreTuning.ropeMaxTime / ropeTau))
+                incoming += tail + emitAccumulator
             }
         }
         return incoming
@@ -1035,7 +1216,8 @@ final class GameSession {
 
     private func streamWidth(flow: Double, speed0: Double, speed: Double) -> Double {
         let base: Double = max(CoreTuning.streamWidthMin, CoreTuning.streamWidthMax * flow.squareRoot())
-        let thin: Double = max(CoreTuning.streamThinFloor, pow(max(1e-6, speed0 / max(speed, 1e-6)), CoreTuning.streamThinning))
+        let ref: Double = max(speed0, CoreTuning.streamThinRefSpeed)
+        let thin: Double = max(CoreTuning.streamThinFloor, pow(max(1e-6, ref / max(speed, 1e-6)), CoreTuning.streamThinning))
         return max(CoreTuning.streamWidthMin, base * min(1, thin))
     }
 
@@ -1119,11 +1301,14 @@ final class GameSession {
     }
 
     private func makeSnapshot() -> GameSnapshot {
-        return GameSnapshot(time: time, phase: phase, mode: mode, jug: makeJugState(), stream: makeStream(),
-                            droplets: makeDroplets(), glasses: makeGlassStates(), puddles: puddles, score: score,
-                            streak: streak, multiplier: multiplier, strikes: strikes, maxStrikes: maxStrikes,
-                            ordersDone: ordersDone, ordersTotal: fixedOrderCount, perfects: perfects,
-                            telemetry: telemetry())
+        var s: GameSnapshot = GameSnapshot(time: time, phase: phase, mode: mode, jug: makeJugState(), stream: makeStream(),
+                                           droplets: makeDroplets(), glasses: makeGlassStates(),
+                                           puddles: encodedPuddles(), score: score, streak: streak,
+                                           multiplier: multiplier, strikes: strikes, maxStrikes: maxStrikes,
+                                           ordersDone: ordersDone, ordersTotal: fixedOrderCount, perfects: perfects,
+                                           telemetry: telemetry())
+        s.needsFlat = needsFlat
+        return s
     }
 
     private static func placeholderSnapshot(mode: GameMode, liquid: Liquid) -> GameSnapshot {
@@ -1132,6 +1317,17 @@ final class GameSession {
         return GameSnapshot(time: 0, phase: .intro, mode: mode, jug: jug, stream: [], droplets: [], glasses: [],
                             puddles: [], score: 0, streak: 0, multiplier: 1, strikes: 0, maxStrikes: 0,
                             ordersDone: 0, ordersTotal: nil, perfects: 0, telemetry: PourTelemetry())
+    }
+
+    // MARK: - Flat gate
+
+    /// Re-arm the flat gate (call on resume, and after anything that let the hinge move unobserved): no outflow and
+    /// an upright jug until the lid tilt has been inside the dead zone once. No-op on phones without a fold and in
+    /// practice. `snapshot.needsFlat` turns true at once; `.flatArmed` fires when it opens again.
+    func requireFlat() {
+        if !usesFlatGate || phase == .finished { return }
+        needsFlat = true
+        snapshot.needsFlat = true
     }
 
     // MARK: - Test / debug hooks (internal; used by unit tests and demo scripts)

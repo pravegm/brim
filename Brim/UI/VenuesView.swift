@@ -60,6 +60,8 @@ private struct VenueCard: View {
     @ObservedObject var store: ProgressStore
     let onPick: (Level) -> Void
 
+    @State private var lockedNote: String? = nil
+
     private var levels: [Level] { LevelCatalog.levels(in: venue) }
     private var unlocked: Bool { store.isUnlocked(venue) }
     private var accent: Color { BrimTheme.color(for: venue) }
@@ -76,33 +78,49 @@ private struct VenueCard: View {
                 .frame(width: 48, height: 48)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(venue == .sandBar && !unlocked ? "Secret venue" : LevelCatalog.title(of: venue))
-                        .font(BrimTheme.title(21))
+                        .font(BrimTheme.title(20))
                         .foregroundStyle(BrimTheme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Text(subtitle)
                         .font(BrimTheme.text(13, .bold))
                         .foregroundStyle(BrimTheme.inkSoft)
-                }
-                Spacer(minLength: 4)
-                if unlocked {
-                    HStack(spacing: 3) {
-                        Image(systemName: "star.fill").foregroundStyle(BrimTheme.goldDeep)
-                        Text("\(store.data.starsEarned(in: venue))/\(levels.count * 3)")
-                            .font(BrimTheme.number(15))
-                            .foregroundStyle(BrimTheme.ink)
+                    if unlocked {
+                        HStack(spacing: 3) {
+                            Image(systemName: "star.fill").foregroundStyle(BrimTheme.goldDeep)
+                            Text("\(store.data.starsEarned(in: venue))/\(levels.count * 3)")
+                                .font(BrimTheme.number(13))
+                                .foregroundStyle(BrimTheme.ink)
+                        }
+                        .font(.system(size: 11, weight: .heavy))
+                        .padding(.top, 1)
                     }
                 }
+                Spacer(minLength: 4)
             }
             if unlocked && !levels.isEmpty {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 12) {
                     ForEach(levels) { level in
                         ShiftBubble(level: level, stars: store.stars(for: level.id), playable: store.isPlayable(level),
                                     accent: accent) {
-                            onPick(level)
+                            if store.isPlayable(level) {
+                                onPick(level)
+                            } else {
+                                lockedNote = "Shift \(level.index) · \(level.title): earn a star on shift \(max(level.index - 1, 1)) first."
+                            }
                         }
                     }
                 }
+                if let lockedNote {
+                    Label(lockedNote, systemImage: "lock.fill")
+                        .font(BrimTheme.text(13, .bold))
+                        .foregroundStyle(BrimTheme.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity)
+                }
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: lockedNote)
         .brimCard(padding: 16)
         .opacity(unlocked ? 1 : 0.82)
         .accessibilityElement(children: .contain)
@@ -137,7 +155,6 @@ private struct ShiftBubble: View {
 
     var body: some View {
         Button {
-            guard playable else { return }
             FeedbackDirector.shared.uiTap()
             action()
         } label: {
@@ -162,7 +179,6 @@ private struct ShiftBubble: View {
             }
         }
         .buttonStyle(PressScaleStyle())
-        .disabled(!playable)
         .accessibilityLabel("Shift \(level.index), \(stars) stars\(playable ? "" : ", locked")")
     }
 }

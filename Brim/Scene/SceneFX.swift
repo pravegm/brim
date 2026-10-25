@@ -17,47 +17,23 @@ struct SceneParticle {
     var active: Bool = false
 }
 
-/// Pooled FX: a fixed set of sprites sharing two textures (so SpriteKit batches them), a few rings, and puddles.
-/// Nothing is allocated per frame.
+/// A fixed pool of sprites sharing a couple of textures (so SpriteKit batches them). Nothing is allocated per frame.
 @MainActor
-final class SceneFX {
+final class ParticlePool {
     let root: SKNode
-    let puddleLayer: SKNode
-    var reduceMotion = false
-
     private var sprites: [SKSpriteNode] = []
     private var parts: [SceneParticle] = []
     private var cursor = 0
-    private var rings: [SKShapeNode] = []
-    private var ringCursor = 0
-    private var puddles: [SKShapeNode] = []
-    private var rng = SceneRNG(seed: 0xB21_B0B)
-    private let dotTexture: SKTexture
-    private let sparkleTexture: SKTexture
 
-    init(capacity: Int = 260) {
+    init(capacity: Int, texture: SKTexture) {
         root = SKNode()
-        puddleLayer = SKNode()
-        dotTexture = SceneArt.dot
-        sparkleTexture = SceneArt.sparkle
         for _ in 0..<capacity {
-            let s = SKSpriteNode(texture: dotTexture, size: CGSize(width: 6, height: 6))
+            let s = SKSpriteNode(texture: texture, size: CGSize(width: 6, height: 6))
             s.colorBlendFactor = 1
             s.isHidden = true
             root.addChild(s)
             sprites.append(s)
             parts.append(SceneParticle())
-        }
-        for _ in 0..<4 {
-            // Drawn at full size (radius 100) and scaled down, so the stroke thickens as it grows instead of
-            // turning into a fat band.
-            let r = SKShapeNode(ellipseOf: CGSize(width: 200, height: 64))
-            r.fillColor = .clear
-            r.lineWidth = 3.5
-            r.isHidden = true
-            r.zPosition = -1
-            root.addChild(r)
-            rings.append(r)
         }
     }
 
@@ -66,15 +42,7 @@ final class SceneFX {
             parts[i].active = false
             sprites[i].isHidden = true
         }
-        for r in rings {
-            r.removeAllActions()
-            r.isHidden = true
-        }
-        for p in puddles { p.removeFromParent() }
-        puddles.removeAll()
     }
-
-    // MARK: Simulation
 
     func update(_ dt: CGFloat) {
         guard dt > 0 else { return }
@@ -113,7 +81,7 @@ final class SceneFX {
         }
     }
 
-    private func spawn(_ p: SceneParticle, size: CGFloat, color: UIColor, texture: SKTexture) {
+    func spawn(_ p: SceneParticle, size: CGFloat, color: UIColor, texture: SKTexture) {
         let n = parts.count
         guard n > 0 else { return }
         var slot = -1
@@ -138,9 +106,78 @@ final class SceneFX {
         s.alpha = 1
         s.isHidden = false
     }
+}
 
-    private func droplet(at pos: CGPoint, vel: CGVector, size: CGFloat, color: UIColor, life: CGFloat,
-                         gravity: CGFloat = 1500, floorY: CGFloat = -10_000) {
+/// Pooled FX: particles over everything (`root`), particles inside glasses drawn behind their front walls
+/// (`innerRoot`, REVIEW-1 P1-4), a few rings and glows, and the puddles.
+@MainActor
+final class SceneFX {
+    let root: SKNode
+    let innerRoot: SKNode
+    let puddleLayer: SKNode
+    var reduceMotion = false
+
+    private let pool: ParticlePool
+    private let inner: ParticlePool
+    private var rings: [SKShapeNode] = []
+    private var ringCursor = 0
+    private let glow: SKSpriteNode
+    private var puddles: [PuddleView] = []
+    private var puddleSignature: Int = -1
+    private var rng = SceneRNG(seed: 0xB21_B0B)
+    private let dotTexture: SKTexture
+    private let sparkleTexture: SKTexture
+
+    init(capacity: Int = 300) {
+        root = SKNode()
+        innerRoot = SKNode()
+        puddleLayer = SKNode()
+        dotTexture = SceneArt.dot
+        sparkleTexture = SceneArt.sparkle
+        pool = ParticlePool(capacity: capacity, texture: dotTexture)
+        inner = ParticlePool(capacity: 96, texture: dotTexture)
+        root.addChild(pool.root)
+        innerRoot.addChild(inner.root)
+        glow = SKSpriteNode(texture: SceneArt.glow)
+        glow.blendMode = .add
+        glow.isHidden = true
+        glow.zPosition = -2
+        root.addChild(glow)
+        for _ in 0..<4 {
+            // Drawn at full size (radius 100) and scaled, so the stroke thickens as it grows.
+            let r = SKShapeNode(ellipseOf: CGSize(width: 200, height: 58))
+            r.fillColor = .clear
+            r.lineWidth = 4.5
+            r.isHidden = true
+            r.zPosition = -1
+            root.addChild(r)
+            rings.append(r)
+        }
+    }
+
+    func clear() {
+        pool.clear()
+        inner.clear()
+        for r in rings {
+            r.removeAllActions()
+            r.isHidden = true
+        }
+        glow.removeAllActions()
+        glow.isHidden = true
+        for p in puddles { p.node.removeFromParent() }
+        puddles.removeAll()
+        puddleSignature = -1
+    }
+
+    // MARK: Simulation
+
+    func update(_ dt: CGFloat) {
+        pool.update(dt)
+        inner.update(dt)
+    }
+
+    private func droplet(_ target: ParticlePool, at pos: CGPoint, vel: CGVector, size: CGFloat, color: UIColor,
+                         life: CGFloat, gravity: CGFloat = 1500, floorY: CGFloat = -10_000) {
         var p = SceneParticle()
         p.position = pos
         p.velocity = vel
@@ -149,89 +186,118 @@ final class SceneFX {
         p.floorY = floorY
         p.stretch = true
         p.shrink = true
-        spawn(p, size: size, color: color, texture: dotTexture)
+        target.spawn(p, size: size, color: color, texture: dotTexture)
     }
 
     // MARK: Effects
 
-    /// Splash crown where the stream hits a glass's surface: droplets leap up and fall back in.
-    func splashCrown(at pos: CGPoint, color: UIColor, strength: Double, mouthHalfWidth: CGFloat) {
+    /// Splash crown where the stream hits a glass's surface: droplets leap up and fall back in, staying inside the
+    /// mouth (|x − centre| < half-width − 3) and drawn behind the glass's front wall.
+    func splashCrown(at pos: CGPoint, glassX: CGFloat, mouthHalfWidth: CGFloat, color: UIColor, strength: Double) {
         let s = CGFloat(min(max(strength, 0.1), 1.5))
-        let count = Int((reduceMotion ? 2 : 4) + s * (reduceMotion ? 2 : 5))
+        let count = Int((reduceMotion ? 2 : 4) + s * (reduceMotion ? 2 : 6))
+        let limit = max(2, mouthHalfWidth - 3)
+        let life: CGFloat = 0.42
         for _ in 0..<count {
             let side = rng.sign()
-            let vx = side * rng.range(30, 110 + 60 * s)
-            let vy = rng.range(110, 220 + 160 * s)
-            let x = pos.x + side * rng.range(1, 5)
-            droplet(at: CGPoint(x: x, y: pos.y + 1), vel: CGVector(dx: vx, dy: vy), size: rng.range(3.2, 5.8),
-                    color: color, life: rng.range(0.32, 0.55), gravity: 1500, floorY: pos.y - 2)
+            let x0 = min(max(pos.x + side * rng.range(1, 6), glassX - limit), glassX + limit)
+            // Horizontal speed capped so the drop lands back inside the mouth.
+            let room = side > 0 ? (glassX + limit - x0) : (x0 - (glassX - limit))
+            let vmax = max(10, room / (life * 0.9))
+            let vx = side * min(rng.range(30, 120 + 60 * s), vmax)
+            let vy = rng.range(120, 230 + 170 * s)
+            droplet(inner, at: CGPoint(x: x0, y: pos.y + 1), vel: CGVector(dx: vx, dy: vy), size: rng.range(3.6, 6.8),
+                    color: color, life: rng.range(0.32, life), gravity: 1500, floorY: pos.y - 2)
         }
-        _ = mouthHalfWidth
     }
 
     /// Spray where stream particles miss the glass and hit the counter.
     func counterSplash(at pos: CGPoint, color: UIColor, strength: Double) {
         let s = CGFloat(min(max(strength, 0.1), 1.5))
-        let count = Int((reduceMotion ? 2 : 3) + s * (reduceMotion ? 2 : 5))
+        let count = Int((reduceMotion ? 2 : 4) + s * (reduceMotion ? 2 : 6))
         for _ in 0..<count {
-            let vx = rng.sign() * rng.range(40, 170)
-            let vy = rng.range(80, 200 + 120 * s)
-            droplet(at: CGPoint(x: pos.x, y: pos.y + 2), vel: CGVector(dx: vx, dy: vy), size: rng.range(2.8, 5),
-                    color: color, life: rng.range(0.3, 0.5), gravity: 1500, floorY: pos.y - 3)
+            let vx = rng.sign() * rng.range(40, 190)
+            let vy = rng.range(90, 220 + 140 * s)
+            droplet(pool, at: CGPoint(x: pos.x, y: pos.y + 2), vel: CGVector(dx: vx, dy: vy), size: rng.range(3.2, 6),
+                    color: color, life: rng.range(0.3, 0.5), gravity: 1500, floorY: pos.y - 4)
         }
     }
 
-    /// A single drip running off an overflowing glass.
-    func drip(at pos: CGPoint, color: UIColor, floorY: CGFloat) {
-        droplet(at: pos, vel: CGVector(dx: rng.range(-10, 10), dy: rng.range(-40, -10)), size: rng.range(3.5, 5),
-                color: color, life: 0.9, gravity: 900, floorY: floorY)
+    /// A single drip running off an overflowing / wet glass.
+    func drip(at pos: CGPoint, color: UIColor, floorY: CGFloat, big: Bool = false) {
+        droplet(pool, at: pos, vel: CGVector(dx: rng.range(-12, 12), dy: rng.range(-50, -10)),
+                size: big ? rng.range(5, 7.5) : rng.range(3.8, 5.5), color: color, life: 1.0, gravity: 900, floorY: floorY)
     }
 
-    /// Perfect: a cyan sparkle ring on the rim plane, twinkles and a confetti of droplets.
+    /// Spill: liquid bursts over the lip and rains onto the counter (P1-2).
+    func spillBurst(rim: CGPoint, rimHalfWidth: CGFloat, color: UIColor, floorY: CGFloat) {
+        let n = reduceMotion ? 8 : 22
+        for i in 0..<n {
+            let side: CGFloat = i % 2 == 0 ? -1 : 1
+            let x = rim.x + side * rimHalfWidth * rng.range(0.6, 1.05)
+            let vx = side * rng.range(40, 160)
+            let vy = rng.range(60, 260)
+            droplet(pool, at: CGPoint(x: x, y: rim.y + rng.range(0, 6)), vel: CGVector(dx: vx, dy: vy),
+                    size: rng.range(4.5, 9), color: color, life: rng.range(0.7, 1.1), gravity: 1300, floorY: floorY)
+        }
+        counterSplash(at: CGPoint(x: rim.x - rimHalfWidth, y: floorY + 4), color: color, strength: 1.2)
+        counterSplash(at: CGPoint(x: rim.x + rimHalfWidth, y: floorY + 4), color: color, strength: 1.2)
+    }
+
+    /// Perfect (P0-5): two big rings on the rim plane (≥ 2.5× the rim width), a cyan glow, twinkles and confetti.
+    /// Everything is visible from the first frame so a capture 0.15 s after the verdict shows the burst at full tilt.
     func perfectBurst(rim: CGPoint, rimHalfWidth: CGFloat, liquid: UIColor, floorY: CGFloat) {
-        // Rings.
-        for (k, color) in [SceneColor.perfect, UIColor.white].enumerated() {
+        let rimW = max(40, rimHalfWidth * 2)
+        let specs: [(UIColor, CGFloat, Double)] = [(SceneColor.perfect, 2.7, 0), (UIColor.white, 3.4, 0.06)]
+        for (color, mult, delay) in specs {
             let r = rings[ringCursor % rings.count]
             ringCursor += 1
             r.removeAllActions()
             r.strokeColor = color
+            r.glowWidth = reduceMotion ? 0 : 2
             r.position = rim
-            r.setScale(max(0.12, rimHalfWidth / 100))
-            r.alpha = 0
+            r.setScale(rimW / 200)
+            r.alpha = delay > 0 ? 0 : 1
             r.isHidden = false
-            let target = max(0.5, (rimHalfWidth + 75) / 100)
-            let grow = SKAction.scale(to: target, duration: 0.55)
+            let grow = SKAction.scale(to: rimW * mult / 200, duration: 0.5)
             grow.timingMode = .easeOut
             r.run(SKAction.sequence([
-                SKAction.wait(forDuration: 0.07 * Double(k)),
-                SKAction.group([SKAction.fadeAlpha(to: 1, duration: 0.05), grow,
-                                SKAction.sequence([SKAction.wait(forDuration: 0.2), SKAction.fadeOut(withDuration: 0.35)])]),
+                SKAction.wait(forDuration: delay),
+                SKAction.group([SKAction.fadeAlpha(to: 1, duration: 0.03), grow,
+                                SKAction.sequence([SKAction.wait(forDuration: 0.24), SKAction.fadeOut(withDuration: 0.3)])]),
                 SKAction.hide(),
             ]))
         }
-        // Twinkles around the rim.
-        let twinkles = reduceMotion ? 5 : 11
+        glow.removeAllActions()
+        glow.isHidden = false
+        glow.color = SceneColor.perfect
+        glow.colorBlendFactor = 0.85
+        glow.position = rim
+        glow.size = CGSize(width: rimW * 3, height: rimW * 1.4)
+        glow.alpha = 0.9
+        glow.run(SKAction.sequence([SKAction.wait(forDuration: 0.12), SKAction.fadeOut(withDuration: 0.4), SKAction.hide()]))
+
+        let twinkles = reduceMotion ? 6 : 14
         let colors: [UIColor] = [SceneColor.perfect, .white, SceneColor.gold]
         for i in 0..<twinkles {
             let a = CGFloat(i) / CGFloat(twinkles) * 2 * .pi + rng.range(-0.2, 0.2)
-            let speed = rng.range(90, 170)
+            let speed = rng.range(140, 260)
             var p = SceneParticle()
-            p.position = CGPoint(x: rim.x + cos(a) * rimHalfWidth * 0.9, y: rim.y + sin(a) * 6)
-            p.velocity = CGVector(dx: cos(a) * speed, dy: sin(a) * speed * 0.45 + 50)
-            p.life = rng.range(0.55, 0.8)
-            p.drag = 2.4
+            p.position = CGPoint(x: rim.x + cos(a) * rimHalfWidth * 0.9, y: rim.y + sin(a) * 8)
+            p.velocity = CGVector(dx: cos(a) * speed, dy: sin(a) * speed * 0.5 + 70)
+            p.life = rng.range(0.6, 0.9)
+            p.drag = 2.6
             p.spin = rng.range(-5, 5)
             p.shrink = true
-            spawn(p, size: rng.range(16, 26), color: colors[i % colors.count], texture: sparkleTexture)
+            pool.spawn(p, size: rng.range(20, 34), color: colors[i % colors.count], texture: sparkleTexture)
         }
-        // Droplet confetti.
-        let confetti = reduceMotion ? 6 : 18
+        let confetti = reduceMotion ? 8 : 26
         let palette: [UIColor] = [SceneColor.perfect, SceneColor.gold, liquid, .white, SceneColor.hex(0xFF8FB1)]
         for i in 0..<confetti {
-            let vx = rng.range(-180, 180)
-            let vy = rng.range(260, 520)
-            droplet(at: CGPoint(x: rim.x + rng.range(-rimHalfWidth, rimHalfWidth) * 0.6, y: rim.y + 4),
-                    vel: CGVector(dx: vx, dy: vy), size: rng.range(5, 9), color: palette[i % palette.count],
+            let vx = rng.range(-220, 220)
+            let vy = rng.range(300, 600)
+            droplet(pool, at: CGPoint(x: rim.x + rng.range(-rimHalfWidth, rimHalfWidth) * 0.6, y: rim.y + 4),
+                    vel: CGVector(dx: vx, dy: vy), size: rng.range(6, 11), color: palette[i % palette.count],
                     life: rng.range(0.9, 1.3), gravity: 1100, floorY: floorY)
         }
     }
@@ -246,42 +312,113 @@ final class SceneFX {
             p.life = rng.range(0.5, 0.8)
             p.drag = 1.5
             p.spin = rng.range(-4, 4)
-            spawn(p, size: rng.range(12, 18), color: SceneColor.gold, texture: sparkleTexture)
+            pool.spawn(p, size: rng.range(12, 18), color: SceneColor.gold, texture: sparkleTexture)
         }
     }
 
-    // MARK: Puddles
+    // MARK: Puddles (spread 2–3× across the coaster and counter)
 
     func syncPuddles(_ pts: [CGPoint], counterY: CGFloat, color: UIColor) {
-        while puddles.count > pts.count {
-            puddles.removeLast().removeFromParent()
-        }
-        while puddles.count < pts.count {
-            let w = rng.range(58, 86), h = rng.range(10, 13)
-            let p = SKShapeNode(ellipseOf: CGSize(width: w, height: h))
-            p.fillColor = SceneColor.opaque(color).withAlphaComponent(0.78)
-            p.strokeColor = SceneColor.darker(SceneColor.opaque(color), 0.25).withAlphaComponent(0.35)
-            p.lineWidth = 1
-            let shine = SKShapeNode(ellipseOf: CGSize(width: w * 0.42, height: h * 0.3))
-            shine.fillColor = UIColor(white: 1, alpha: 0.45)
-            shine.strokeColor = .clear
-            shine.position = CGPoint(x: -w * 0.12, y: h * 0.12)
-            shine.zPosition = 0.1
-            p.addChild(shine)
-            puddleLayer.addChild(p)
-            puddles.append(p)
-            if reduceMotion {
-                p.setScale(1)
+        // Cheap signature so the blob pass only runs when Core's puddle list changes.
+        var sig = pts.count &* 7919
+        for q in pts { sig = sig &* 31 &+ Int(q.x.rounded()) }
+        if sig == puddleSignature { return }
+        puddleSignature = sig
+        let blobs = ScenePaths.puddleBlobs(pts, radius: 34)
+        var keep = Array(repeating: false, count: puddles.count)
+        for b in blobs {
+            var match = -1
+            for (i, pv) in puddles.enumerated() where !keep[i] && abs(pv.x - b.center.x) < 40 {
+                match = i
+                break
+            }
+            if match >= 0 {
+                keep[match] = true
+                puddles[match].setCount(b.count, reduceMotion: reduceMotion)
+                puddles[match].node.position = CGPoint(x: b.center.x, y: counterY + 1)
+                puddles[match].x = b.center.x
             } else {
-                p.xScale = 0.15
-                p.yScale = 0.3
-                let grow = SKAction.scaleX(to: 1, y: 1, duration: 0.45)
-                grow.timingMode = .easeOut
-                p.run(grow)
+                let pv = PuddleView(color: color, seed: UInt64(truncatingIfNeeded: Int(b.center.x * 13) &+ pts.count))
+                pv.x = b.center.x
+                pv.node.position = CGPoint(x: b.center.x, y: counterY + 1)
+                puddleLayer.addChild(pv.node)
+                pv.setCount(b.count, reduceMotion: reduceMotion)
+                puddles.append(pv)
+                keep.append(true)
             }
         }
-        for (i, pt) in pts.enumerated() where i < puddles.count {
-            puddles[i].position = CGPoint(x: pt.x, y: counterY + 1)
+        var i = puddles.count - 1
+        while i >= 0 {
+            if i < keep.count && !keep[i] {
+                puddles[i].node.removeFromParent()
+                puddles.remove(at: i)
+            }
+            i -= 1
+        }
+    }
+}
+
+/// One puddle: a glossy pool with a darker rim, a highlight and a few satellite drops; it spreads when it grows.
+@MainActor
+final class PuddleView {
+    let node: SKNode
+    var x: CGFloat = 0
+    private var count = 0
+    private let pool: SKShapeNode
+
+    static let width: CGFloat = 170
+    static let height: CGFloat = 26
+
+    init(color: UIColor, seed: UInt64) {
+        node = SKNode()
+        var rng = SceneRNG(seed: seed == 0 ? 7 : seed)
+        let w = PuddleView.width, h = PuddleView.height
+        let c = SceneColor.opaque(color)
+        // Irregular blob: an ellipse with wobbly radius.
+        let path = CGMutablePath()
+        let n = 18
+        for i in 0...n {
+            let a = CGFloat(i % n) / CGFloat(n) * 2 * .pi
+            let k = 1 + 0.08 * sin(a * 3 + rng.range(0, 1)) + rng.range(-0.04, 0.04)
+            let p = CGPoint(x: cos(a) * w * 0.5 * k, y: sin(a) * h * 0.5 * k)
+            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+        }
+        path.closeSubpath()
+        pool = SKShapeNode(path: path)
+        pool.fillColor = c.withAlphaComponent(0.8)
+        pool.strokeColor = SceneColor.darker(c, 0.3).withAlphaComponent(0.45)
+        pool.lineWidth = 1.5
+        node.addChild(pool)
+        let shine = SKShapeNode(ellipseOf: CGSize(width: w * 0.36, height: h * 0.24))
+        shine.fillColor = UIColor(white: 1, alpha: 0.5)
+        shine.strokeColor = .clear
+        shine.position = CGPoint(x: -w * 0.14, y: h * 0.14)
+        shine.zPosition = 0.1
+        node.addChild(shine)
+        for _ in 0..<4 {
+            let r = rng.range(3, 7)
+            let d = SKShapeNode(ellipseOf: CGSize(width: r * 2, height: r * 1.1))
+            d.fillColor = c.withAlphaComponent(0.85)
+            d.strokeColor = .clear
+            d.position = CGPoint(x: rng.sign() * rng.range(w * 0.5 + 6, w * 0.5 + 26), y: rng.range(-h * 0.4, h * 0.3))
+            node.addChild(d)
+        }
+        node.xScale = 0.2
+        node.yScale = 0.35
+    }
+
+    func setCount(_ n: Int, reduceMotion: Bool) {
+        guard n != count else { return }
+        count = n
+        let target = min(1.7, 1 + 0.22 * CGFloat(max(0, n - 1)))
+        node.removeAllActions()
+        if reduceMotion {
+            node.xScale = target
+            node.yScale = target
+        } else {
+            let grow = SKAction.scaleX(to: target, y: target, duration: 0.8)
+            grow.timingMode = .easeOut
+            node.run(grow)
         }
     }
 }

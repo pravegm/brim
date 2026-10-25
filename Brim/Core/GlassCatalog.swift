@@ -2,43 +2,50 @@ import CoreGraphics
 import Foundation
 
 /// The 11 glass styles. Profiles are interior half-widths (x) at heights (y) from the inner floor to the rim.
-/// Volumes are 2D areas; for reference a tumbler holds ~7,300 pt² and the standard jug ~28,400 pt².
+/// Volumes are 2D areas.
+///
+/// Round 2 scale (one 670 × 952 world): profiles are the round-1 shapes ×1.45–1.6 wide and ×1.25–1.45 tall, so a
+/// tumbler's rim is ~115 pt wide outside (53 interior half-width + 4.5 wall) and holds ~17,000 pt². Every glass keeps
+/// base + interior ≤ 312, so on the counter (y 104) its rim stays ≥ 40 pt below the crease (456).
 enum GlassCatalog {
+
+    /// Tallest allowed base + interior (rim ≥ 40 pt below `WorldLayout.creaseBottom` when standing on the counter).
+    static let maxStandingHeight: CGFloat = 312
 
     static let all: [GlassShape] = [
         // Straight, gently tapered everyday glass. Level rises almost linearly.
         make("tumbler", "Tumbler", .tumbler,
-             [(27, 0), (28, 6), (33, 120)], base: 12, wall: 3),
+             [(43, 0), (45, 9), (53, 174)], base: 16, wall: 4.5),
         // Tall and straight: fast-rising level, tall lines.
         make("highball", "Highball", .highball,
-             [(23, 0), (24, 6), (26, 180)], base: 12, wall: 3),
+             [(34, 0), (36, 9), (39, 261)], base: 16, wall: 4.5),
         // Narrow tulip on a stem: a small flow error is a big level change.
         make("flute", "Flute", .flute,
-             [(4, 0), (11, 12), (17, 40), (21, 90), (22.5, 150), (22, 205)], base: 40, wall: 2),
+             [(6, 0), (16.5, 15), (25.5, 50), (31.5, 112.5), (34, 187.5), (33, 256)], base: 50, wall: 3),
         // Wide diner mug: slow, steady rise.
         make("mug", "Diner Mug", .mug,
-             [(40, 0), (42, 8), (43, 118)], base: 10, wall: 6),
+             [(56, 0), (59, 12), (60, 171)], base: 14, wall: 8),
         // Goblet bowl, wide at the top: rises fast at first, crawls near the rim.
         make("bowl", "Goblet", .bowl,
-             [(6, 0), (24, 8), (42, 30), (56, 62), (65, 98), (70, 126)], base: 36, wall: 2.5),
+             [(8, 0), (31, 12), (55, 44), (73, 90), (85, 142), (91, 183)], base: 50, wall: 3.5),
         // Sundae tulip: bulb, waist, then a wide flare at the top.
         make("sundae", "Sundae Glass", .sundae,
-             [(7, 0), (20, 12), (33, 38), (37, 68), (35, 92), (42, 120), (55, 148)], base: 30, wall: 3),
+             [(9.5, 0), (27, 17), (44.5, 55), (50, 99), (47, 133), (56.5, 174), (74, 215)], base: 42, wall: 4),
         // Tiny round-bottomed vial with a flared lip.
         make("vial", "Vial", .vial,
-             [(5, 0), (11, 5), (14, 14), (15, 98), (22, 110)], base: 18, wall: 2),
+             [(7.5, 0), (16.5, 7), (21, 20), (22.5, 142), (33, 160)], base: 26, wall: 3),
         // Lab beaker with a slight lip (draw mL ticks on it).
         make("beaker", "Beaker", .beaker,
-             [(30, 0), (31, 4), (31, 152), (34, 160)], base: 6, wall: 2.5),
+             [(43.5, 0), (45, 6), (45, 220), (49, 232)], base: 9, wall: 3.5),
         // Mason jar: wide body, shoulder, narrow mouth — the level speeds up near the top.
         make("jar", "Mason Jar", .jar,
-             [(37, 0), (41, 8), (43, 108), (40, 126), (33, 138), (33, 150)], base: 10, wall: 4),
+             [(53.5, 0), (59.5, 12), (62.5, 157), (58, 183), (48, 200), (48, 217)], base: 14, wall: 5.5),
         // Tall soda glass: cone with a bulge near the top.
         make("pint", "Soda Glass", .pint,
-             [(25, 0), (28, 10), (37, 140), (41, 160), (38, 176), (39, 186)], base: 10, wall: 3.5),
+             [(36, 0), (40.5, 14), (53.5, 203), (59.5, 232), (55, 255), (56.5, 270)], base: 14, wall: 5),
         // Thick-bottomed tiny cup: tiny volume, needs a trickle.
         make("shot", "Tiny Cup", .shot,
-             [(15, 0), (17, 4), (23, 90)], base: 16, wall: 5),
+             [(22.5, 0), (25.5, 6), (34.5, 130)], base: 22, wall: 7),
     ]
 
     private static let byID: [String: GlassShape] = {

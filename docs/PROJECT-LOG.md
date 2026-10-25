@@ -26,3 +26,20 @@
   - Scene: SpriteKit art.
   - Feel: input, synth audio and haptics.
   - App: shell, UI, persistence, Game Center and demo mode.
+
+## Round 1 result (25 Oct, afternoon)
+- The first integrated build compiled and passed **66/66 tests on the first CI run** (40202703065). Demo frames
+  captured on the iPhone 18 Pro. The autopilot landed a real Perfect and a real Spill.
+- App icon rendered by CI and committed (critic: 8/10, "best art in the project").
+- **REVIEW-1: 5/10, "not yet".** The biggest finding was the rest pose: "stand it up like a laptop" was ~70° of
+  tilt, which meant an instant pour and a spill. Others: the glass is tiny, the stream is thin and lands on the rim,
+  a stream ran from an upright jug, Perfect and Spill have no drama, venues are just recolours, and safe areas were
+  ignored.
+- **First Duo simulator run (40203342285):** the `hinge` CLI drives the app; 100 `BRIM-H` samples were logged in one
+  sweep. But the app was letterboxed: a portrait-only Info.plist on the Duo's landscape inner display gave a
+  469 × 669 window, and a "small canvas = cover" rule then showed the cover card on every frame.
+- **Founder decisions for round 2** (`design/ROUND-2.md`):
+  - One 670 × 952 world for every device, aspect-filled.
+  - **Flat rest pose** with a "lay it flat to start" gate.
+  - Bigger hero objects.
+  - All three orientations declared.

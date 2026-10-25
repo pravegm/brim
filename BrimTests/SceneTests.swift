@@ -96,6 +96,112 @@ final class SceneTests: XCTestCase {
         }
     }
 
+    func testClipKeepsTheRightSide() {
+        let square = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 0, y: 10)]
+        let below = ScenePaths.bounds(ScenePaths.clip(square, level: 4, below: true))
+        XCTAssertEqual(below.minY, 0, accuracy: 0.0001)
+        XCTAssertEqual(below.maxY, 4, accuracy: 0.0001)
+        let above = ScenePaths.bounds(ScenePaths.clip(square, level: 4, below: false))
+        XCTAssertEqual(above.minY, 4, accuracy: 0.0001)
+        XCTAssertEqual(above.maxY, 10, accuracy: 0.0001)
+        XCTAssertTrue(ScenePaths.clip(square, level: 20, below: false).isEmpty)
+    }
+
+    func testPolylineAboveOnlyKeepsTheTop() {
+        let square = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 0, y: 10)]
+        let path = ScenePaths.polylineAbove(square, order: [0, 1, 2, 3, 0], level: 8)
+        XCTAssertFalse(path.isEmpty)
+        XCTAssertGreaterThanOrEqual(path.boundingBoxOfPath.minY, 8 - 0.0001)
+        XCTAssertTrue(ScenePaths.polylineAbove(square, order: [0, 1, 2, 3, 0], level: 30).isEmpty)
+    }
+
+    func testPuddleBlobsMergeNearbyMarks() {
+        let pts = [CGPoint(x: 300, y: 104), CGPoint(x: 310, y: 104), CGPoint(x: 305, y: 104), CGPoint(x: 500, y: 104)]
+        let blobs = ScenePaths.puddleBlobs(pts, radius: 34)
+        XCTAssertEqual(blobs.count, 2)
+        XCTAssertEqual(blobs[0].count, 3)
+        XCTAssertEqual(blobs[0].center.x, 305, accuracy: 0.001)
+        XCTAssertEqual(blobs[1].count, 1)
+        XCTAssertTrue(ScenePaths.puddleBlobs([], radius: 10).isEmpty)
+    }
+
+    func testWobbleLeavesTheSpoutAlone() {
+        var pts: [CGPoint] = []
+        var ws: [CGFloat] = []
+        for i in 0..<30 { pts.append(CGPoint(x: 0, y: 400 - CGFloat(i) * 10)); ws.append(20) }
+        var w = pts
+        ScenePaths.wobble(&w, widths: ws, amplitude: 0.2, time: 1.3)
+        XCTAssertEqual(w.count, pts.count)
+        XCTAssertEqual(w[0].x, pts[0].x, accuracy: 0.0001)
+        for p in w {
+            XCTAssertTrue(p.x.isFinite)
+            XCTAssertLessThanOrEqual(abs(p.x), 4.01)          // ≤ amplitude × width
+        }
+    }
+
+    func testEveryVenueHasAPaletteAndDuskIsDark() {
+        for v in VenueID.allCases {
+            let p = ScenePalette.forVenue(v)
+            XCTAssertEqual(p.venue, v)
+            XCTAssertFalse(p.dusk)
+            let d = p.duskified()
+            XCTAssertTrue(d.dusk)
+            XCTAssertTrue(d.isDark)
+        }
+    }
+
+    @MainActor
+    func testBackdropPaintsForEveryLook() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        for v in VenueID.allCases {
+            let tex = SceneArt.backdrop(layout: layout, palette: ScenePalette.forVenue(v), dailyNumber: nil, scale: 1)
+            XCTAssertGreaterThan(tex.size().width, 0)
+        }
+        let dusk = SceneArt.backdrop(layout: layout, palette: ScenePalette.forVenue(nil).duskified(), dailyNumber: 297, scale: 1)
+        XCTAssertGreaterThan(dusk.size().height, 0)
+        let phone = WorldLayout.make(canvas: CGSize(width: 402, height: 874), hasFold: false)
+        let tex = SceneArt.backdrop(layout: phone, palette: ScenePalette.forVenue(.conveyor), dailyNumber: 12, scale: 1)
+        XCTAssertGreaterThan(tex.size().width, 0)
+    }
+
+    @MainActor
+    func testSafeRangeMatchesThePhoneCrop() {
+        let phone = GameScene(layout: WorldLayout.make(canvas: CGSize(width: 402, height: 874), hasFold: false))
+        XCTAssertGreaterThanOrEqual(phone.safeX.lowerBound, 125)
+        XCTAssertLessThanOrEqual(phone.safeX.upperBound, 545)
+        let duo = GameScene(layout: WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true))
+        XCTAssertLessThan(duo.safeX.lowerBound, 30)
+        XCTAssertGreaterThan(duo.safeX.upperBound, 640)
+    }
+
+    /// Drives a real session through the scene for a few seconds (pour, serve, FX) to catch runtime traps.
+    @MainActor
+    func testSceneRendersARealSession() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let modes: [GameMode] = [.shift(LevelCatalog.levels.first?.id ?? "1-1"), .rush, .daily(297)]
+        for mode in modes {
+            let session = GameSession(mode: mode, layout: layout, seed: 7)
+            let scene = GameScene(layout: layout)
+            let driver = SceneTestDriver(session)
+            scene.driver = driver
+            scene.reset(for: session.snapshot)
+            var t: TimeInterval = 100
+            for frame in 0..<(60 * 9) {
+                let s = Double(frame) / 60
+                // Flat first (the gate), then lift to pour, then lay flat again, repeatedly.
+                let phase = s.truncatingRemainder(dividingBy: 3)
+                driver.tilt = s < 0.5 ? 0 : (phase < 1.6 ? 48 : 0)
+                t += 1.0 / 60.0
+                scene.update(t)
+            }
+            XCTAssertFalse(scene.jugWorldBounds.isNull)
+            scene.venue = .potionShop
+            scene.rushLook = true
+            scene.dailyNumber = 300
+            scene.update(t + 1.0 / 60.0)
+        }
+    }
+
     @MainActor
     func testSceneBuildsAtLayoutSize() {
         let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), creaseFromTop: 455...495)
@@ -104,6 +210,24 @@ final class SceneTests: XCTestCase {
         XCTAssertEqual(scene.size.height, layout.size.height, accuracy: 0.001)
         scene.reduceMotion = true
         scene.venue = .potionShop
+        scene.rushLook = true
+        scene.dailyNumber = 297
         XCTAssertNil(scene.driver)
+    }
+}
+
+/// Steps a real GameSession for the scene smoke test.
+@MainActor
+private final class SceneTestDriver: SceneDriver {
+    let session: GameSession
+    var tilt: Double = 0
+
+    init(_ session: GameSession) {
+        self.session = session
+    }
+
+    func advance(dt: Double, now: TimeInterval) -> (GameSnapshot, [GameEvent])? {
+        let events = session.step(dt: dt, tilt: tilt)
+        return (session.snapshot, events)
     }
 }

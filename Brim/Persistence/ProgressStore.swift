@@ -92,6 +92,30 @@ struct ProgressData: Codable, Equatable {
         LevelCatalog.levels(in: venue).reduce(0) { $0 + min(stars(for: $1.id), 3) }
     }
 
+    /// The next venue the player can open with stars, and how many more stars it needs (nil when every star venue is
+    /// open; the secret Sand Bar is never named).
+    var nextUnlock: (venue: VenueID, missing: Int)? {
+        let total = totalStars
+        for venue in VenueID.allCases where venue != .sandBar && !isUnlocked(venue) {
+            return (venue, max(LevelCatalog.starsToUnlock(venue) - total, 0))
+        }
+        return nil
+    }
+
+    // MARK: Daily streak
+
+    /// Consecutive days with a scored Daily Pour, ending today (or yesterday, if today's isn't poured yet: the streak
+    /// is still alive until today ends).
+    func dailyStreak(today: Int) -> Int {
+        var day = daily[today] != nil ? today : today - 1
+        var count = 0
+        while daily[day] != nil {
+            count += 1
+            day -= 1
+        }
+        return count
+    }
+
     // MARK: Recording
 
     /// Folds a finished run into the progress. `today` = `LevelCatalog.dayNumber(for: Date())`.
@@ -213,6 +237,7 @@ final class ProgressStore: ObservableObject {
     func isUnlocked(_ venue: VenueID) -> Bool { data.isUnlocked(venue) }
     func isPlayable(_ level: Level) -> Bool { data.isPlayable(level) }
     func dailyRecord(day: Int) -> DailyRecord? { data.daily[day] }
+    func dailyStreak(today: Int) -> Int { data.dailyStreak(today: today) }
     func hasSeenHint(_ id: String) -> Bool { data.hintsSeen.contains(id) }
 
     /// The shift after `levelID` in play order, if it is playable now.

@@ -1,8 +1,13 @@
 import SpriteKit
 import UIKit
 
-/// The glass jug on the raised half. Static parts (walls, handle, highlights) are built once per jug shape in
-/// jug-local space and rotated as a group; the liquid is redrawn every frame from the snapshot's world polygon.
+/// The pouring vessel on the raised half, in the app icon's art language (REVIEW-1 P1-9): a clear glass body so the
+/// player can read the level, a thick ink outline, a ceramic (or chrome / steel) accent on the rim, handle and foot,
+/// a glossy specular streak and a decal on the belly. One dressing per venue (`VesselStyle`, P1-6).
+///
+/// Static parts are built once per jug shape in jug-local space and rotated as a group; the liquid is redrawn every
+/// frame from the snapshot's world polygon, plus a short "spout sheet" that joins the liquid to the stream at the lip
+/// (P0-4: the stream visibly comes out of the body).
 @MainActor
 final class SceneJug {
     let root: SKNode
@@ -20,21 +25,33 @@ final class SceneJug {
     // liquid (world space)
     private let liquid: SKShapeNode
     private let surface: SKShapeNode
+    private let spoutSheet: SKShapeNode
 
     // front (in front of the liquid)
+    private let footBand: SKShapeNode
     private let wallBody: SKShapeNode
     private let wallOuter: SKShapeNode
     private let wallInner: SKShapeNode
+    private let rimBand: SKShapeNode
+    private let rimBandShine: SKShapeNode
     private let rim: SKShapeNode
     private let shine: SKShapeNode
     private let shineDot: SKShapeNode
+    private let metalLines: SKShapeNode
+    private let decal: SKSpriteNode
     private let lipGlint: SKShapeNode
 
     private var localOutline: [CGPoint] = []
+    /// Angle of the outline's first edge in the cached local frame (lets us follow outlines Core rotates further,
+    /// e.g. the sand pile, without rebuilding every frame).
+    private var baseEdgeAngle: CGFloat = 0
     private var liquidID: LiquidID?
+    private var styleKey = ""
+    private var style: VesselStyle
     private let wall: CGFloat = 9
 
     init() {
+        style = ScenePalette.forVenue(nil).vessel
         root = SKNode()
         shadow = SKShapeNode()
         backFrame = SKNode()
@@ -45,40 +62,45 @@ final class SceneJug {
         interior = SKShapeNode()
         liquid = SKShapeNode()
         surface = SKShapeNode()
+        spoutSheet = SKShapeNode()
+        footBand = SKShapeNode()
         wallBody = SKShapeNode()
         wallOuter = SKShapeNode()
         wallInner = SKShapeNode()
+        rimBand = SKShapeNode()
+        rimBandShine = SKShapeNode()
         rim = SKShapeNode()
         shine = SKShapeNode()
         shineDot = SKShapeNode()
+        metalLines = SKShapeNode()
+        decal = SKSpriteNode()
         lipGlint = SKShapeNode()
 
         let ink = SceneColor.ink
-        shadow.fillColor = ink.withAlphaComponent(0.09)
+        shadow.fillColor = ink.withAlphaComponent(0.10)
         shadow.strokeColor = .clear
         shadow.zPosition = 0
 
         backFrame.zPosition = 1
         liquid.zPosition = 2
         surface.zPosition = 2.5
+        spoutSheet.zPosition = 2.4
         frontFrame.zPosition = 3
 
-        handleOutline.strokeColor = ink.withAlphaComponent(0.26)
-        handleOutline.lineWidth = 15.5
+        handleOutline.strokeColor = ink.withAlphaComponent(0.8)
+        handleOutline.lineWidth = 19
         handleOutline.lineCap = .round
         handleOutline.fillColor = .clear
         handleOutline.zPosition = 0
-        handleBody.strokeColor = SceneColor.jugGlass.withAlphaComponent(0.95)
-        handleBody.lineWidth = 12
+        handleBody.lineWidth = 13
         handleBody.lineCap = .round
         handleBody.fillColor = .clear
         handleBody.zPosition = 0.1
-        handleShine.strokeColor = UIColor(white: 1, alpha: 0.85)
-        handleShine.lineWidth = 3
+        handleShine.strokeColor = UIColor(white: 1, alpha: 0.6)
+        handleShine.lineWidth = 3.5
         handleShine.lineCap = .round
         handleShine.fillColor = .clear
         handleShine.zPosition = 0.2
-        interior.fillColor = UIColor(white: 1, alpha: 0.34)
         interior.strokeColor = .clear
         interior.zPosition = 0.3
         backFrame.addChild(handleOutline)
@@ -89,93 +111,145 @@ final class SceneJug {
         liquid.fillColor = .white
         liquid.strokeColor = .clear
         surface.fillColor = .clear
-        surface.lineWidth = 2.6
+        surface.lineWidth = 3
         surface.lineCap = .round
+        spoutSheet.strokeColor = .clear
+        spoutSheet.isHidden = true
 
-        wallBody.strokeColor = SceneColor.jugGlass.withAlphaComponent(0.72)
+        footBand.strokeColor = .clear
+        footBand.zPosition = -0.1
         wallBody.lineWidth = wall
         wallBody.lineCap = .round
         wallBody.lineJoin = .round
         wallBody.fillColor = .clear
         wallBody.zPosition = 0
-        wallOuter.strokeColor = ink.withAlphaComponent(0.30)
-        wallOuter.lineWidth = 1.7
+        wallOuter.strokeColor = ink.withAlphaComponent(0.78)
+        wallOuter.lineWidth = 3
         wallOuter.lineCap = .round
         wallOuter.lineJoin = .round
         wallOuter.fillColor = .clear
-        wallOuter.zPosition = 0.1
-        wallInner.strokeColor = UIColor(white: 1, alpha: 0.6)
-        wallInner.lineWidth = 1.3
+        wallOuter.zPosition = 0.15
+        wallInner.strokeColor = UIColor(white: 1, alpha: 0.75)
+        wallInner.lineWidth = 1.5
         wallInner.lineJoin = .round
         wallInner.fillColor = .clear
-        wallInner.zPosition = 0.2
-        rim.strokeColor = UIColor(white: 1, alpha: 0.85)
-        rim.fillColor = UIColor(white: 1, alpha: 0.10)
-        rim.lineWidth = 2.2
+        wallInner.zPosition = 0.1
+        rimBand.lineWidth = wall + 3
+        rimBand.lineCap = .round
+        rimBand.lineJoin = .round
+        rimBand.fillColor = .clear
+        rimBand.zPosition = 0.2
+        rimBandShine.strokeColor = UIColor(white: 1, alpha: 0.45)
+        rimBandShine.lineWidth = 2.5
+        rimBandShine.lineCap = .round
+        rimBandShine.fillColor = .clear
+        rimBandShine.zPosition = 0.25
+        rim.strokeColor = UIColor(white: 1, alpha: 0.9)
+        rim.fillColor = UIColor(white: 1, alpha: 0.08)
+        rim.lineWidth = 2.4
         rim.zPosition = 0.3
-        shine.strokeColor = UIColor(white: 1, alpha: 0.55)
-        shine.lineWidth = 5
+        shine.strokeColor = UIColor(white: 1, alpha: 0.78)
+        shine.lineWidth = 7
         shine.lineCap = .round
         shine.fillColor = .clear
         shine.zPosition = 0.4
-        shineDot.strokeColor = UIColor(white: 1, alpha: 0.5)
-        shineDot.lineWidth = 4
+        shineDot.strokeColor = UIColor(white: 1, alpha: 0.7)
+        shineDot.lineWidth = 5
         shineDot.lineCap = .round
         shineDot.fillColor = .clear
         shineDot.zPosition = 0.4
-        lipGlint.fillColor = UIColor(white: 1, alpha: 0.9)
+        metalLines.strokeColor = UIColor(white: 1, alpha: 0.45)
+        metalLines.lineWidth = 1.2
+        metalLines.lineCap = .round
+        metalLines.fillColor = .clear
+        metalLines.zPosition = 0.35
+        decal.zPosition = 0.45
+        lipGlint.fillColor = UIColor(white: 1, alpha: 0.95)
         lipGlint.strokeColor = .clear
         lipGlint.zPosition = 0.5
-        lipGlint.path = CGPath(ellipseIn: CGRect(x: -2.2, y: -2.2, width: 4.4, height: 4.4), transform: nil)
-        frontFrame.addChild(wallBody)
-        frontFrame.addChild(wallOuter)
-        frontFrame.addChild(wallInner)
-        frontFrame.addChild(rim)
-        frontFrame.addChild(shine)
-        frontFrame.addChild(shineDot)
+        lipGlint.path = CGPath(ellipseIn: CGRect(x: -2.6, y: -2.6, width: 5.2, height: 5.2), transform: nil)
+        for n in [footBand, wallBody, wallInner, wallOuter, rimBand, rimBandShine, rim, metalLines, shine, shineDot] {
+            frontFrame.addChild(n)
+        }
+        frontFrame.addChild(decal)
         frontFrame.addChild(lipGlint)
 
         root.addChild(shadow)
         root.addChild(backFrame)
         root.addChild(liquid)
+        root.addChild(spoutSheet)
         root.addChild(surface)
         root.addChild(frontFrame)
+        applyStyleColors()
     }
 
-    func update(_ j: JugState) {
+    /// Venue dressing. Cheap to call repeatedly; rebuilds only when it changes.
+    func setStyle(_ s: VesselStyle) {
+        let key = "\(s.decal.rawValue)-\(s.accent.hashValue)-\(s.metallic)-\(s.glassTint.hashValue)"
+        if key == styleKey { return }
+        styleKey = key
+        style = s
+        applyStyleColors()
+        localOutline = []          // force a rebuild (decal, metal lines)
+    }
+
+    private func applyStyleColors() {
+        handleBody.strokeColor = style.accent
+        interior.fillColor = style.glassTint
+        footBand.fillColor = style.accent
+        wallBody.strokeColor = style.wall
+        rimBand.strokeColor = style.accent
+        metalLines.isHidden = !style.metallic
+    }
+
+    func update(_ j: JugState, streamWidth: CGFloat) {
         guard j.outline.count >= 3 else {
             root.isHidden = true
             return
         }
         root.isHidden = false
-        let rad = CGFloat(j.angle) * .pi / 180
+        // Rotation: follow the outline itself (Core may rotate it beyond `angle`, e.g. sand).
+        let o0 = j.outline[0], o1 = j.outline[1]
+        let worldEdge = atan2(o1.y - o0.y, o1.x - o0.x)
+        var rad = CGFloat(j.angle) * .pi / 180
+        if !localOutline.isEmpty { rad = baseEdgeAngle - worldEdge }
         var local: [CGPoint] = []
         local.reserveCapacity(j.outline.count)
         for p in j.outline { local.append(ScenePaths.toLocal(p, pivot: j.pivot, radians: rad)) }
+        if needsRebuild(local) {
+            rad = CGFloat(j.angle) * .pi / 180
+            local.removeAll(keepingCapacity: true)
+            for p in j.outline { local.append(ScenePaths.toLocal(p, pivot: j.pivot, radians: rad)) }
+            let lipLocal0 = ScenePaths.toLocal(j.lip, pivot: j.pivot, radians: rad)
+            rebuild(local, lip: lipLocal0)
+            if local.count >= 2 {
+                baseEdgeAngle = atan2(local[1].y - local[0].y, local[1].x - local[0].x)
+            }
+        }
         let lipLocal = ScenePaths.toLocal(j.lip, pivot: j.pivot, radians: rad)
-        if needsRebuild(local) { rebuild(local, lip: lipLocal) }
 
         backFrame.position = j.pivot
         backFrame.zRotation = -rad
         frontFrame.position = j.pivot
         frontFrame.zRotation = -rad
-        shadow.position = CGPoint(x: j.pivot.x + 7, y: j.pivot.y - 9)
+        shadow.position = CGPoint(x: j.pivot.x + 8, y: j.pivot.y - 10)
         shadow.zRotation = -rad
         lipGlint.position = CGPoint(x: lipLocal.x, y: lipLocal.y + 1)
-        lipGlint.alpha = CGFloat(min(1, 0.35 + j.flow * 2))
+        lipGlint.alpha = CGFloat(min(1, 0.4 + j.flow * 2))
 
         // Liquid (world polygon from Core, already level).
         if liquidID != j.liquid.id {
             liquidID = j.liquid.id
             liquid.fillTexture = SceneArt.liquidTexture(j.liquid)
             liquid.fillColor = .white
-            surface.strokeColor = SceneColor.lighter(SceneColor.opaque(j.liquid.top.skColor), 0.55)
+            let top = SceneColor.opaque(j.liquid.top.skColor)
+            surface.strokeColor = SceneColor.lighter(top, 0.6)
+            spoutSheet.fillColor = SceneColor.mix(SceneColor.opaque(j.liquid.bottom.skColor), top, 0.65)
         }
         if j.liquidPolygon.count >= 3 && j.fill > 0.0005 {
             liquid.isHidden = false
-            liquid.alpha = CGFloat(max(0.82, j.liquid.opacity))
+            liquid.alpha = CGFloat(max(0.86, j.liquid.opacity))
             liquid.path = ScenePaths.polygon(j.liquidPolygon)
-            // Bright surface line along the level top edge.
             var maxY = -CGFloat.greatestFiniteMagnitude
             for p in j.liquidPolygon { maxY = max(maxY, p.y) }
             var minX = CGFloat.greatestFiniteMagnitude, maxX = -CGFloat.greatestFiniteMagnitude
@@ -185,17 +259,46 @@ final class SceneJug {
             }
             if maxX - minX > 6 {
                 let line = CGMutablePath()
-                line.move(to: CGPoint(x: minX + 2.5, y: maxY - 1))
-                line.addLine(to: CGPoint(x: maxX - 2.5, y: maxY - 1))
+                line.move(to: CGPoint(x: minX + 3, y: maxY - 1.2))
+                line.addLine(to: CGPoint(x: maxX - 3, y: maxY - 1.2))
                 surface.path = line
                 surface.isHidden = false
             } else {
                 surface.isHidden = true
             }
+            updateSpoutSheet(j, streamWidth: streamWidth)
         } else {
             liquid.isHidden = true
             surface.isHidden = true
+            spoutSheet.isHidden = true
         }
+    }
+
+    /// While pouring, a tapered sheet of liquid runs from the body's nearest liquid edge to the lip, so the stream
+    /// is visibly fed by the jug (REVIEW-1 P0-4).
+    private func updateSpoutSheet(_ j: JugState, streamWidth: CGFloat) {
+        guard j.flow > 0.015, streamWidth > 0.5 else {
+            spoutSheet.isHidden = true
+            return
+        }
+        let qi = ScenePaths.nearestIndex(j.liquidPolygon, to: j.lip)
+        guard qi >= 0 else {
+            spoutSheet.isHidden = true
+            return
+        }
+        let q = j.liquidPolygon[qi]
+        let d = ScenePaths.distance(q, j.lip)
+        if d < 1.5 || d > 90 {
+            spoutSheet.isHidden = true
+            return
+        }
+        let mid = CGPoint(x: (q.x + j.lip.x) * 0.5, y: max(q.y, j.lip.y) + 1)
+        let w = max(3, streamWidth)
+        let path = CGMutablePath()
+        ScenePaths.addRibbon(path, points: [q, mid, j.lip], widths: [w * 1.6, w * 1.25, w])
+        spoutSheet.path = path
+        spoutSheet.isHidden = false
+        spoutSheet.alpha = CGFloat(max(0.86, j.liquid.opacity))
     }
 
     private func needsRebuild(_ local: [CGPoint]) -> Bool {
@@ -206,7 +309,7 @@ final class SceneJug {
         return false
     }
 
-    /// Builds every static part in jug-local coordinates (pivot at the origin, jug upright).
+    /// Builds every static part in jug-local coordinates (pivot at the origin).
     private func rebuild(_ local: [CGPoint], lip: CGPoint) {
         localOutline = local
         let n = local.count
@@ -240,6 +343,19 @@ final class SceneJug {
         wallInner.path = ScenePaths.polyline(local, order: order)
         shadow.path = ScenePaths.polygon(outer)
 
+        // Ceramic rim band around the top ~14 % (mouth + spout), and a foot band at the bottom ~9 %.
+        let bandLevel = b.maxY - b.height * 0.14
+        rimBand.path = ScenePaths.polylineAbove(mid, order: order, level: bandLevel)
+        rimBandShine.path = ScenePaths.polylineAbove(ScenePaths.offsetPolygon(local, by: wall * 0.3), order: order,
+                                                     level: bandLevel + 4)
+        let foot = ScenePaths.clip(outer, level: b.minY + b.height * 0.09, below: true)
+        if foot.count >= 3 {
+            footBand.path = ScenePaths.polygon(foot)
+            footBand.isHidden = false
+        } else {
+            footBand.isHidden = true
+        }
+
         // Rim ellipse across the mouth.
         if mouth >= 0 {
             let a = mid[mouth], c = mid[(mouth + 1) % n]
@@ -252,32 +368,32 @@ final class SceneJug {
             rim.isHidden = true
         }
 
-        // Handle on the side opposite the lip.
+        // Handle on the side opposite the lip: a chunky ceramic loop with an ink keyline.
         let side: CGFloat = lip.x >= b.midX ? -1 : 1
-        let yTop = b.minY + b.height * 0.76
+        let yTop = b.minY + b.height * 0.78
         let yBot = b.minY + b.height * 0.30
         let xTop = ScenePaths.xOnPolygon(outer, atY: yTop, rightmost: side > 0) ?? (side > 0 ? b.maxX : b.minX)
         let xBot = ScenePaths.xOnPolygon(outer, atY: yBot, rightmost: side > 0) ?? (side > 0 ? b.maxX : b.minX)
-        let bulge = max(30, b.width * 0.34)
+        let bulge = max(32, b.width * 0.36)
         let handle = CGMutablePath()
-        handle.move(to: CGPoint(x: xTop - side * 4, y: yTop))
-        handle.addCurve(to: CGPoint(x: xBot - side * 4, y: yBot),
-                        control1: CGPoint(x: xTop + side * bulge, y: yTop + 16),
-                        control2: CGPoint(x: xBot + side * bulge * 0.92, y: yBot - 12))
+        handle.move(to: CGPoint(x: xTop - side * 5, y: yTop))
+        handle.addCurve(to: CGPoint(x: xBot - side * 5, y: yBot),
+                        control1: CGPoint(x: xTop + side * bulge, y: yTop + 18),
+                        control2: CGPoint(x: xBot + side * bulge * 0.92, y: yBot - 14))
         handleOutline.path = handle
         handleBody.path = handle
         let shinePath = CGMutablePath()
-        shinePath.move(to: CGPoint(x: xTop + side * bulge * 0.35, y: yTop + 6))
-        shinePath.addQuadCurve(to: CGPoint(x: xTop + side * bulge * 0.62, y: yTop - b.height * 0.12),
-                               control: CGPoint(x: xTop + side * bulge * 0.6, y: yTop + 4))
+        shinePath.move(to: CGPoint(x: xTop + side * bulge * 0.32, y: yTop + 7))
+        shinePath.addQuadCurve(to: CGPoint(x: xTop + side * bulge * 0.62, y: yTop - b.height * 0.13),
+                               control: CGPoint(x: xTop + side * bulge * 0.6, y: yTop + 5))
         handleShine.path = shinePath
 
-        // Specular streak down the left wall (light from the top-left).
+        // Specular streak down the light side (top-left), fat and bright like the icon's.
         var streak: [CGPoint] = []
         for k in 0...6 {
-            let y = b.minY + b.height * (0.26 + 0.44 * CGFloat(k) / 6)
+            let y = b.minY + b.height * (0.24 + 0.42 * CGFloat(k) / 6)
             if let x = ScenePaths.xOnPolygon(local, atY: y, rightmost: false) {
-                streak.append(CGPoint(x: x + 9, y: y))
+                streak.append(CGPoint(x: x + 12, y: y))
             }
         }
         if streak.count >= 2 {
@@ -289,16 +405,45 @@ final class SceneJug {
         } else {
             shine.isHidden = true
         }
-        let dotY0 = b.minY + b.height * 0.76, dotY1 = b.minY + b.height * 0.82
+        let dotY0 = b.minY + b.height * 0.72, dotY1 = b.minY + b.height * 0.78
         if let x0 = ScenePaths.xOnPolygon(local, atY: dotY0, rightmost: false),
            let x1 = ScenePaths.xOnPolygon(local, atY: dotY1, rightmost: false) {
             let dp = CGMutablePath()
-            dp.move(to: CGPoint(x: x0 + 9, y: dotY0))
-            dp.addLine(to: CGPoint(x: x1 + 9, y: dotY1))
+            dp.move(to: CGPoint(x: x0 + 12, y: dotY0))
+            dp.addLine(to: CGPoint(x: x1 + 12, y: dotY1))
             shineDot.path = dp
             shineDot.isHidden = false
         } else {
             shineDot.isHidden = true
         }
+
+        // Brushed-metal hairlines (chrome soda jug, steel shake tin).
+        if style.metallic {
+            let mp = CGMutablePath()
+            for (k, frac) in [CGFloat(0.22), CGFloat(0.5), CGFloat(0.78)].enumerated() {
+                let y = b.minY + b.height * frac
+                if let xl = ScenePaths.xOnPolygon(mid, atY: y, rightmost: false),
+                   let xr = ScenePaths.xOnPolygon(mid, atY: y, rightmost: true) {
+                    let inset: CGFloat = k == 1 ? 3 : 1
+                    mp.move(to: CGPoint(x: xl - inset, y: y - 6))
+                    mp.addLine(to: CGPoint(x: xl - inset, y: y + 6))
+                    mp.move(to: CGPoint(x: xr + inset, y: y - 4))
+                    mp.addLine(to: CGPoint(x: xr + inset, y: y + 4))
+                }
+            }
+            metalLines.path = mp
+        }
+
+        // The belly decal (the icon's lemon roundel on the Lemonade Stand jug).
+        let dia = min(70, max(30, b.width * 0.36))
+        let art = SceneArt.decal(style.decal, accent: style.accent, diameter: dia)
+        decal.texture = art.texture
+        decal.size = art.size
+        let decalY = b.minY + b.height * 0.42
+        let leftX = ScenePaths.xOnPolygon(local, atY: decalY, rightmost: false) ?? b.minX
+        let rightX = ScenePaths.xOnPolygon(local, atY: decalY, rightmost: true) ?? b.maxX
+        let cx = leftX + (rightX - leftX) * (side < 0 ? 0.56 : 0.44)
+        decal.position = CGPoint(x: cx, y: decalY)
+        decal.zRotation = -0.08
     }
 }

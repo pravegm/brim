@@ -4,6 +4,12 @@ import Foundation
 // Pure geometry used by the scene. No SpriteKit / UIKit, no actor isolation, so it is unit-testable
 // (BrimTests/SceneTests.swift).
 
+/// A puddle on the counter: where, and how many spill marks fed it (it spreads with the count).
+struct PuddleBlob: Equatable {
+    var center: CGPoint
+    var count: Int
+}
+
 enum ScenePaths {
 
     // MARK: Glass profile
@@ -106,6 +112,43 @@ enum ScenePaths {
             i -= 1
         }
         path.closeSubpath()
+    }
+
+    /// Lateral wobble of a ribbon's centre line: a travelling sine along the arc length, zero at the spout and
+    /// growing over the first ~120 pt, amplitude `amplitude × width`.
+    static func wobble(_ p: inout [CGPoint], widths w: [CGFloat], amplitude: CGFloat, time: CGFloat) {
+        let n = min(p.count, w.count)
+        guard n >= 3, amplitude > 0 else { return }
+        let src = p
+        var s: CGFloat = 0
+        for i in 0..<n {
+            if i > 0 { s += distance(src[i - 1], src[i]) }
+            let a = src[max(i - 1, 0)], b = src[min(i + 1, n - 1)]
+            let dx = b.x - a.x, dy = b.y - a.y
+            let len = hypot(dx, dy)
+            if len < 0.0001 { continue }
+            let nx = -dy / len, ny = dx / len
+            let ramp = min(1, s / 120)
+            let off = amplitude * w[i] * ramp * sin(time * 5.5 - s * 0.05)
+            p[i] = CGPoint(x: src[i].x + nx * off, y: src[i].y + ny * off)
+        }
+    }
+
+    /// Groups puddle marks (Core may repeat points to say "this puddle grew") into blobs: centre + how many marks.
+    static func puddleBlobs(_ pts: [CGPoint], radius: CGFloat) -> [PuddleBlob] {
+        var blobs: [PuddleBlob] = []
+        for q in pts {
+            var merged = false
+            for i in 0..<blobs.count where abs(blobs[i].center.x - q.x) <= radius {
+                let k = CGFloat(blobs[i].count)
+                blobs[i].center = CGPoint(x: (blobs[i].center.x * k + q.x) / (k + 1), y: (blobs[i].center.y * k + q.y) / (k + 1))
+                blobs[i].count += 1
+                merged = true
+                break
+            }
+            if !merged { blobs.append(PuddleBlob(center: q, count: 1)) }
+        }
+        return blobs
     }
 
     /// Splits an ordered polyline into runs wherever two consecutive points are further apart than `gap`
@@ -234,6 +277,73 @@ enum ScenePaths {
             } else {
                 best = x
             }
+        }
+        return best
+    }
+
+    /// The part of polygon `pts` at or below y = `level` (`below` true) or at or above it (`below` false).
+    /// Sutherland–Hodgman against one horizontal half-plane. Empty if fewer than 3 points survive.
+    static func clip(_ pts: [CGPoint], level: CGFloat, below: Bool) -> [CGPoint] {
+        let n = pts.count
+        guard n >= 3 else { return [] }
+        var out: [CGPoint] = []
+        out.reserveCapacity(n + 4)
+        for i in 0..<n {
+            let a = pts[i], b = pts[(i + 1) % n]
+            let aIn = below ? a.y <= level : a.y >= level
+            let bIn = below ? b.y <= level : b.y >= level
+            if aIn { out.append(a) }
+            if aIn != bIn {
+                let dy = b.y - a.y
+                let t = abs(dy) > 1e-9 ? (level - a.y) / dy : 0
+                out.append(CGPoint(x: a.x + t * (b.x - a.x), y: level))
+            }
+        }
+        return out.count >= 3 ? out : []
+    }
+
+    /// An open polyline visiting `pts` in `order`, keeping only the parts at or above y = `level` (each run becomes
+    /// its own subpath; crossings are interpolated).
+    static func polylineAbove(_ pts: [CGPoint], order: [Int], level: CGFloat) -> CGMutablePath {
+        let path = CGMutablePath()
+        var prev: CGPoint?
+        var drawing = false
+        for idx in order where idx >= 0 && idx < pts.count {
+            let p = pts[idx]
+            let inside = p.y >= level
+            if let q = prev {
+                let qIn = q.y >= level
+                if qIn != inside {
+                    let dy = p.y - q.y
+                    let t = abs(dy) > 1e-9 ? (level - q.y) / dy : 0
+                    let c = CGPoint(x: q.x + t * (p.x - q.x), y: level)
+                    if inside {
+                        path.move(to: c)
+                        path.addLine(to: p)
+                        drawing = true
+                    } else {
+                        if drawing { path.addLine(to: c) }
+                        drawing = false
+                    }
+                } else if inside {
+                    if drawing { path.addLine(to: p) } else { path.move(to: p); drawing = true }
+                }
+            } else if inside {
+                path.move(to: p)
+                drawing = true
+            }
+            prev = p
+        }
+        return path
+    }
+
+    /// Index of the polygon vertex nearest to `p` (-1 for an empty polygon).
+    static func nearestIndex(_ pts: [CGPoint], to p: CGPoint) -> Int {
+        var best = -1
+        var bestD = CGFloat.greatestFiniteMagnitude
+        for (i, q) in pts.enumerated() {
+            let d = (q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y)
+            if d < bestD { bestD = d; best = i }
         }
         return best
     }

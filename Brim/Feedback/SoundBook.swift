@@ -141,9 +141,35 @@ enum SoundBook {
         }
     }
 
+    // MARK: The Perfect-band shimmer (REVIEW-1 P2-8)
+
+    /// Perfect-band half width (fraction of interior height) assumed until the glass reveals its own.
+    static let defaultBand = 0.03
+    /// Peak level of the shimmer (before master): a faint, clearly pitched layer over the rush.
+    static let shimmerPeak: Float = 0.055
+
+    /// 0…1 shimmer level for the projected distance to the line: silent beyond 1.3 bands, swelling (smoothstep)
+    /// through the band edge (≈ 0.4 there), full in the inner 60 % of the band. Symmetric: past the line it fades too.
+    static func shimmerLevel(projectedDistance: Double, band: Double) -> Double {
+        guard projectedDistance.isFinite else { return 0 }
+        let b = band.isFinite && band > 0.005 ? band : defaultBand
+        let x = abs(projectedDistance) / b
+        if x >= 1.3 { return 0 }
+        if x <= 0.6 { return 1 }
+        let u = (1.3 - x) / 0.7
+        return u * u * (3 - 2 * u)
+    }
+
+    /// The shimmer sings the note the next Perfect will ting, an octave down (the reward then resolves it).
+    static func shimmerHz(streak: Int) -> Double {
+        tingFrequency(streak: max(streak, 0) + 1) / 2
+    }
+
     /// The continuous pour layers for this frame. `foam` is the active glass's head as a fraction of its interior
     /// height (fizz keeps crackling while it settles). Levels follow √(rush) for a perceptually even swell.
-    static func pourBed(telemetry: PourTelemetry, foam: Double, texture: PourTexture, master: Float) -> PourBed {
+    /// `band` is the Perfect band (fraction of interior height) and `streak` the current streak, for the shimmer.
+    static func pourBed(telemetry: PourTelemetry, foam: Double, texture: PourTexture, master: Float,
+                        band: Double = defaultBand, streak: Int = 0) -> PourBed {
         let flow = clamp01(telemetry.flow)
         let landing = clamp01(telemetry.landingRate)
         let rush = 0.35 * flow + 0.65 * landing
@@ -165,6 +191,12 @@ enum SoundBook {
             bed.hissCenter = 5200
         }
         bed.turbulence = texture.turbulence
+        // The shimmer only matters while the pour is still deciding the level (pouring, or the stream still landing);
+        // once everything has landed it fades and the lock-in tink takes over.
+        let live = flow > 0.004 || landing > 0.01
+        let shimmer = live ? shimmerLevel(projectedDistance: telemetry.projectedDistanceToLine, band: band) : 0
+        bed.shimmerGain = Float(shimmer) * shimmerPeak
+        bed.shimmerHz = Float(shimmerHz(streak: streak))
         return bed
     }
 
@@ -242,19 +274,51 @@ enum SoundBook {
         ]
     }
 
-    /// Spill (overflow): a splash burst, a wet slap, then drip plinks.
+    /// Spill (played once, the instant the glass overflows — Core judges it live): the lip breaks in a wet burst, a
+    /// low slap of liquid on the counter, the sheet running down the glass (~0.6 s, as Scene draws it), a little
+    /// falling "uh-oh", then drip plinks.
     static func spill(dice: inout FeelDice) -> [SynthCommand] {
         var commands: [SynthCommand] = [
             .noise(SynthNoise(.bandPass, cutoff: 1500, to: 500, sweep: 0.3, q: 0.7, attack: 0.004, decay: 0.18,
                               gain: 0.3)),
             .noise(SynthNoise(.lowPass, cutoff: 800, q: 0.8, attack: 0.002, decay: 0.07, gain: 0.2)),
+            .noise(SynthNoise(.lowPass, cutoff: 280, to: 140, sweep: 0.12, q: 0.9, attack: 0.003, decay: 0.09,
+                              gain: 0.24, delay: 0.05)),
+            .noise(SynthNoise(.bandPass, cutoff: 950, to: 600, sweep: 0.6, q: 0.8, attack: 0.06, decay: 0.22,
+                              gain: 0.07, delay: 0.04)),
+            .tone(SynthTone(start: 523.3, end: 493.9, glide: 0.12, duration: 0.16, attack: 0.01, decay: 0.1,
+                            gain: 0.045, harmonics: 2, delay: 0.14)),
+            .tone(SynthTone(start: 392, end: 349.2, glide: 0.2, duration: 0.32, attack: 0.015, decay: 0.18,
+                            gain: 0.045, harmonics: 2, vibratoRate: 5, vibratoDepth: 0.006, delay: 0.29)),
         ]
-        let dripTimes: [Float] = [0.32, 0.58, 0.9, 1.3]
+        let dripTimes: [Float] = [0.36, 0.62, 0.94, 1.34]
         for (index, time) in dripTimes.enumerated() {
             commands.append(.bubble(SynthBubble(frequency: Float(dice.range(1700, 2600)), chirp: 1.7, decay: 0.035,
                                                 gain: 0.13 - 0.02 * Float(index), delay: time)))
         }
         return commands
+    }
+
+    /// Lock-in (the stream finished landing with the top inside the Perfect band): a tiny glassy "tink", the octave
+    /// of the Perfect note that is about to confirm it, kept quiet and short so the ting stays the reward.
+    static func lockedIn(streak: Int, dice: inout FeelDice) -> [SynthCommand] {
+        var frequency = tingFrequency(streak: max(streak, 0) + 1) * 2
+        while frequency > 4200 { frequency /= 2 }
+        return [
+            .noise(SynthNoise(.highPass, cutoff: 7500, q: 0.7, attack: 0.0004, decay: 0.0025, gain: 0.018)),
+            .ring(SynthRing(.glass, fundamental: Float(frequency), partials: 2, decay: 0.07, brightness: 0.28,
+                            gain: 0.05, seed: dice.seed32())),
+        ]
+    }
+
+    /// The flat gate opened (phone laid flat): a soft two-stage latch, "thk-tk", low and woody, barely there.
+    static func flatArmed() -> [SynthCommand] {
+        [
+            .ring(SynthRing(.wood, fundamental: 820, partials: 3, decay: 0.016, brightness: 0.35, gain: 0.075)),
+            .noise(SynthNoise(.lowPass, cutoff: 650, q: 0.7, attack: 0.0008, decay: 0.012, gain: 0.045)),
+            .ring(SynthRing(.wood, fundamental: 1230, partials: 2, decay: 0.012, brightness: 0.3, gain: 0.04,
+                            delay: 0.048)),
+        ]
     }
 
     /// Serve: the coaster slides out (filtered noise sweep) and the glass gives a soft clink as it goes.

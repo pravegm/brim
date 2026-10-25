@@ -10,29 +10,34 @@ import UIKit
 // - `screen=menu|venues|results|settings|game|standup|cover|icon`
 //     menu      home screen over the attract loop (practice + perfect autopilot behind it).
 //     venues    venue / shift select.
-//     results   the results card for `mode` (a fixed demo result: 3 stars for shifts, a share row for daily);
-//               the mode's scene runs idle behind it.
+//     results   the results card for `mode`: a REAL run of it, played headless at launch by the autopilot
+//               (`autopilot=` style; default perfect for shifts, great for rush/daily) and recorded into the demo
+//               progress, so score, stars, recap and NEW BEST are all true (REVIEW-1 P1-8). Logs `BRIM-T demo run`.
+//               The mode's scene runs idle behind it.
 //     settings  the settings screen.
 //     game      play `mode` (the default when `mode` is given without `screen`).
-//     standup   force the book-pose "Stand me up like a little laptop" card.
+//     standup   force the book-pose card ("Turn me so the fold runs side to side, then lay me flat").
 //     cover     force the cover-display card ("Open me to pour").
 //     icon      render AppIconArt with ImageRenderer to Documents/AppIcon-1024.png (logs `BRIM-T icon ok|failed`)
 //               and show it full width on black.
 // - `mode=shift:<id>|rush|daily|practice`   e.g. `mode=shift:1-2`. `daily` = today's Daily Pour.
 // - `autopilot=perfect|great|short|spill`   AutopilotTiltSource plays the run.
 // - `freezeOn=midpour|perfect|spill|finished`
-//     Stops calling GameSession.step (the scene keeps drawing the frozen snapshot) and logs `BRIM-T freeze <reason>`:
+//     Stops calling GameSession.step (the scene's cosmetics run on the session clock, so the frame holds) and logs
+//     `BRIM-T freeze <reason> t=… served=… score=… streak=…`:
 //     midpour   the stream is non-empty and the active glass's visible top is ≥ 55 % of its line.
-//     perfect   0.35 s (session time) after the first Perfect is served.
-//     spill     0.35 s after the first Spill is judged.
+//     perfect   0.15 s (session time) after the first live Perfect is served (the big burst on screen).
+//     spill     0.3 s after the liquid first goes over the rim (`overflowStarted`, or a Spill verdict).
 //     finished  when the run finishes; the results card shows at once.
-// - `streak=N`     seeds the HUD's streak / multiplier display (the session's own streak is added on top until the
-//                  first miss). Score and judging are untouched.
+// - `streak=N`     the run is really PLAYED up to an N-Perfect streak (perfect autopilot, headless, at launch) before
+//                  the live frames, leaving at least one order; score, served count and streak agree. Logs
+//                  `BRIM-T streak seeded <n> (asked N) score=… served=…`.
 // - `progress=fresh|mid|full`   in-memory progress (demo runs never write UserDefaults). Default fresh.
 // - `hints=fresh|off`           onboarding hints shown from scratch, or never. Default in demo: off.
 // - `orient=portrait`   asks the window scene for portrait (requestGeometryUpdate), re-asking every 2 s, and logs
-//                       `BRIM-T orient portrait ok` once the interface, the window and the screen are all portrait
-//                       (`… failed` after 30 s, `… lost` if it rotates back later).
+//                       `BRIM-T orient portrait ok` once the interface, the window and the screen are all portrait and
+//                       the window fills the screen (never a letterboxed column) (`… failed` after 30 s, `… lost` if it
+//                       rotates back later). Without it a Duo follows the way it is held (App/OrientationLock.swift).
 // - `duo`        treat the canvas as a Duo (crease band) from the first frame and use the real hinge tilt source
 //                (HingeTiltSource) even in demo. Without `autopilot`/`duo` a demo game uses TouchTiltSource.
 // - `seed=N`     GameSession seed (default: day number for daily, 7 otherwise, so CI frames are stable).
@@ -41,7 +46,9 @@ import UIKit
 // - `BRIM-T demo '<args>' starts` at launch (stdout is line-buffered in demo runs).
 // - `BRIM-T frame 120` after the 120th scene frame (ci/duo.sh waits on it).
 // - `BRIM-T freeze <reason> t=<session s>`, `BRIM-T orient portrait ok|failed|lost`, `BRIM-T icon ok|failed`,
-//   `BRIM-T screen <route>` when the app's screen changes.
+//   `BRIM-T screen <route>` when the app's screen changes, `BRIM-T flat armed t=` when the Duo flat gate opens.
+// - `BRIM-T canvas <w>x<h> hasFold=<bool> pose=play|book|cover` whenever the canvas, fold or pose changes (every DEBUG
+//   build, demo or not).
 
 enum DemoAutopilot: String, Equatable { case perfect, great, short, spill }
 
@@ -151,26 +158,6 @@ struct DemoConfig: Equatable {
         }
         return data
     }
-
-    /// The fixed result `screen=results` shows.
-    func demoResult() -> RunResult {
-        let mode = self.mode ?? .shift(LevelCatalog.levels.first?.id ?? "1-1")
-        switch mode {
-        case .rush:
-            return RunResult(mode: mode, score: 2860, stars: 0, perfects: 9, bestStreak: 7,
-                             judgements: [.perfect, .perfect, .great, .perfect, .perfect, .perfect, .perfect, .perfect,
-                                          .great, .spill, .perfect, .perfect, .good, .spill, .spill],
-                             poured: 52_000, cleared: false)
-        case .daily:
-            return RunResult(mode: mode, score: 1840, stars: 0, perfects: 3, bestStreak: 3,
-                             judgements: [.perfect, .great, .great, .good, .spill, .perfect, .great, .perfect, .good, .great],
-                             poured: 31_000, cleared: true)
-        default:
-            return RunResult(mode: mode, score: 1240, stars: 3, perfects: 4, bestStreak: 4,
-                             judgements: [.perfect, .great, .perfect, .perfect, .perfect, .good],
-                             poured: 18_000, cleared: true)
-        }
-    }
 }
 
 // MARK: - Orientation (Duo simulator starts in book pose; CI asks for the tabletop canvas)
@@ -197,8 +184,10 @@ enum DemoOrientation {
                 let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
                 let w = window?.bounds.size ?? .zero
                 let s = scene.screen.bounds.size
+                // Run 40203342285 logged "ok" for a 469 × 669 letterboxed column: the window must fill the screen.
                 let portrait = scene.effectiveGeometry.interfaceOrientation.isPortrait
                     && w.height > w.width && s.height > s.width
+                    && w.width >= s.width - 2 && w.height >= s.height - 2
                 let shape = "window=\(Int(w.width))x\(Int(w.height)) screen=\(Int(s.width))x\(Int(s.height))"
                 if portrait {
                     let since = matchedSince ?? Date()

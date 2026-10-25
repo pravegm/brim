@@ -64,7 +64,7 @@ enum BrimTheme {
         switch venue {
         case .lemonadeStand: return "sun.max.fill"
         case .sodaFountain: return "bubbles.and.sparkles.fill"
-        case .milkshakeDiner: return "cup.and.saucer.fill"
+        case .milkshakeDiner: return "takeoutbag.and.cup.and.straw.fill"
         case .conveyor: return "arrow.right.circle.fill"
         case .potionShop: return "flask.fill"
         case .sandBar: return "hourglass"
@@ -83,15 +83,38 @@ extension Color {
     }
 }
 
-/// Where the screen's halves are, in full-canvas points measured from the top (safe area ignored).
+/// Where things are on the play canvas, in canvas points measured from the top-left. `insets` are the REAL safe-area
+/// insets (Dynamic Island, rounded corners, the Duo's inner camera cut-out), read by RootView.
 struct CanvasInfo: Equatable {
     var size: CGSize
     var insets: EdgeInsets
-    /// The crease band (Duo tabletop) from the top; nil on phones without a fold.
+    /// The physical fold (Duo tabletop) from the top; nil on phones without a fold.
     var crease: ClosedRange<CGFloat>?
+    /// World → canvas mapping (the one 670 × 952 world, aspect-filled).
+    var mapper: WorldMapper
 
-    var topHalfHeight: CGFloat { crease?.lowerBound ?? size.height * 0.5 }
-    var bottomHalfTop: CGFloat { crease?.upperBound ?? size.height * 0.5 }
+    init(size: CGSize, insets: EdgeInsets, hasFold: Bool) {
+        self.size = size
+        self.insets = insets
+        let mapper = WorldMapper(canvas: size)
+        self.mapper = mapper
+        let band = mapper.y(WorldLayout.creaseTop)...mapper.y(WorldLayout.creaseBottom)
+        self.crease = hasFold ? band : nil
+    }
+
+    var hasFold: Bool { crease != nil }
+    /// The crease band on screen: the real fold on a Duo, the world's virtual crease on other phones.
+    var band: ClosedRange<CGFloat> { mapper.y(WorldLayout.creaseTop)...mapper.y(WorldLayout.creaseBottom) }
+    var topHalfHeight: CGFloat { band.lowerBound }
+    var bottomHalfTop: CGFloat { band.upperBound }
+    /// Bottom edge (from the top) of the world's HUD band (the top 110 world pt).
+    var hudBandBottom: CGFloat { mapper.y(WorldLayout.worldHeight - 110) }
+    /// The counter line (glass bases) on screen.
+    var counterY: CGFloat { mapper.y(WorldLayout.counter) }
+    /// Top of the HUD row: below the Dynamic Island / camera cut-out, never hugging the edge.
+    var hudTop: CGFloat { max(insets.top, 10) + 4 }
+    /// Side padding that clears rounded corners.
+    var sidePad: CGFloat { max(insets.leading, insets.trailing, 0) + 16 }
     var isCompact: Bool { size.height < 760 }
 }
 
@@ -102,6 +125,7 @@ struct BrimButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary, quiet, danger }
     var kind: Kind = .primary
     var height: CGFloat = 60
+    var hPad: CGFloat = 14
 
     func makeBody(configuration: Configuration) -> some View {
         let fill: Color
@@ -118,7 +142,7 @@ struct BrimButtonStyle: ButtonStyle {
             .font(BrimTheme.text(19, .heavy))
             .foregroundStyle(text)
             .frame(maxWidth: .infinity, minHeight: height)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, hPad)
             .background(
                 ZStack {
                     RoundedRectangle(cornerRadius: BrimTheme.buttonRadius, style: .continuous)
@@ -139,6 +163,7 @@ struct BrimButtonStyle: ButtonStyle {
 struct TapButton<Label: View>: View {
     var kind: BrimButtonStyle.Kind = .primary
     var height: CGFloat = 60
+    var hPad: CGFloat = 14
     let action: () -> Void
     @ViewBuilder let label: () -> Label
 
@@ -149,7 +174,7 @@ struct TapButton<Label: View>: View {
         } label: {
             label()
         }
-        .buttonStyle(BrimButtonStyle(kind: kind, height: height))
+        .buttonStyle(BrimButtonStyle(kind: kind, height: height, hPad: hPad))
     }
 }
 

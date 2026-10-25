@@ -5,24 +5,30 @@ import UIKit
 
 /// The SpriteKit view of a `GameSnapshot` (ARCHITECTURE.md "Scene API").
 ///
-/// Layering (content node, back to front):
-///   backdrop (one pre-rendered texture: café back-bar, crease seam, counter)  z −100
-///   coaster  −20 · puddles −10
-///   glass backs (shadow, interior, liquid, foam, bubbles)                      z 0
-///   stream ribbon + droplets                                                   z 10
-///   glass fronts (walls, highlights, rim, fill line, overflow, patience, stamp) z 20
-///   jug                                                                        z 30
-///   FX particles / rings                                                       z 40
-/// `world` (parent of `content`) sits at the canvas centre so the Perfect camera bump is a zoom that never
-/// reveals an edge.
+/// Composition (round 2, one 670 × 952 world for every device): the raised half (y 496…952) is the back bar with the
+/// jug, the fold is y 456…496, the flat half (y 0…456) is the counter top seen from above with the glass in the
+/// middle. The HUD band (y ≥ 842) is kept calm. Phones see x ≈ 116…554 of the same world (aspect fill), so anything
+/// that matters stays inside x 130…540 (`safeX`).
 ///
-/// The scene only draws snapshots and reacts to events; everything it simulates (surface waves, bubbles,
-/// splash particles, stamps) is cosmetic.
+/// Layering (content node, back to front):
+///   backdrop (one pre-rendered texture)          z −100
+///   belt slats (Conveyor) −30 · coaster −20 · puddles −10
+///   glass backs (ring, shadow, interior, liquid, foam, bubbles, flash)   z 0
+///   splash droplets inside the glasses                                   z 8
+///   stream ribbon + droplets                                              z 10
+///   glass fronts (walls, outline, band, line, overflow, stamp)           z 20
+///   jug                                                                   z 30
+///   FX particles / rings                                                  z 40
+/// `world` (parent of `shaker`, parent of `content`) sits at the canvas centre so the Perfect camera bump is a zoom
+/// that never reveals an edge; `shaker` carries the spill shake.
+///
+/// Cosmetic simulation runs on the session's clock (snapshot time), so when the session is paused or frozen
+/// (DemoMode `freezeOn`) the frame holds still — a Perfect captured 0.15 s after the verdict shows the burst.
 @MainActor
 final class GameScene: SKScene {
     weak var driver: SceneDriver?
 
-    /// Respect Reduce Motion: no camera bump, fewer particles, fades instead of pops.
+    /// Respect Reduce Motion: no camera bump, no shake, no hop, fewer particles, fades instead of pops.
     var reduceMotion: Bool = false {
         didSet { fx.reduceMotion = reduceMotion }
     }
@@ -32,16 +38,38 @@ final class GameScene: SKScene {
         didSet { if venue != oldValue { paletteChanged() } }
     }
 
+    /// Rush's dusk look (string lights, indigo-to-peach wall). Also switched on automatically in `.rush` mode.
+    var rushLook: Bool = false {
+        didSet { if rushLook != oldValue { paletteChanged() } }
+    }
+
+    /// The Daily's tear-off calendar number ("#297" on the wall). nil = derive from `.daily(day)` mode; set it to
+    /// override (e.g. a Daily backdrop on Home). The calendar shows only when a number is known.
+    var dailyNumber: Int? {
+        didSet { if dailyNumber != oldValue { paletteChanged() } }
+    }
+
     let layout: WorldLayout
 
+    /// World bounds of the jug this frame (for placing hints beside it, never over it). `.null` before the first frame.
+    private(set) var jugWorldBounds: CGRect = .null
+    /// World point at the right end of the active glass's fill line (for a "Fill to here" callout). nil if none.
+    private(set) var activeLineWorld: CGPoint?
+    /// The x range (world) that is on screen on every supported device: visibleRect inset by 14, ≥ 130…540 on phones.
+    let safeX: ClosedRange<CGFloat>
+
     private var autoVenue: VenueID?
+    private var autoRush = false
+    private var autoDaily: Int?
     private var palette: ScenePalette
     private var backdropScale: CGFloat = 0
     private var backdropCache: [String: SKTexture] = [:]
 
     private let world: SKNode
+    private let shaker: SKNode
     private let content: SKNode
     private let backdrop: SKSpriteNode
+    private let beltSlats: SKShapeNode
     private let coaster: SKShapeNode
     private let coasterEdge: SKShapeNode
     private let coasterInner: SKShapeNode
@@ -55,25 +83,39 @@ final class GameScene: SKScene {
     private let stream: SceneStream
     private let fx: SceneFX
     private var glasses: [Int: SceneGlass] = [:]
+    private var bandEstimate: [Int: Double] = [:]
+    private var wasInBand: [Int: Bool] = [:]
+    private var spilled: Set<Int> = []
 
     private var lastUpdateTime: TimeInterval?
+    private var lastSimTime: Double?
     private var frameCount = 0
     private var lastSnapshot: GameSnapshot?
     private var lastMode: GameMode?
     private var coasterX: CGFloat = 0
+    private var coasterScale: CGFloat = 1
     private var coasterShown = false
     private var spillColor: UIColor = SceneColor.coral
     private var lastCounterSplash: Double = -10
     private var lastServedGlass: Int?
     private var ghostJug: SKNode?
+    private var beltOffset: CGFloat = 0
+    private var frozen = false
+
+    static let beltPitch: CGFloat = 26
 
     init(layout: WorldLayout) {
         self.layout = layout
+        let vr = layout.visibleRect
+        let lo = max(0, vr.minX + 14), hi = min(layout.size.width, vr.maxX - 14)
+        safeX = lo < hi ? lo...hi : 0...max(1, layout.size.width)
         let pal = ScenePalette.forVenue(nil)
         palette = pal
         world = SKNode()
+        shaker = SKNode()
         content = SKNode()
         backdrop = SKSpriteNode(color: pal.wallBottom, size: layout.size)
+        beltSlats = SKShapeNode()
         coaster = SKShapeNode()
         coasterEdge = SKShapeNode()
         coasterInner = SKShapeNode()
@@ -101,21 +143,38 @@ final class GameScene: SKScene {
         world.position = CGPoint(x: layout.size.width * 0.5, y: layout.size.height * 0.5)
         content.position = CGPoint(x: -layout.size.width * 0.5, y: -layout.size.height * 0.5)
         addChild(world)
-        world.addChild(content)
+        world.addChild(shaker)
+        shaker.addChild(content)
 
         backdrop.anchorPoint = .zero
         backdrop.position = .zero
         backdrop.zPosition = -100
         content.addChild(backdrop)
 
+        // Conveyor belt slats (moved by the glasses' speed; hidden in other venues).
+        let sp = CGMutablePath()
+        let cy = layout.counterY
+        var x: CGFloat = -GameScene.beltPitch
+        while x < layout.size.width + GameScene.beltPitch * 2 {
+            sp.move(to: CGPoint(x: x, y: cy - 44))
+            sp.addLine(to: CGPoint(x: x, y: cy + 44))
+            x += GameScene.beltPitch
+        }
+        beltSlats.path = sp
+        beltSlats.strokeColor = UIColor(white: 1, alpha: 0.13)
+        beltSlats.lineWidth = 2.5
+        beltSlats.zPosition = -30
+        beltSlats.isHidden = true
+        content.addChild(beltSlats)
+
         coaster.path = CGPath(ellipseIn: CGRect(x: -60, y: -12, width: 120, height: 24), transform: nil)
-        coaster.lineWidth = 1.2
-        coasterEdge.path = CGPath(ellipseIn: CGRect(x: -60, y: -15, width: 120, height: 24), transform: nil)
+        coaster.lineWidth = 1.4
+        coasterEdge.path = CGPath(ellipseIn: CGRect(x: -60, y: -15.5, width: 120, height: 24), transform: nil)
         coasterEdge.strokeColor = .clear
         coasterEdge.zPosition = -0.5
         coasterInner.path = CGPath(ellipseIn: CGRect(x: -44, y: -8, width: 88, height: 16), transform: nil)
         coasterInner.fillColor = .clear
-        coasterInner.lineWidth = 1.5
+        coasterInner.lineWidth = 1.6
         coasterInner.zPosition = 0.1
         coaster.addChild(coasterEdge)
         coaster.addChild(coasterInner)
@@ -123,21 +182,22 @@ final class GameScene: SKScene {
         coaster.alpha = 0
         coaster.position = CGPoint(x: layout.jugPivot.x, y: layout.counterY + 2)
         content.addChild(coaster)
-        applyCoasterColors()
 
         fx.puddleLayer.zPosition = -10
         content.addChild(fx.puddleLayer)
 
         glassBackLayer.zPosition = 0
+        fx.innerRoot.zPosition = 8
         streamLayer.zPosition = 10
         glassFrontLayer.zPosition = 20
         jugLayer.zPosition = 30
         fxLayer.zPosition = 40
-        for n in [glassBackLayer, streamLayer, glassFrontLayer, jugLayer, fxLayer] { content.addChild(n) }
+        for n in [glassBackLayer, fx.innerRoot, streamLayer, glassFrontLayer, jugLayer, fxLayer] { content.addChild(n) }
         streamLayer.addChild(stream.root)
         jugLayer.addChild(jug.root)
         fxLayer.addChild(fx.root)
         stream.clear()
+        applyPaletteToNodes()
     }
 
     override func didMove(to view: SKView) {
@@ -152,6 +212,9 @@ final class GameScene: SKScene {
     func reset(for snapshot: GameSnapshot) {
         for (_, v) in glasses { v.remove() }
         glasses.removeAll()
+        bandEstimate.removeAll()
+        wasInBand.removeAll()
+        spilled.removeAll()
         fx.clear()
         stream.clear()
         ghostJug?.removeFromParent()
@@ -161,14 +224,19 @@ final class GameScene: SKScene {
         jugLayer.alpha = 1
         world.removeAllActions()
         world.setScale(1)
+        shaker.removeAllActions()
+        shaker.position = .zero
         coaster.removeAllActions()
         coaster.alpha = 0
         coasterShown = false
+        content.isPaused = false
+        frozen = false
         lastServedGlass = nil
+        lastSimTime = nil
         spillColor = SceneColor.opaque(snapshot.jug.liquid.top.skColor)
         lastSnapshot = snapshot
         lastMode = snapshot.mode
-        updateAutoVenue(snapshot.mode)
+        updateAutoLook(snapshot.mode)
         render(snapshot, dt: 0, advanced: false)
     }
 
@@ -194,27 +262,53 @@ final class GameScene: SKScene {
             events = out.1
             advanced = true
         }
-        let cdt = CGFloat(dt)
-        if let s = lastSnapshot {
-            if advanced { preRender(events) }
-            render(s, dt: cdt, advanced: advanced)
-            if advanced { handle(events, s) }
+        guard let s = lastSnapshot else { return }
+        // Simulation dt: how far the session's clock moved (0 while paused / frozen).
+        var simDt: Double = 0
+        if advanced {
+            if let prev = lastSimTime { simDt = min(max(s.time - prev, 0), 1.0 / 30.0) } else { simDt = dt }
+            lastSimTime = s.time
         }
+        let holding = advanced && simDt <= 0 && events.isEmpty
+        if holding != frozen {
+            frozen = holding
+            content.isPaused = holding
+        }
+        let cdt = CGFloat(simDt)
+        if advanced { preRender(events) }
+        render(s, dt: cdt, advanced: advanced)
+        if advanced { handle(events, s) }
         fx.update(cdt)
     }
 
     private func render(_ s: GameSnapshot, dt: CGFloat, advanced: Bool) {
         if s.mode != lastMode {
             lastMode = s.mode
-            updateAutoVenue(s.mode)
+            updateAutoLook(s.mode)
         }
         let cy = layout.counterY
 
-        jug.update(s.jug)
-        stream.update(points: s.stream, droplets: s.droplets, liquid: s.jug.liquid)
+        // Where does the stream land? (thick drinks coil there)
+        var landing: CGPoint?
+        if let tail = s.stream.last {
+            for (_, v) in glasses where v.surfaceFraction(worldX: tail.position.x) != nil {
+                landing = CGPoint(x: tail.position.x, y: v.surfaceWorldY)
+                break
+            }
+        }
+        stream.update(points: s.stream, droplets: s.droplets, liquid: s.jug.liquid, time: s.time, landing: landing)
+        jug.update(s.jug, streamWidth: stream.displayWidth(s.stream.first?.width ?? 0))
+        if s.jug.outline.count >= 3 {
+            jugWorldBounds = ScenePaths.bounds(s.jug.outline).insetBy(dx: -10, dy: -10).offsetBy(dx: jugLayer.position.x,
+                                                                                                 dy: jugLayer.position.y)
+        }
 
         let pouring = s.jug.flow > 0.02 || !s.stream.isEmpty
         let tail = s.stream.last
+        let baseBand = defaultBand(s.mode)
+        var activeID: Int?
+        for g in s.glasses where g.phase == .filling { activeID = g.id; break }
+        activeLineWorld = nil
         var seen = Set<Int>()
         for (i, g) in s.glasses.enumerated() {
             seen.insert(g.id)
@@ -229,39 +323,109 @@ final class GameScene: SKScene {
             }
             view.back.zPosition = CGFloat(i) * 0.25
             view.front.zPosition = CGFloat(i) * 0.25
-            view.update(g, counterY: cy, dt: dt, time: s.time, pouring: pouring, tail: tail, advanced: advanced,
-                        reduceMotion: reduceMotion)
-            if g.overflowing && advanced && s.time - view.lastDripTime > 0.16 {
-                view.lastDripTime = s.time
-                let side: CGFloat = Int(s.time * 6.25) % 2 == 0 ? -1 : 1
-                fx.drip(at: CGPoint(x: g.x + side * (view.outerRimHalfWidth + 2.5), y: view.rimWorld.y - 6),
-                        color: view.liquidColor, floorY: cy - 2)
+            measureBand(g)
+            let gf = GlassFrame(counterY: cy, dt: dt, time: s.time, pouring: pouring, tail: tail, advanced: advanced,
+                                reduceMotion: reduceMotion, band: bandEstimate[g.id] ?? baseBand,
+                                projected: g.id == activeID ? s.telemetry.projectedDistanceToLine : nil,
+                                safeX: safeX)
+            view.update(g, gf)
+            if g.id == activeID {
+                activeLineWorld = CGPoint(x: g.x + view.outerRimHalfWidth + 12, y: cy + view.base + g.lineHeight)
+            }
+            // Overflow / wet drips.
+            if advanced && dt > 0 {
+                let rate: Double = g.overflowing ? 0.07 : 0.22
+                if (g.overflowing || view.isWet) && s.time - view.lastDripTime > rate {
+                    view.lastDripTime = s.time
+                    let side: CGFloat = Int(s.time * 9.1) % 2 == 0 ? -1 : 1
+                    let y = g.overflowing ? view.rimWorld.y - 6 : cy + view.base * 0.5
+                    fx.drip(at: CGPoint(x: g.x + side * (view.outerRimHalfWidth + 4), y: y),
+                            color: view.liquidColor, floorY: cy - 3, big: g.overflowing)
+                }
             }
         }
         for (id, v) in glasses where !seen.contains(id) {
             v.remove()
             glasses[id] = nil
+            bandEstimate[id] = nil
+            wasInBand[id] = nil
+            spilled.remove(id)
         }
 
         updateCoaster(s, dt: dt)
+        updateBelt(s, dt: dt)
         fx.syncPuddles(s.puddles, counterY: cy, color: spillColor)
     }
 
-    /// The coaster marks the pour spot: wherever a filling glass stands still. Fades in the first time.
+    /// The Perfect band isn't in the snapshot: use the level's band, refined by watching `inPerfectBand` switch on.
+    private func defaultBand(_ mode: GameMode) -> Double {
+        switch mode {
+        case let .shift(id): return LevelCatalog.level(id)?.perfectBand ?? 0.025
+        case .rush: return 0.026
+        case .daily: return 0.03
+        case .practice: return 0.03
+        }
+    }
+
+    private func measureBand(_ g: GlassState) {
+        let was = wasInBand[g.id] ?? false
+        if g.inPerfectBand && !was && g.phase == .filling && g.lineOpacity > 0.01 {
+            let interior = g.shape.interiorHeight
+            if interior > 1 {
+                let top = g.liquidHeight + g.foamHeight
+                let m = Double(abs(top - g.lineHeight) / interior)
+                if m > 0.008 && m < 0.06 { bandEstimate[g.id] = m }
+            }
+        }
+        wasInBand[g.id] = g.inPerfectBand
+    }
+
+    /// The coaster marks the pour spot: wherever a filling glass stands still. Sized to the glass. Fades in once.
     private func updateCoaster(_ s: GameSnapshot, dt: CGFloat) {
+        if palette.venue == .conveyor {
+            coaster.isHidden = true
+            return
+        }
+        coaster.isHidden = false
         var target: CGFloat?
+        var targetScale: CGFloat = coasterScale
         for g in s.glasses where g.phase == .filling {
-            if let v = glasses[g.id], v.isStill { target = g.x; break }
+            if let v = glasses[g.id], v.isStill {
+                target = g.x
+                targetScale = min(1.7, max(0.8, (v.baseOuterHalfWidth * 2 + 48) / 120))
+                break
+            }
         }
         guard let tx = target else { return }
         if !coasterShown {
             coasterShown = true
             coasterX = tx
+            coasterScale = targetScale
             coaster.run(SKAction.fadeIn(withDuration: 0.25))
         } else if dt > 0 {
             coasterX += (tx - coasterX) * min(1, dt * 8)
+            coasterScale += (targetScale - coasterScale) * min(1, dt * 8)
         }
         coaster.position = CGPoint(x: coasterX, y: layout.counterY + 2)
+        coaster.xScale = coasterScale
+        coaster.yScale = coasterScale
+    }
+
+    /// Conveyor: the belt slats move with whatever glass is riding it.
+    private func updateBelt(_ s: GameSnapshot, dt: CGFloat) {
+        guard palette.venue == .conveyor else {
+            beltSlats.isHidden = true
+            return
+        }
+        beltSlats.isHidden = false
+        var speed: CGFloat = 0
+        for g in s.glasses {
+            if let v = glasses[g.id], abs(v.velocityX) > abs(speed) { speed = v.velocityX }
+        }
+        speed = min(max(speed, -600), 600)
+        beltOffset += speed * dt
+        beltOffset = beltOffset.truncatingRemainder(dividingBy: GameScene.beltPitch)
+        beltSlats.position = CGPoint(x: beltOffset, y: 0)
     }
 
     // MARK: Events
@@ -280,8 +444,9 @@ final class GameScene: SKScene {
                 v.splash(worldX: x, strength: strength)
                 if s.time - v.lastCrownTime > 0.07 {
                     v.lastCrownTime = s.time
-                    fx.splashCrown(at: CGPoint(x: x, y: v.surfaceWorldY), color: v.liquidColor, strength: strength,
-                                   mouthHalfWidth: v.outerRimHalfWidth)
+                    fx.splashCrown(at: CGPoint(x: x, y: v.surfaceWorldY), glassX: v.x,
+                                   mouthHalfWidth: max(4, min(v.surfaceHalfWidth, v.innerRimHalfWidth)),
+                                   color: v.liquidColor, strength: strength)
                 }
             case let .splashOnCounter(x, strength):
                 let c = SceneColor.mix(SceneColor.opaque(s.jug.liquid.bottom.skColor), SceneColor.opaque(s.jug.liquid.top.skColor), 0.6)
@@ -292,26 +457,31 @@ final class GameScene: SKScene {
                 }
             case let .enteredPerfectBand(glassID):
                 glasses[glassID]?.flashLine()
+            case let .lockedIn(glassID):
+                glasses[glassID]?.lockIn()
             case let .overflowStarted(glassID):
-                if let v = glasses[glassID] {
-                    spillColor = v.liquidColor
-                    v.slosh(5)
-                }
+                spill(glassID)
             case let .glassArrived(glassID):
                 glasses[glassID]?.slosh(2)
             case let .served(glassID, judgement, _):
                 lastServedGlass = glassID
                 guard let v = glasses[glassID] else { break }
                 if judgement == .perfect {
+                    v.celebrate()
                     fx.perfectBurst(rim: v.rimWorld, rimHalfWidth: v.outerRimHalfWidth, liquid: v.liquidColor,
                                     floorY: layout.counterY - 4)
                     bump()
+                } else if judgement == .spill {
+                    spill(glassID)
                 }
             case let .streak(n):
                 if n >= 2, let id = lastServedGlass, let v = glasses[id] {
-                    v.showStreak(n, reduceMotion: reduceMotion)
+                    v.showStreak(n, reduceMotion: reduceMotion, safeX: safeX)
                 }
             case .jugRefilled:
+                fx.refillGlints(at: s.jug.lip)
+            case .flatArmed:
+                // The start gate opened: a little "ready" twinkle at the spout.
                 fx.refillGlints(at: s.jug.lip)
             default:
                 break
@@ -319,15 +489,41 @@ final class GameScene: SKScene {
         }
     }
 
+    /// Spill (once per glass): the sheet breaks, droplets rain, the screen shakes, the glass stays wet.
+    private func spill(_ glassID: Int) {
+        guard let v = glasses[glassID] else { return }
+        spillColor = v.liquidColor
+        if spilled.contains(glassID) { return }
+        spilled.insert(glassID)
+        v.startOverflow()
+        v.markWet(seconds: 2.2)
+        fx.spillBurst(rim: v.rimWorld, rimHalfWidth: v.outerRimHalfWidth, color: v.liquidColor, floorY: layout.counterY - 3)
+        shake()
+    }
+
     /// Small camera bump on Perfect (a zoom about the canvas centre). Skipped under Reduce Motion.
     private func bump() {
         guard !reduceMotion else { return }
-        let a = SKAction.scale(to: 1.022, duration: 0.06)
+        let a = SKAction.scale(to: 1.03, duration: 0.06)
         a.timingMode = .easeOut
-        let b = SKAction.scale(to: 1.0, duration: 0.3)
+        let b = SKAction.scale(to: 1.0, duration: 0.32)
         b.timingMode = .easeInEaseOut
         world.removeAction(forKey: "bump")
         world.run(SKAction.sequence([a, b]), withKey: "bump")
+    }
+
+    /// 0.25 s screen shake on Spill. Skipped under Reduce Motion.
+    private func shake() {
+        guard !reduceMotion else { return }
+        var steps: [SKAction] = []
+        let offsets: [(CGFloat, CGFloat)] = [(-9, 3), (8, -4), (-6, 2), (5, -2), (-3, 1), (0, 0)]
+        for o in offsets {
+            let m = SKAction.move(to: CGPoint(x: o.0, y: o.1), duration: 0.042)
+            m.timingMode = .easeInEaseOut
+            steps.append(m)
+        }
+        shaker.removeAction(forKey: "shake")
+        shaker.run(SKAction.sequence(steps), withKey: "shake")
     }
 
     /// The empty jug slides up and out; the full one slides down into place.
@@ -344,7 +540,7 @@ final class GameScene: SKScene {
             if reduceMotion {
                 copy.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.25), SKAction.removeFromParent()]))
             } else {
-                let up = SKAction.moveBy(x: 0, y: 320, duration: 0.42)
+                let up = SKAction.moveBy(x: 0, y: 340, duration: 0.42)
                 up.timingMode = .easeIn
                 copy.run(SKAction.sequence([SKAction.group([up, SKAction.fadeOut(withDuration: 0.42)]),
                                             SKAction.removeFromParent()]))
@@ -357,7 +553,7 @@ final class GameScene: SKScene {
             jugLayer.run(SKAction.fadeIn(withDuration: 0.3))
         } else {
             jugLayer.alpha = 1
-            jugLayer.position = CGPoint(x: 0, y: 340)
+            jugLayer.position = CGPoint(x: 0, y: 360)
             let down = SKAction.move(to: .zero, duration: 0.5)
             down.timingMode = .easeOut
             jugLayer.run(SKAction.sequence([SKAction.wait(forDuration: 0.18), down]))
@@ -366,36 +562,53 @@ final class GameScene: SKScene {
 
     // MARK: Palette / backdrop
 
-    private func updateAutoVenue(_ mode: GameMode) {
+    private func updateAutoLook(_ mode: GameMode) {
         var v: VenueID?
-        if case let .shift(id) = mode { v = LevelCatalog.level(id)?.venue }
-        if v != autoVenue {
+        var rush = false
+        var daily: Int?
+        switch mode {
+        case let .shift(id): v = LevelCatalog.level(id)?.venue
+        case .rush: rush = true
+        case let .daily(day): daily = day
+        case .practice: break
+        }
+        if v != autoVenue || rush != autoRush || daily != autoDaily {
             autoVenue = v
+            autoRush = rush
+            autoDaily = daily
             paletteChanged()
         }
     }
 
+    private var effectiveVenue: VenueID { venue ?? autoVenue ?? .lemonadeStand }
+    private var effectiveRush: Bool { rushLook || autoRush }
+    private var effectiveDaily: Int? { dailyNumber ?? autoDaily }
+
     private func paletteChanged() {
-        palette = ScenePalette.forVenue(venue ?? autoVenue)
-        backgroundColor = palette.counterFrontDark
-        applyCoasterColors()
+        var p = ScenePalette.forVenue(effectiveVenue)
+        if effectiveRush { p = p.duskified() }
+        palette = p
+        applyPaletteToNodes()
         if backdropScale > 0 { buildBackdrop(scale: backdropScale) }
     }
 
-    private func applyCoasterColors() {
+    private func applyPaletteToNodes() {
+        backgroundColor = palette.counterFrontDark
         coaster.fillColor = palette.coaster
-        coaster.strokeColor = SceneColor.darker(palette.coasterRing, 0.1).withAlphaComponent(0.6)
+        coaster.strokeColor = SceneColor.darker(palette.coasterRing, 0.1).withAlphaComponent(0.7)
         coasterEdge.fillColor = SceneColor.darker(palette.coasterRing, 0.15)
-        coasterInner.strokeColor = palette.coasterRing.withAlphaComponent(0.7)
+        coasterInner.strokeColor = palette.coasterRing.withAlphaComponent(0.75)
+        jug.setStyle(palette.vessel)
     }
 
     private func buildBackdrop(scale: CGFloat) {
-        let key = "\((venue ?? autoVenue ?? .lemonadeStand).rawValue)@\(Int(scale * 10))"
+        let dailyKey = effectiveDaily.map { String($0) } ?? "-"
+        let key = "\(effectiveVenue.rawValue)-\(effectiveRush ? "dusk" : "day")-\(dailyKey)@\(Int(scale * 10))"
         let tex: SKTexture
         if let t = backdropCache[key] {
             tex = t
         } else {
-            tex = SceneArt.backdrop(layout: layout, palette: palette, scale: scale)
+            tex = SceneArt.backdrop(layout: layout, palette: palette, dailyNumber: effectiveDaily, scale: scale)
             if backdropCache.count >= 3 { backdropCache.removeAll() }
             backdropCache[key] = tex
         }

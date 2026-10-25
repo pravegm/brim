@@ -6,8 +6,11 @@ import Foundation
 // (Named `CoreTuning`, not `Tuning`, so it can never collide with another module's tunables in the single app target.)
 // Units: world points (pt), seconds, degrees. Volumes are 2D areas (pt²), flows are pt²/s.
 //
-// Reference sizes for intuition: the standard jug holds ~28,400 pt²; a tumbler holds ~7,400 pt² (≈ 5,000 to a
-// typical line); a tiny cup ("shot" id) ~3,600 pt². The stream falls ~310 pt from the lip to a tumbler's rim on the Duo.
+// Round 2 (one 670 × 952 world): glasses are ×1.45–1.6 bigger, so glass volumes are ~2.2× round 1. The jug is drawn
+// at ~170 × 225 but holds `jugVolumeScale` × its 2D area (it is a deep 3D pitcher), so it still serves a shift.
+// Reference sizes: a tumbler holds ~17,000 pt² (≈ 11,600 to a 0.7 line); the standard jug's polygon is ~24,600 pt²
+// and holds ~86,000 pt² of drink (≈ 7 tumblers to the line). The stream falls ~150–450 pt from the lip to a rim.
+// `RunResult.poured` is in these units: ~2.2× round 1 per glass (App: rescale any litres conversion).
 
 enum CoreTuning {
 
@@ -20,33 +23,62 @@ enum CoreTuning {
     /// Gravity for the stream and splash droplets, pt/s² (spec: 2000).
     static let gravity: Double = 2000
 
+    // MARK: Jug placement (world)
+
+    /// The jug rotates about its spout lip. Resting lip position = layout.jugPivot + (lipOffsetX, −lipDrop):
+    /// (402, 552) on the standard world, 56 pt above the crease. While the jug is too upright for its body to clear
+    /// the crease it is lifted (it rocks up on the crease ledge), so the lip sits ~+56…+90 for jug angles ≥ 55°
+    /// (mid/low jug) and higher (up to ~+190) for the first, shallow pours of a full jug.
+    /// Interior x stays within 155…511 at every angle (walls + handle fit inside 130…540); glasses stop at x ≈ 418.
+    static let lipOffsetX: Double = 50
+    static let lipDrop: Double = 88
+    /// The jug's interior never dips below `creaseMaxY + jugClearance`.
+    static let jugClearance: Double = 4
+
     // MARK: Jug outflow (weir law: target = flowK · head^1.5)
 
-    /// Weir coefficient. 2.3 → a full jug held at 60° pours ~2,000 pt²/s (a tumbler to its line in ~2.5 s); at 30° a
-    /// full jug pours ~420 pt²/s (gentle); a jug at 6 % needs ~90° to start and ~120° for a useful ~1,000 pt²/s.
-    static let flowK: Double = 2.3
-    /// Outflow that reads as `flow = 1.0` in snapshots/telemetry (≈ a full jug at ~80°).
-    static let flowNormRef: Double = 4000
-    /// Hard ceiling on the target outflow (a full jug flung to 130° would otherwise dump instantly).
-    static let flowCap: Double = 6500
-    /// Upright, a full jug's surface sits this far below the lip, so a full jug starts to pour at ~10° of jug angle
-    /// (lid ≈ 12.5°) and never at 0.
+    /// Weir coefficient (pt²/s per pt^1.5 of head above the lip). With `jugVolumeScale` 3.5 a tumbler to a 0.7 line
+    /// takes ~2.3–2.7 s (after the stream lands) at 15° of lid past the pour point (4 s from a 0.9 jug, whose head
+    /// grows slowly), and ~1.5–2.1 s at 20°. A held tilt slowly eases off as the jug drains: tip further as it empties.
+    static let flowK: Double = 17
+    /// Drink volume (glass pt²) the jug holds per pt² of its 2D interior polygon.
+    static let jugVolumeScale: Double = 3.5
+    /// Outflow that reads as `flow = 1.0` in snapshots/telemetry (≈ a mid jug tipped ~22° of lid past its pour point).
+    static let flowNormRef: Double = 10000
+    /// Hard ceiling on the target outflow.
+    static let flowCap: Double = 16000
+    /// Upright, a full jug's surface sits this far below the lip (local pt), so a full jug starts to pour at ~10.5° of
+    /// jug angle (lid ≈ 13°) and never at 0.
     static let jugHeadroom: Double = 16
-    /// With a zero target, outflow below this (pt²/s) snaps to 0 (ends long exponential tails of honey).
-    static let outflowCutoff: Double = 6
+    /// Rising outflow follows the weir target with τ = riseTauBase + riseTauPerLag · lagTau (viscous drinks swell in).
+    static let riseTauBase: Double = 0.03
+    static let riseTauPerLag: Double = 0.2
+    /// Falling outflow while the jug can still deliver (head > 0): τ = declineTauPerLag · lagTau (the surface lags,
+    /// briefly).
+    static let declineTauPerLag: Double = 0.5
+    /// Once the head is gone (jug too upright to pour) only the rope in the spout drains: τ = ropeTauPerLag · lagTau,
+    /// clamped to ropeTauMin…ropeTauMax, and the rope always snaps within `ropeMaxTime`. No stream from an upright jug.
+    static let ropeTauPerLag: Double = 0.3
+    static let ropeTauMin: Double = 0.02
+    static let ropeTauMax: Double = 0.2
+    static let ropeMaxTime: Double = 0.4
+    /// With no head, outflow below this snaps to 0: cutoff + lagTau · ropeSnapPerLag (viscous ropes snap thick).
+    static let outflowCutoff: Double = 15
+    static let ropeSnapPerLag: Double = 320
     /// Jug counts as empty below this fill (shifts: auto-swap; Rush: run ends).
     static let jugEmptyFill: Double = 0.025
     /// No outflow for this long while a jug is swapped (empty jug, or a different drink's jug).
     static let jugSwapPause: Double = 0.6
-    /// Rush: each Perfect refills this fraction of the jug's capacity.
-    static let rushRefill: Double = 0.06
-    /// Rush uses "one big shared jug": the standard jug scaled by this (area × scale²).
-    static let rushJugScale: Double = 1.12
-    /// The jug's interior never dips below `creaseMaxY + jugClearance`: at small angles the jug is lifted, so it
-    /// appears to rock on the crease ledge before it swings about its lip.
-    static let jugClearance: Double = 14
-    /// The jug's pivot anchor sits this far below `layout.jugPivot`, so the lip pours from ≈ creaseMaxY + 55…90.
-    static let jugAnchorDrop: Double = 22
+    /// Rush: a Perfect refills this fraction of the jug's capacity, a Great `rushRefillGreat`.
+    /// Budget (tier-0 orders need ~14,000 pt²; the Rush jug holds ~121,000): a decent player (50 % Perfect, 30 % Great)
+    /// nets −3,700 per glass → ~33 glasses ≈ 2.4 min; a strong one (75 % Perfect) runs 4+ min until the tiers bite;
+    /// a beginner (30 % / 30 %) ~17 glasses ≈ 75 s.
+    static let rushRefill: Double = 0.14
+    static let rushRefillGreat: Double = 0.05
+    /// Rush's "one big shared jug": same drawn shape (scale 1.0 keeps it inside x 130…540 and under the HUD band at
+    /// every angle), but it holds `rushVolumeBoost` × the standard jug.
+    static let rushJugScale: Double = 1.0
+    static let rushVolumeBoost: Double = 1.4
 
     // MARK: Sand (angle of repose)
 
@@ -58,23 +90,25 @@ enum CoreTuning {
 
     // MARK: Stream
 
-    /// Exit speed at the lip = (min + perFlow · flow) / (1 + viscositySlow · lagTau).
-    static let exitSpeedMin: Double = 25
-    static let exitSpeedPerFlow: Double = 110
+    /// Exit speed at the lip = (min + perFlow · flow) / (1 + viscositySlow · lagTau). Kept low so the stream drops
+    /// almost straight down: it lands ~4–20 pt right of the lip for every angle and flow, and glasses stop on the
+    /// middle of that range, so every pour lands within ±8 pt of the glass centre.
+    static let exitSpeedMin: Double = 18
+    static let exitSpeedPerFlow: Double = 14
     static let exitViscositySlow: Double = 0.8
-    /// The exit direction (degrees from +x, y up) is the spout direction clamped to this range, so a steeply tipped
-    /// jug drops the stream almost straight down instead of flinging it backwards.
-    static let exitDirMinDeg: Double = -55
-    static let exitDirMaxDeg: Double = 10
-    /// Ribbon width = max · √flow at emission, thinned as it accelerates: × max(floor, (v0/v)^thinning).
-    static let streamWidthMax: Double = 18
+    /// The exit direction (degrees from +x, y up) is the spout direction clamped to this range.
+    static let exitDirMinDeg: Double = -60
+    static let exitDirMaxDeg: Double = 0
+    /// Ribbon width = max · √flow at emission, thinned as it falls: × max(floor, (thinRef / v)^thinning).
+    static let streamWidthMax: Double = 26
     static let streamWidthMin: Double = 1.6
-    static let streamThinning: Double = 0.5
-    static let streamThinFloor: Double = 0.45
+    static let streamThinning: Double = 0.35
+    static let streamThinRefSpeed: Double = 250
+    static let streamThinFloor: Double = 0.6
     /// Below this flow (0…1) the stream breaks into drips.
     static let dropFlowThreshold: Double = 0.012
     /// Volume (pt²) of one drip.
-    static let dripVolume: Double = 30
+    static let dripVolume: Double = 60
     /// Two ribbon particles emitted further apart than this (s) are drawn as separate ribbons.
     static let streamGapTime: Double = 0.02
     /// Particle cap (stream + drips). Past it, new volume merges into the newest particle.
@@ -88,41 +122,49 @@ enum CoreTuning {
     static let splashChancePerFlow: Double = 0.3
     static let splashLifeMin: Double = 0.25
     static let splashLifeMax: Double = 0.5
+    /// Splashes thrown up inside a glass stay inside its mouth (|x − centre| ≤ rimHalf − inset) and die at the surface.
+    static let splashMouthInset: Double = 5
     /// A landing that starts after this long without one emits a splash event (edges only).
     static let splashEdgeGap: Double = 0.12
 
     // MARK: Glasses, serving
 
     static let introDuration: Double = 0.8
-    static let arriveDuration: Double = 0.7
-    static let leaveDuration: Double = 0.6
-    static let arriveFromX: Double = -120
-    static let leaveToX: Double = 790
-    /// Seconds a judged glass waits (showing its stamp) before it slides away.
-    static let resultHold: Double = 0.45
-    /// Served after this long with no outflow and nothing in the air (spec: 0.6 s).
-    static let serveIdle: Double = 0.6
+    /// Arrive and leave overlap: the next glass starts sliding in the moment the judged one starts sliding out.
+    static let arriveDuration: Double = 0.45
+    static let leaveDuration: Double = 0.45
+    static let arriveFromX: Double = -130
+    static let leaveToX: Double = 800
+    /// Leaving: x = start + d · (leaveLinear · u + (1 − leaveLinear) · u²), so it gets out of the way at once.
+    static let leaveLinear: Double = 0.35
+    /// Seconds a judged glass waits (showing its stamp) before it slides away. Changeover = resultHold + arrive.
+    static let resultHold: Double = 0.3
+    /// A judged glass doesn't leave while the stream is still running or falling (a live spill, a patience timeout):
+    /// it keeps catching (and sheeting) until the stream has landed, at most this long past `resultHold`, so the
+    /// next glass never slides in under a falling stream.
+    static let changeoverWaitMax: Double = 1.0
+    /// Served after this long with no outflow and nothing in the air (`.lockedIn` fires at the start of it).
+    static let serveIdle: Double = 0.35
     /// If a head is still settling, serving waits up to this much longer (lets "pour slow, then top up" work).
-    static let foamServeGrace: Double = 1.6
+    static let foamServeGrace: Double = 1.2
     /// A head below this fraction of the interior height counts as settled.
     static let foamSettledFraction: Double = 0.025
     /// A glass needs at least this much poured in (pt²) before it can be served by stopping.
-    static let minServeVolume: Double = 40
+    static let minServeVolume: Double = 90
     /// Overflow when liquid + foam exceeds capacity by this fraction.
     static let overflowTolerance: Double = 0.003
     /// Seconds for a "line fades" line to fade out.
     static let lineFadeDuration: Double = 0.4
     /// Conveyor: the glass slides in to this far left of the stream (mouth edge), then rides the belt.
-    static let conveyorLeadIn: Double = 30
+    static let conveyorLeadIn: Double = 40
     /// Conveyor: judged when the mouth's left edge passes the stream's landing x by this much.
     static let conveyorExitMargin: Double = 6
     /// Delay between the deciding judgement and `finished`, so the last stamp is seen.
     static let finishDelay: Double = 0.9
-    /// Reference pour used to place each glass under the stream, plus a bias that centres the glass on the whole
-    /// range of real pours (landing x varies ≈ −19…+11 pt from the reference across 12°…130° of jug angle).
-    static let refPourAngle: Double = 90
-    static let refPourFlow: Double = 0.6
-    static let glassPlacementBias: Double = -4
+    /// Glass placement: the landing x is sampled over the pours this jug fill will really use (pour point … +span of
+    /// jug angle, flows 0.15…0.9) and the glass stops on the middle of that range, plus this bias.
+    static let glassPlacementBias: Double = 0
+    static let placementAngleSpan: Double = 45
 
     // MARK: Foam
 
@@ -131,7 +173,7 @@ enum CoreTuning {
     static let foamFactorMin: Double = 0.2
     static let foamFactorMax: Double = 2.5
     /// The projection assumes the head settles for this long before judging.
-    static let projectionFoamTime: Double = 0.9
+    static let projectionFoamTime: Double = 0.6
 
     // MARK: Judging and score
 
@@ -156,16 +198,32 @@ enum CoreTuning {
     /// Telemetry landing-rate smoothing time constant (s).
     static let landingTau: Double = 0.08
 
-    // MARK: Puddles
+    // MARK: Puddles (live spill)
 
-    static let puddleMergeDistance: Double = 22
-    static let maxPuddles: Int = 10
+    /// Spilt volume pools into puddles; a puddle of volume V has radius clamp(base + k·√V, base, max).
+    static let puddleBaseRadius: Double = 12
+    static let puddleRadiusPerSqrtVolume: Double = 0.9
+    static let puddleMaxRadius: Double = 105
+    /// A spill within (radius + this) of a puddle's centre joins it.
+    static let puddleJoinMargin: Double = 10
+    /// Snapshot encoding: each puddle is a run of points along the counter, `puddlePointSpacing` apart, spanning
+    /// centre ± (radius − puddlePointInset). One point = a small puddle; more points = a wider one.
+    static let puddlePointSpacing: Double = 12
+    static let puddlePointInset: Double = 8
+    static let maxPuddlePoints: Int = 48
+    /// Puddle centres are kept inside the always-visible band (x 130…540), radius included.
+    static let safeMinX: Double = 130
+    static let safeMaxX: Double = 540
 
     // MARK: Modes
 
     static let maxStrikes: Int = 3
     /// Rush: difficulty tier every N glasses.
     static let rushTierEvery: Int = 8
+    /// Rush patience scales with √(volume to the line / this).
+    static let rushPatienceVolumeRef: Double = 11000
+    /// Belts were tuned for round-1 glasses; ×1.5 bigger glasses get ×1.5 faster belts (same window in seconds).
+    static let beltScale: Double = 1.5
 }
 
 // MARK: - Small math helpers (namespaced to avoid clashing with other modules' globals)

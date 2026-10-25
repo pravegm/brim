@@ -76,6 +76,126 @@ struct FeedbackTests {
         #expect(sand.hissGain > 0)
     }
 
+    @Test func shimmerSwellsInsideThePerfectBand() {
+        let band = 0.025
+        #expect(SoundBook.shimmerLevel(projectedDistance: 0, band: band) == 1.0)
+        #expect(SoundBook.shimmerLevel(projectedDistance: -0.2, band: band) == 0.0)
+        #expect(SoundBook.shimmerLevel(projectedDistance: 0.2, band: band) == 0.0)
+        #expect(SoundBook.shimmerLevel(projectedDistance: -1.35 * band, band: band) == 0.0)
+        // Audible at the band edge, symmetric about the line, and never louder further out.
+        let edge = SoundBook.shimmerLevel(projectedDistance: -band, band: band)
+        #expect(edge > 0.2)
+        #expect(edge < 0.7)
+        #expect(SoundBook.shimmerLevel(projectedDistance: band, band: band) == edge)
+        var previous = 2.0
+        for step in 0...60 {
+            let level = SoundBook.shimmerLevel(projectedDistance: -Double(step) * 0.001, band: band)
+            #expect(level <= previous)
+            #expect(level >= 0)
+            previous = level
+        }
+        #expect(SoundBook.shimmerLevel(projectedDistance: Double.nan, band: band) == 0.0)
+        // A nonsense band falls back to the default rather than going silent or NaN.
+        #expect(SoundBook.shimmerLevel(projectedDistance: 0, band: Double.nan) == 1.0)
+    }
+
+    @Test func pourBedShimmersOnlyWhileTheLevelIsStillLive() {
+        let water = SoundBook.texture(for: .water)
+        let inBand = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.2, landingRate: 0.2, activeFill: 0.78,
+                                                                distanceToLine: -0.05, projectedDistanceToLine: 0.001),
+                                       foam: 0, texture: water, master: 1, band: 0.025, streak: 2)
+        #expect(inBand.shimmerGain > 0)
+        #expect(inBand.shimmerGain <= SoundBook.shimmerPeak)
+        #expect(abs(Double(inBand.shimmerHz) - SoundBook.tingFrequency(streak: 3) / 2) < 0.01)
+        let far = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.6, landingRate: 0.6, activeFill: 0.3,
+                                                             distanceToLine: -0.5, projectedDistanceToLine: -0.4),
+                                    foam: 0, texture: water, master: 1, band: 0.025, streak: 2)
+        #expect(far.shimmerGain == Float(0))
+        // Everything has landed: the shimmer hands over to the lock-in tink.
+        let settled = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0, landingRate: 0, activeFill: 0.8,
+                                                                 distanceToLine: 0, projectedDistanceToLine: 0),
+                                        foam: 0, texture: water, master: 1)
+        #expect(settled.shimmerGain == Float(0))
+        // The shimmer pitch climbs with the streak, like the ting it anticipates.
+        #expect(SoundBook.shimmerHz(streak: 4) > SoundBook.shimmerHz(streak: 0))
+    }
+
+    @Test func lockInAndFlatClickAreSubtle() {
+        var dice = FeelDice(seed: 11)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &dice).map { $0.gain }.max() ?? 0
+        let tink = SoundBook.lockedIn(streak: 0, dice: &dice)
+        let click = SoundBook.flatArmed()
+        #expect(!tink.isEmpty)
+        #expect(!click.isEmpty)
+        for command in tink { #expect(command.gain < perfectPeak * 0.25) }
+        for command in click { #expect(command.gain <= 0.08) }
+        // The tink stays out of the shrill top octave at any streak.
+        for streak in 0...12 {
+            for command in SoundBook.lockedIn(streak: streak, dice: &dice) {
+                if case .ring(let ring) = command { #expect(ring.fundamental <= 4200) }
+            }
+        }
+        let perfectHaptic = HapticBook.perfect.notes.map { $0.intensity }.max() ?? 0
+        for note in HapticBook.lockedIn.notes { #expect(note.intensity < perfectHaptic * 0.5) }
+        for note in HapticBook.flatArmed.notes { #expect(note.intensity <= 0.45) }
+        // The pour-start detent is gentle too.
+        for note in HapticBook.pourStart.notes { #expect(note.intensity <= 0.5) }
+    }
+
+    @Test func spillCueIsBigAndCarriesThroughTheOverflow() {
+        var dice = FeelDice(seed: 5)
+        let spill = SoundBook.spill(dice: &dice)
+        #expect(spill.count >= 6)
+        #expect((spill.map { $0.gain }.max() ?? 0) >= 0.25)
+        let longest = HapticBook.spill.notes.map { $0.time + $0.duration }.max() ?? 0
+        #expect(longest >= 0.5)
+        #expect(HapticBook.spill.wobble.count <= 16)
+    }
+
+    @Test func synthRendersTheShimmerCleanly() {
+        let synth = PourSynth(sampleRate: 48_000)
+        var bed = PourBed()
+        bed.master = 1.4
+        bed.splashGain = 0.18
+        bed.resonance = 1200
+        bed.resonanceGain = 1.1
+        bed.shimmerGain = SoundBook.shimmerPeak
+        bed.shimmerHz = Float(SoundBook.shimmerHz(streak: 7))
+        synth.send(.bed(bed))
+        let frames = 512
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+        defer { buffer.deallocate() }
+        var peak: Float = 0
+        var energy: Float = 0
+        var finite = true
+        for _ in 0..<60 {
+            synth.render(frames: frames, into: buffer)
+            for index in 0..<frames {
+                let value = buffer[index]
+                if !value.isFinite { finite = false }
+                peak = max(peak, abs(value))
+                energy += value * value
+            }
+        }
+        #expect(finite)
+        #expect(energy > 0)
+        #expect(peak < 1)
+        // Shimmer alone (no rush) is audible but faint.
+        let quiet = PourSynth(sampleRate: 48_000)
+        var only = PourBed()
+        only.master = 1.4
+        only.shimmerGain = SoundBook.shimmerPeak
+        only.shimmerHz = 660
+        quiet.send(.bed(only))
+        var shimmerPeak: Float = 0
+        for _ in 0..<40 {
+            quiet.render(frames: frames, into: buffer)
+            for index in 0..<frames { shimmerPeak = max(shimmerPeak, abs(buffer[index])) }
+        }
+        #expect(shimmerPeak > 0.01)
+        #expect(shimmerPeak < 0.2)
+    }
+
     @Test func hapticFlowMapping() {
         #expect(HapticBook.flowLevel(flow: 0) == Float(0))
         #expect(abs(HapticBook.flowLevel(flow: 1) - 0.7) < 0.0001)

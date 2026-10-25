@@ -1,8 +1,10 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Brim
 
-// App engineer tests: ProgressStore round-trip and unlocks, DemoMode parsing, share-text formatting.
+// App engineer tests: ProgressStore round-trip and unlocks, DemoMode parsing, share-text formatting, and (round 2)
+// the Duo pose rules, the world → screen mapping, card placement, the results headline and the daily streak.
 
 @MainActor
 struct ProgressStoreTests {
@@ -210,6 +212,156 @@ struct DemoModeTests {
         #expect(mid.isUnlocked(.sodaFountain))
         let full = DemoConfig.progressData(.full)
         #expect(full.hasAllStars)
+    }
+}
+
+// MARK: - Round 2: pose, layout, safe placement, honest results
+
+struct PoseRuleTests {
+    private let duoPortrait = CGSize(width: 669, height: 951)
+    private let duoLandscape = CGSize(width: 951, height: 669)
+    private let duoCover = CGSize(width: 466, height: 678)
+    private let iPhone = CGSize(width: 402, height: 874)
+    private let iPhoneSE = CGSize(width: 375, height: 667)
+
+    @Test func duoInnerPortraitPlaysWithAFold() {
+        #expect(PoseRule.pose(canvas: duoPortrait, hingeSeen: true, isShut: false, bookTouchOverride: false) == .play)
+        #expect(PoseRule.hasFold(canvas: duoPortrait, hingeSeen: true))
+        // Before any hinge report the inner display still looks like a Duo.
+        #expect(PoseRule.hasFold(canvas: duoPortrait, hingeSeen: false))
+    }
+
+    @Test func duoLandscapeShowsTheTurnCard() {
+        #expect(PoseRule.pose(canvas: duoLandscape, hingeSeen: true, isShut: false, bookTouchOverride: false) == .standUp)
+        #expect(PoseRule.pose(canvas: duoLandscape, hingeSeen: false, isShut: false, bookTouchOverride: false) == .standUp)
+        #expect(PoseRule.pose(canvas: duoLandscape, hingeSeen: true, isShut: false, bookTouchOverride: true) == .play)
+        #expect(!PoseRule.hasFold(canvas: duoLandscape, hingeSeen: true))
+    }
+
+    @Test func coverOnlyWhenShutOrOnTheSmallDisplay() {
+        #expect(PoseRule.pose(canvas: duoCover, hingeSeen: true, isShut: false, bookTouchOverride: false) == .cover)
+        #expect(PoseRule.pose(canvas: duoPortrait, hingeSeen: true, isShut: true, bookTouchOverride: false) == .cover)
+        // The inner canvas never shows the cover just because a hinge was seen (round-1 Duo bug).
+        #expect(PoseRule.pose(canvas: duoLandscape, hingeSeen: true, isShut: false, bookTouchOverride: false) != .cover)
+    }
+
+    @Test func phonesWithoutAHingeAlwaysPlay() {
+        #expect(PoseRule.pose(canvas: iPhone, hingeSeen: false, isShut: false, bookTouchOverride: false) == .play)
+        #expect(PoseRule.pose(canvas: iPhoneSE, hingeSeen: false, isShut: false, bookTouchOverride: false) == .play)
+        #expect(!PoseRule.hasFold(canvas: iPhone, hingeSeen: false))
+    }
+
+    @Test func bookPoseTouchColumnIsPortrait() {
+        let rect = PoseRule.playRect(in: duoLandscape)
+        #expect(rect.height == 669)
+        #expect(rect.width < rect.height)
+        #expect(abs(rect.midX - 951 / 2) < 1)
+        #expect(PoseRule.playRect(in: iPhone) == CGRect(origin: .zero, size: iPhone))
+    }
+
+    @Test func orientationPolicy() {
+        #expect(OrientationLock.allowsLandscape(hasHinge: true, screen: CGSize(width: 402, height: 874)))
+        #expect(OrientationLock.allowsLandscape(hasHinge: false, screen: CGSize(width: 669, height: 951)))
+        #expect(!OrientationLock.allowsLandscape(hasHinge: false, screen: CGSize(width: 402, height: 874)))
+        #expect(!OrientationLock.allowsLandscape(hasHinge: false, screen: .zero))
+    }
+}
+
+struct WorldMapperTests {
+    @Test func duoMapsTheCreaseOntoTheFold() {
+        let info = CanvasInfo(size: CGSize(width: 669, height: 951), insets: EdgeInsets(), hasFold: true)
+        let crease = info.crease
+        #expect(crease != nil)
+        if let crease {
+            #expect(abs(crease.lowerBound - 455.5) < 2)
+            #expect(abs(crease.upperBound - 495.5) < 2)
+        }
+        let top = info.mapper.point(CGPoint(x: 0, y: WorldLayout.worldHeight))
+        #expect(abs(top.x) < 1 && abs(top.y) < 1)
+    }
+
+    @Test func phoneCropsTheSidesAndKeepsTheHeight() {
+        let mapper = WorldMapper(canvas: CGSize(width: 402, height: 874))
+        #expect(abs(mapper.x(116) - 0) < 3)
+        #expect(abs(mapper.x(554) - 402) < 3)
+        #expect(abs(mapper.y(0) - 874) < 0.5)
+        #expect(abs(mapper.y(WorldLayout.worldHeight)) < 0.5)
+        let info = CanvasInfo(size: CGSize(width: 402, height: 874), insets: EdgeInsets(), hasFold: false)
+        #expect(info.crease == nil)
+        #expect(info.topHalfHeight < info.bottomHalfTop)
+        #expect(info.hudBandBottom > 90 && info.hudBandBottom < 110)
+    }
+
+    @Test func rectsFlipToScreenSpace() {
+        let mapper = WorldMapper(canvas: CGSize(width: 670, height: 952))
+        let r = mapper.rect(CGRect(x: 100, y: 800, width: 50, height: 100))
+        #expect(abs(r.minX - 100) < 0.01)
+        #expect(abs(r.minY - 52) < 0.01)
+        #expect(abs(r.height - 100) < 0.01)
+    }
+
+    @Test func cardsGoBesideNeverOver() {
+        let bounds = CGRect(x: 0, y: 0, width: 669, height: 450)
+        let jug = CGRect(x: 250, y: 100, width: 220, height: 250)
+        let size = CGSize(width: 200, height: 100)
+        let p = CardPlacement.beside(jug, size: size, in: bounds)
+        #expect(p != nil)
+        if let p {
+            let card = CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height)
+            #expect(!card.intersects(jug))
+            #expect(bounds.contains(card))
+        }
+        // A phone-width canvas has no room beside the jug.
+        let narrow = CGRect(x: 0, y: 0, width: 402, height: 420)
+        #expect(CardPlacement.beside(CGRect(x: 120, y: 80, width: 200, height: 230), size: size, in: narrow) == nil)
+    }
+
+    @Test func glassHalfWidthInterpolatesTheProfile() {
+        let shape = GlassShape(id: "t", name: "t", style: .tumbler,
+                               profile: [CGPoint(x: 40, y: 0), CGPoint(x: 60, y: 100)], baseThickness: 10, wall: 4)
+        #expect(abs(AnchorMath.halfWidth(shape, at: 50) - 50) < 0.001)
+        #expect(abs(AnchorMath.halfWidth(shape, at: 0) - 40) < 0.001)
+        #expect(abs(AnchorMath.halfWidth(shape, at: 500) - 60) < 0.001)
+    }
+}
+
+@MainActor
+struct ResultsCopyTests {
+    private func run(_ judgements: [Judgement], stars: Int) -> RunResult {
+        RunResult(mode: .shift("1-1"), score: 500, stars: stars, perfects: judgements.filter { $0 == .perfect }.count,
+                  bestStreak: 1, judgements: judgements, poured: 0, cleared: stars > 0)
+    }
+
+    @Test func flawlessOnlyWhenEveryGlassIsPerfect() {
+        #expect(ResultsView.headline(for: run([.perfect, .perfect, .perfect], stars: 3), dailyOnFile: false) == "Flawless shift!")
+        #expect(ResultsView.headline(for: run([.perfect, .good, .perfect], stars: 3), dailyOnFile: false) == "Great shift!")
+        #expect(ResultsView.headline(for: run([.good, .short], stars: 1), dailyOnFile: false) == "Shift cleared")
+        #expect(ResultsView.headline(for: run([.spill, .spill], stars: 0), dailyOnFile: false) == "So close")
+    }
+}
+
+struct DailyStreakTests {
+    @Test func countsBackFromTodayOrYesterday() {
+        var data = ProgressData()
+        let rec = DailyRecord(score: 1, judgements: [], perfects: 0)
+        #expect(data.dailyStreak(today: 100) == 0)
+        data.daily[99] = rec
+        data.daily[98] = rec
+        #expect(data.dailyStreak(today: 100) == 2)       // today not poured yet: the streak is still alive
+        data.daily[100] = rec
+        #expect(data.dailyStreak(today: 100) == 3)
+        data.daily[98] = nil
+        #expect(data.dailyStreak(today: 100) == 2)
+        #expect(data.dailyStreak(today: 102) == 0)       // missed yesterday
+    }
+
+    @Test func nextUnlockNamesTheNextStarVenue() {
+        let fresh = ProgressData()
+        if LevelCatalog.starsToUnlock(.sodaFountain) > 0 {
+            #expect(fresh.nextUnlock?.venue == VenueID.sodaFountain)
+            #expect((fresh.nextUnlock?.missing ?? 0) > 0)
+        }
+        #expect(DemoConfig.progressData(.full).nextUnlock == nil)
     }
 }
 

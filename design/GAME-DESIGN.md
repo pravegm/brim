@@ -4,7 +4,7 @@
 
 ## 1. The one-liner
 
-**Your iPhone Duo is the jug.** Stand it up like a little laptop. The top half holds a jug of drink; lift the top half and the jug tips, pouring a real stream across the fold into a glass waiting on the flat half. Stop exactly on the line.
+**Your iPhone Duo is the jug.** Lay it open and flat, fold running side to side. The top half holds a jug of drink; lift the top half off the table and the jug tips, pouring a real stream across the fold into a glass waiting on the flat half. Stop exactly on the line.
 
 Paid, one time (£1.99 / $1.99 tier), no ads, no in-app purchases, no data collected. Rated 4+ (every drink is non-alcoholic).
 
@@ -18,11 +18,11 @@ Paid, one time (£1.99 / $1.99 tier), no ads, no in-app purchases, no data colle
 
 ## 3. The pose and the screen
 
-- **Seated (tabletop) pose, portrait canvas** (inner display ~669 × 951 pt, crease band ~40 pt across the middle). The bottom half lies on the table; the top half stands like a laptop lid.
+- **Seated (tabletop) pose, portrait canvas** (inner display ~669 × 951 pt, crease band ~40 pt across the middle). The bottom half lies on the table. **Rest pose = flat (180°)**; lifting the top half toward upright (90°) tips the jug, like lifting the far edge of a tray (round 2 decision, REVIEW-1 P0-3). Each run starts with a "Lay it flat to start" gate.
 - **Top half = the back bar.** Tiled wall, shelf, the jug held near the crease, its spout just above the fold.
 - **Bottom half = the counter.** The glass stands on a coaster under the spout; a conveyor/counter slides glasses in from the left and out to the right.
 - **The stream crosses the fold.** This is the magic frame of the whole game: liquid leaves a spout on one physical surface and lands in a glass on the other.
-- **Book pose / landscape canvas** (crease vertical): show a friendly full-screen card "Stand me up like a little laptop" with an animated phone illustration; the game pauses. (The inner display ignores orientation locks, so this must exist.)
+- **Book pose / landscape canvas** (crease vertical): show a friendly full-screen card "Turn me so the fold runs side to side, then lay me flat" with an animated phone illustration; the game pauses. (The inner display ignores orientation locks, so this must exist.)
 - **Closed / cover display:** a calm card: today's daily status, best Rush score, "Open me to pour".
 - **Non-folding iPhones (fallback):** same scene in a portrait screen. Control = drag anywhere: drag **up** to tip the jug, release and it eases back upright. A small "Made for iPhone Duo: on Duo, the fold is the jug" note in Settings/About. This keeps the app useful (and reviewable) on every iPhone, but every design judgement is made on the Duo frame first.
 
@@ -99,7 +99,7 @@ All sound is synthesized at runtime (no licensed assets needed). Respect the rin
 
 ## 10. Onboarding (no tutorial screens)
 
-1. First launch on Duo in tabletop: the jug, one glass, one line, and the hint *"Lift the top half to pour."* with a small animated arrow on the top half.
+1. First launch on Duo in tabletop: the jug, one glass, one line, and the hint *"Lay it flat, then lift the top half to pour."* with a small animated arrow on the top half.
 2. When the stream reaches 60% of the line and the player is still pouring: *"Lay it back to stop."*
 3. On the first serve: the result + *"The stream keeps falling — stop just before the line."*
 4. Then shift 1 continues. Hints never repeat once learned.

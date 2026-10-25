@@ -60,12 +60,49 @@ enum SceneColor {
     static let leaf = hex(0x5FCB8F)
     static let jugGlass = hex(0xE4F5FB)
     static let foamDefault = hex(0xFFF6E6)
+    /// The icon's teal ceramic (REVIEW-1 P1-9).
+    static let teal = hex(0x2BA59A)
+    static let tealDark = hex(0x1D7C74)
+    static let lemon = hex(0xFFD84A)
+    static let chrome = hex(0xC9D3DB)
+}
+
+// MARK: - The pouring vessel's dressing (one signature vessel per venue, REVIEW-1 P1-6)
+
+/// The decal painted on the jug's belly.
+enum VesselDecal: String {
+    case lemon      // Lemonade Stand: the icon's lemon roundel
+    case fizz       // Soda Fountain: red roundel with fizz bubbles and a star
+    case cherry     // Milkshake Diner: cherry on a pink roundel
+    case ticket     // Conveyor: a numbered order tag
+    case moon       // Potion Shop: crescent + stars sigil
+    case sun        // Sand Bar: a desert sun
+}
+
+/// How the jug is dressed. The shape itself comes from Core (`JugState.outline`); the scene only paints it.
+struct VesselStyle {
+    /// Ceramic / metal accent: rim band, handle, foot band, spout lip.
+    var accent: UIColor
+    var accentDark: UIColor
+    /// Translucent fill of the jug's interior (what you see where there is no liquid).
+    var glassTint: UIColor
+    /// The glass wall stroke.
+    var wall: UIColor
+    var decal: VesselDecal
+    /// Brushed-metal accents (soda chrome, the diner's steel shake tin): adds hairline highlights.
+    var metallic: Bool
+}
+
+/// The flat half's surface (seen from above on a Duo).
+enum CounterSurface {
+    case wood, marble, formica, steel, darkWood
 }
 
 // MARK: - Per-venue palette
 
-/// Everything the backdrop and the props need, per venue. Switch with `GameScene.venue`.
+/// Everything the backdrop and the props need, per venue. Switch with `GameScene.venue` (+ `rushLook`).
 struct ScenePalette {
+    var venue: VenueID
     var wallTop: UIColor
     var wallBottom: UIColor
     var tile: UIColor
@@ -75,8 +112,8 @@ struct ScenePalette {
     var silhouette: UIColor
     var plant: UIColor
     var board: UIColor
-    var counterTopBack: UIColor
-    var counterTop: UIColor
+    var counterTopBack: UIColor     // far edge of the counter (toward the fold)
+    var counterTop: UIColor         // near edge (toward the player)
     var counterEdge: UIColor
     var counterFront: UIColor
     var counterFrontDark: UIColor
@@ -85,66 +122,126 @@ struct ScenePalette {
     var vignette: UIColor
     var glow: UIColor
     var seam: UIColor
-    /// Dark venues (Potion Shop) flip a few contrast choices.
+    var surface: CounterSurface
+    var vessel: VesselStyle
+    /// Dark venues (Potion Shop, Rush dusk) flip a few contrast choices.
     var isDark: Bool
+    /// Rush: the dusk look with string lights.
+    var dusk: Bool = false
 
     static func forVenue(_ venue: VenueID?) -> ScenePalette {
-        let h = SceneColor.hex
-        switch venue ?? .lemonadeStand {
+        func h(_ x: UInt32, _ a: CGFloat = 1) -> UIColor { SceneColor.hex(x, a) }
+        let v = venue ?? .lemonadeStand
+        switch v {
         case .lemonadeStand:
             return ScenePalette(
+                venue: v,
                 wallTop: h(0xFFF8EC, 1), wallBottom: h(0xFFEFD8, 1),
                 tile: h(0xBFE8D8, 1), grout: h(0xE8F6EE, 1), trim: h(0xF6D3A1, 1),
-                shelf: h(0xC9875E, 1), silhouette: h(0xEBDAC0, 1), plant: h(0xA9D9BC, 1), board: h(0x3E4A44, 1),
-                counterTopBack: h(0xEBA57F, 1), counterTop: h(0xD9825B, 1), counterEdge: h(0xF2B892, 1),
+                shelf: h(0xC9875E, 1), silhouette: h(0xEBDAC0, 1), plant: h(0x8FD0A8, 1), board: h(0x3E4A44, 1),
+                counterTopBack: h(0xF0B98F, 1), counterTop: h(0xD98A5C, 1), counterEdge: h(0xF2B892, 1),
                 counterFront: h(0xC66F4A, 1), counterFrontDark: h(0xA4573A, 1),
                 coaster: h(0xEBCB9F, 1), coasterRing: h(0xC99A6B, 1),
-                vignette: h(0x8A4B2A, 0.20), glow: h(0xFFE2AE, 0.55), seam: h(0xCDB69A, 1), isDark: false)
+                vignette: h(0x8A4B2A, 0.20), glow: h(0xFFE2AE, 0.55), seam: h(0xCDB69A, 1),
+                surface: .wood,
+                vessel: VesselStyle(accent: SceneColor.teal, accentDark: SceneColor.tealDark,
+                                    glassTint: h(0xF2FBF9, 0.42), wall: h(0xE6F7F4, 0.80), decal: .lemon, metallic: false),
+                isDark: false)
         case .sodaFountain:
             return ScenePalette(
-                wallTop: h(0xFFF5F2, 1), wallBottom: h(0xFFE8E4, 1),
-                tile: h(0xFFCAD3, 1), grout: h(0xFFF1F3, 1), trim: h(0xE8505B, 1),
+                venue: v,
+                wallTop: h(0xFFF6F3, 1), wallBottom: h(0xFFE9E5, 1),
+                tile: h(0xFFCAD3, 1), grout: h(0xFFF3F0, 1), trim: h(0xD5DEE5, 1),
                 shelf: h(0xB9C5CD, 1), silhouette: h(0xF3D6D6, 1), plant: h(0x9ED9C4, 1), board: h(0x3B3F4A, 1),
-                counterTopBack: h(0xFAFBFC, 1), counterTop: h(0xE2E8EC, 1), counterEdge: h(0xFFFFFF, 1),
+                counterTopBack: h(0xFDFDFE, 1), counterTop: h(0xE6EBEF, 1), counterEdge: h(0xFFFFFF, 1),
                 counterFront: h(0xE8505B, 1), counterFrontDark: h(0xC23A47, 1),
                 coaster: h(0xFFD5DB, 1), coasterRing: h(0xE8505B, 1),
-                vignette: h(0x8A2F3F, 0.18), glow: h(0xFFE0E4, 0.55), seam: h(0xD9B5B5, 1), isDark: false)
+                vignette: h(0x8A2F3F, 0.16), glow: h(0xFFE0E4, 0.55), seam: h(0xD9B5B5, 1),
+                surface: .marble,
+                vessel: VesselStyle(accent: h(0xE8505B), accentDark: h(0xB8323F),
+                                    glassTint: h(0xFFF6F7, 0.40), wall: h(0xF4F7FA, 0.82), decal: .fizz, metallic: true),
+                isDark: false)
         case .milkshakeDiner:
             return ScenePalette(
+                venue: v,
                 wallTop: h(0xFFF9EE, 1), wallBottom: h(0xFFF0DB, 1),
-                tile: h(0xBFDDF5, 1), grout: h(0xEBF5FD, 1), trim: h(0xFF8FA3, 1),
+                tile: h(0xBFDDF5, 1), grout: h(0xEBF5FD, 1), trim: h(0xC9D3DB, 1),
                 shelf: h(0x9BAAB6, 1), silhouette: h(0xEBE0CD, 1), plant: h(0xA6D8BE, 1), board: h(0x34404D, 1),
-                counterTopBack: h(0xFFEAF0, 1), counterTop: h(0xF7C6D3, 1), counterEdge: h(0xE3E8EC, 1),
+                counterTopBack: h(0xFFEEF3, 1), counterTop: h(0xF6C3D1, 1), counterEdge: h(0xE3E8EC, 1),
                 counterFront: h(0x6CC4C9, 1), counterFrontDark: h(0x4CA3AA, 1),
                 coaster: h(0xFFFFFF, 1), coasterRing: h(0xFF8FA3, 1),
-                vignette: h(0x5A3A4A, 0.16), glow: h(0xFFE9C4, 0.5), seam: h(0xC9C0B4, 1), isDark: false)
+                vignette: h(0x5A3A4A, 0.15), glow: h(0xFFE9C4, 0.5), seam: h(0xC9C0B4, 1),
+                surface: .formica,
+                vessel: VesselStyle(accent: h(0xAEB9C3), accentDark: h(0x7D8A96),
+                                    glassTint: h(0xE9EEF2, 0.46), wall: h(0xDCE3E9, 0.86), decal: .cherry, metallic: true),
+                isDark: false)
         case .conveyor:
             return ScenePalette(
+                venue: v,
                 wallTop: h(0xF6F3EC, 1), wallBottom: h(0xEAE5DA, 1),
                 tile: h(0xFCE6A6, 1), grout: h(0xFFF6DA, 1), trim: h(0x6C8EAD, 1),
                 shelf: h(0x7F8C99, 1), silhouette: h(0xDDD6C7, 1), plant: h(0x9FCFAF, 1), board: h(0x3A4450, 1),
-                counterTopBack: h(0xA9BCCB, 1), counterTop: h(0x8399AD, 1), counterEdge: h(0xCBD7E0, 1),
+                counterTopBack: h(0xC9D4DD, 1), counterTop: h(0xA3B3C1, 1), counterEdge: h(0xCBD7E0, 1),
                 counterFront: h(0x4E6378, 1), counterFrontDark: h(0x3A4A5B, 1),
-                coaster: h(0x3E4955, 1), coasterRing: h(0x5D6E80, 1),
-                vignette: h(0x2E3A46, 0.18), glow: h(0xFFF0C8, 0.5), seam: h(0xB9B2A4, 1), isDark: false)
+                coaster: h(0x4A5663, 1), coasterRing: h(0x6B7C8E, 1),
+                vignette: h(0x2E3A46, 0.18), glow: h(0xFFF0C8, 0.5), seam: h(0xB9B2A4, 1),
+                surface: .steel,
+                vessel: VesselStyle(accent: h(0xF2A93B), accentDark: h(0xC27F1E),
+                                    glassTint: h(0xF4F8FB, 0.42), wall: h(0xE8F0F5, 0.82), decal: .ticket, metallic: false),
+                isDark: false)
         case .potionShop:
             return ScenePalette(
-                wallTop: h(0x4C3C6E, 1), wallBottom: h(0x3B2E5A, 1),
-                tile: h(0x5E4F88, 1), grout: h(0x44366C, 1), trim: h(0xC9A3FF, 1),
+                venue: v,
+                wallTop: h(0x3F3163, 1), wallBottom: h(0x4E3E78, 1),
+                tile: h(0x5E4F88, 1), grout: h(0x3D3063, 1), trim: h(0xC9A3FF, 1),
                 shelf: h(0x6B4B3A, 1), silhouette: h(0x5A4A80, 1), plant: h(0x6FBF9A, 1), board: h(0x241C38, 1),
-                counterTopBack: h(0x93624A, 1), counterTop: h(0x7A4B3A, 1), counterEdge: h(0xB07858, 1),
+                counterTopBack: h(0x8A5A44, 1), counterTop: h(0x6A3F31, 1), counterEdge: h(0xB07858, 1),
                 counterFront: h(0x5A3529, 1), counterFrontDark: h(0x40251C, 1),
                 coaster: h(0xA68BD6, 1), coasterRing: h(0x7E63B0, 1),
-                vignette: h(0x120B20, 0.38), glow: h(0xB78CFF, 0.38), seam: h(0x281F40, 1), isDark: true)
+                vignette: h(0x120B20, 0.38), glow: h(0xFFC27A, 0.34), seam: h(0x281F40, 1),
+                surface: .darkWood,
+                vessel: VesselStyle(accent: h(0xE8B84A), accentDark: h(0xB0862A),
+                                    glassTint: h(0xD9C8FF, 0.30), wall: h(0xE6DAFF, 0.70), decal: .moon, metallic: false),
+                isDark: true)
         case .sandBar:
             return ScenePalette(
+                venue: v,
                 wallTop: h(0xFFF3DB, 1), wallBottom: h(0xFFE6BE, 1),
                 tile: h(0x9FD8E5, 1), grout: h(0xE3F5F8, 1), trim: h(0xF2B66D, 1),
                 shelf: h(0xB78A5E, 1), silhouette: h(0xF0DDBA, 1), plant: h(0x8CCB9B, 1), board: h(0x45503F, 1),
-                counterTopBack: h(0xE6C9A2, 1), counterTop: h(0xC9A27E, 1), counterEdge: h(0xEDD6B6, 1),
+                counterTopBack: h(0xF0D7B2, 1), counterTop: h(0xD1AA80, 1), counterEdge: h(0xEDD6B6, 1),
                 counterFront: h(0xA9815E, 1), counterFrontDark: h(0x886645, 1),
                 coaster: h(0xF5E5C6, 1), coasterRing: h(0xC9A27E, 1),
-                vignette: h(0x7A5530, 0.2), glow: h(0xFFE7B5, 0.55), seam: h(0xD2B892, 1), isDark: false)
+                vignette: h(0x7A5530, 0.2), glow: h(0xFFE7B5, 0.55), seam: h(0xD2B892, 1),
+                surface: .wood,
+                vessel: VesselStyle(accent: h(0xC98A4B), accentDark: h(0x94602D),
+                                    glassTint: h(0xFFF4DE, 0.40), wall: h(0xFFF2DD, 0.80), decal: .sun, metallic: false),
+                isDark: false)
         }
+    }
+
+    /// Rush: the same venue at dusk — indigo sky fading to a peach glow at the counter, deeper wood, warm lamps.
+    func duskified() -> ScenePalette {
+        var p = self
+        func h(_ x: UInt32, _ a: CGFloat = 1) -> UIColor { SceneColor.hex(x, a) }
+        p.dusk = true
+        p.wallTop = h(0x3B3566)
+        p.wallBottom = h(0xC9787A)
+        p.tile = SceneColor.mix(tile, h(0x6A5A8E), 0.55)
+        p.grout = SceneColor.mix(grout, h(0x4A3F6E), 0.6)
+        p.trim = SceneColor.mix(trim, h(0xF0A070), 0.5)
+        p.shelf = SceneColor.darker(shelf, 0.25)
+        p.silhouette = SceneColor.mix(silhouette, h(0x5A4A7A), 0.6)
+        p.counterTopBack = SceneColor.mix(counterTopBack, h(0xB0705E), 0.45)
+        p.counterTop = SceneColor.darker(counterTop, 0.28)
+        p.counterEdge = SceneColor.darker(counterEdge, 0.2)
+        p.counterFront = SceneColor.darker(counterFront, 0.3)
+        p.counterFrontDark = SceneColor.darker(counterFrontDark, 0.35)
+        p.coaster = SceneColor.mix(coaster, h(0xF2B48A), 0.3)
+        p.vignette = h(0x1A1033, 0.42)
+        p.glow = h(0xFFB86B, 0.45)
+        p.seam = h(0x5A4570)
+        p.isDark = true
+        return p
     }
 }

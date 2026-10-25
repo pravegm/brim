@@ -143,6 +143,10 @@ struct PourBed: Sendable, Equatable {
     var hissCenter: Float = 5200
     /// Depth of the slow random level wobble on the rush (0…0.6).
     var turbulence: Float = 0.3
+    /// The Perfect-band shimmer (a wet finger on a glass rim): level (0 = off; faded on the audio thread over
+    /// ~90 ms in / ~180 ms out) and pitch.
+    var shimmerGain: Float = 0
+    var shimmerHz: Float = 659
 
     mutating func approach(_ target: PourBed, _ k: Float) {
         master += (target.master - master) * k
@@ -156,6 +160,8 @@ struct PourBed: Sendable, Equatable {
         hissGain += (target.hissGain - hissGain) * k
         hissCenter = target.hissCenter
         turbulence += (target.turbulence - turbulence) * k
+        shimmerGain += (target.shimmerGain - shimmerGain) * k
+        shimmerHz += (target.shimmerHz - shimmerHz) * k
     }
 }
 
@@ -288,8 +294,15 @@ final class PourSynth: @unchecked Sendable {
     private var dcIn: Float = 0
     private var dcOut: Float = 0
     private var envelope: Float = 0
+    private var shimmerLevel: Float = 0
+    private var shimmerPhaseA: Float = 0
+    private var shimmerPhaseB: Float = 0
+    private var shimmerPhaseC: Float = 0
+    private var shimmerLFO: Float = 0
 
     private let smoothing: Float
+    private let shimmerAttack: Float
+    private let shimmerRelease: Float
     private let turbulenceStep: Float
     private let fizzDecay: Float
     private let grainDecay: Float
@@ -307,6 +320,8 @@ final class PourSynth: @unchecked Sendable {
         bank = UnsafeMutablePointer<Float>.allocate(capacity: bankSize)
         bank.initialize(repeating: 0, count: bankSize)
         smoothing = 1 - exp(-1 / (0.02 * rate))
+        shimmerAttack = 1 - exp(-1 / (0.09 * rate))
+        shimmerRelease = 1 - exp(-1 / (0.18 * rate))
         turbulenceStep = 1 - exp(-1 / (0.025 * rate))
         fizzDecay = exp(-1 / (0.0012 * rate))
         grainDecay = exp(-1 / (0.004 * rate))
@@ -386,6 +401,14 @@ final class PourSynth: @unchecked Sendable {
                 grainLevel *= grainDecay
                 sample += hissFilter.process(nextNoise() * (0.3 + grainLevel), .bandPass) * bed.hissGain
             }
+            // Perfect-band shimmer: a glass-harp tone, two slightly detuned sines beating ~2–4 Hz plus a soft octave,
+            // with a slow tremolo; it swells in and out on its own envelope so it never clicks.
+            let shimmerTarget = target.shimmerGain
+            let shimmerStep = shimmerTarget > shimmerLevel ? shimmerAttack : shimmerRelease
+            shimmerLevel += (shimmerTarget - shimmerLevel) * shimmerStep
+            if shimmerLevel > 0.00002 {
+                sample += renderShimmer() * shimmerLevel
+            }
             for index in 0..<PourSynth.voiceCount where voices[index].active {
                 sample += renderVoice(&voices[index], slot: index)
             }
@@ -412,6 +435,22 @@ final class PourSynth: @unchecked Sendable {
         renderCount.store(renderCount.load(ordering: .relaxed) &+ 1, ordering: .relaxed)
     }
 
+    private func renderShimmer() -> Float {
+        let twoPi = 2 * Float.pi
+        let f = min(max(bed.shimmerHz, 80), sampleRate * 0.2)
+        shimmerPhaseA += twoPi * f / sampleRate
+        if shimmerPhaseA > twoPi { shimmerPhaseA -= twoPi }
+        shimmerPhaseB += twoPi * f * 1.0045 / sampleRate
+        if shimmerPhaseB > twoPi { shimmerPhaseB -= twoPi }
+        shimmerPhaseC += twoPi * f * 2.002 / sampleRate
+        if shimmerPhaseC > twoPi { shimmerPhaseC -= twoPi }
+        shimmerLFO += twoPi * 5.3 / sampleRate
+        if shimmerLFO > twoPi { shimmerLFO -= twoPi }
+        let tremolo: Float = 0.82 + 0.18 * sin(shimmerLFO)
+        let tone = 0.52 * sin(shimmerPhaseA) + 0.36 * sin(shimmerPhaseB) + 0.12 * sin(shimmerPhaseC)
+        return tone * tremolo
+    }
+
     private func drain() {
         var read = readIndex.load(ordering: .relaxed)
         let write = writeIndex.load(ordering: .acquiring)
@@ -433,6 +472,7 @@ final class PourSynth: @unchecked Sendable {
             for index in 0..<PourSynth.voiceCount { voices[index].active = false }
             fizzLevel = 0
             grainLevel = 0
+            shimmerLevel = 0
         case .noise, .tone, .ring, .bubble:
             start(command)
         }

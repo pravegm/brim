@@ -84,13 +84,15 @@ launch() {   # launch <name> <demo args>
 
 # ---- pass: real hinge pours -------------------------------------------------------------------------------
 if [[ " $PASSES " == *" hinge "* ]]; then
-  hinge_set 178
+  # Round 2 rest pose: flat. Launch half-open first to see the "Lay it flat to start" gate, then lay flat, then lift.
+  hinge_set 120
   launch hinge-1-1 "mode=shift:1-1;duo;orient=portrait;hints=fresh"
-  shoot duo-01-ready inner
-  # Lift the lid: 178 → 135 over 1.5 s, hold, capture the stream crossing the fold.
-  hinge_sweep 135 1.5; sleep 0.8; shoot duo-02-pouring inner
-  hinge_sweep 120 1.0; sleep 0.6; shoot duo-03-pouring-steep inner
-  hinge_sweep 176 1.0; sleep 2.5; shoot duo-04-served inner
+  shoot duo-00-gate inner
+  hinge_sweep 179 1.5; sleep 1.5; shoot duo-01-ready inner
+  # Lift the top half: 179 → 140 over 1.2 s, hold, capture the stream crossing the fold.
+  hinge_sweep 140 1.2; sleep 0.7; shoot duo-02-pouring inner
+  hinge_sweep 125 0.8; sleep 0.5; shoot duo-03-pouring-steep inner
+  hinge_sweep 178 0.8; sleep 2.0; shoot duo-04-served inner
   # Close the phone (cover display), reopen.
   hinge_sweep 40 2.0; hinge_set 0; sleep 3; shoot duo-05-closed cover
   hinge_sweep 170 2.5; sleep 3; shoot duo-06-reopened inner

@@ -3,10 +3,12 @@ import Foundation
 
 /// Player settings, kept apart from progress so "Reset progress" leaves them alone.
 /// Sound, haptics and the silent switch live in `FeedbackDirector.shared` (it persists them itself); this store mirrors
-/// them for SwiftUI and pushes changes back. "Touch controls on iPhone Duo" is stored here (`brim.settings.touchOnDuo`).
+/// them for SwiftUI and pushes changes back. "Touch controls on iPhone Duo" (`brim.settings.touchOnDuo`) and "Calmer
+/// motion" (`brim.settings.calmMotion`) are stored here.
 @MainActor
 final class SettingsStore: ObservableObject {
     static let touchOnDuoKey = "brim.settings.touchOnDuo"
+    static let calmMotionKey = "brim.settings.calmMotion"
 
     @Published var soundOn: Bool { didSet { if FeedbackDirector.shared.soundOn != soundOn { FeedbackDirector.shared.soundOn = soundOn } } }
     @Published var hapticsOn: Bool { didSet { if FeedbackDirector.shared.hapticsOn != hapticsOn { FeedbackDirector.shared.hapticsOn = hapticsOn } } }
@@ -20,6 +22,8 @@ final class SettingsStore: ObservableObject {
     }
     /// iPhone Duo: drag to pour instead of lifting the top half.
     @Published var touchOnDuo: Bool { didSet { defaults?.set(touchOnDuo, forKey: Self.touchOnDuoKey) } }
+    /// No screen shake, camera bumps or HUD pops (REVIEW-1 P2-6). Always in effect when iOS Reduce Motion is on.
+    @Published var calmMotion: Bool { didSet { defaults?.set(calmMotion, forKey: Self.calmMotionKey) } }
 
     private let defaults: UserDefaults?
 
@@ -31,6 +35,7 @@ final class SettingsStore: ObservableObject {
         hapticsOn = feedback.hapticsOn
         respectSilentSwitch = feedback.respectSilentSwitch
         touchOnDuo = defaults?.bool(forKey: Self.touchOnDuoKey) ?? false
+        calmMotion = defaults?.bool(forKey: Self.calmMotionKey) ?? false
     }
 
     /// Re-reads the feedback engine's values (e.g. at launch).

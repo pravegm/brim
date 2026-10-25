@@ -73,6 +73,13 @@ final class FeedbackDirector: FeedbackSink {
     private var lastGlugHaptic: CFTimeInterval = 0
     private var lastSplash: CFTimeInterval = 0
     private var lastCounterSplash: CFTimeInterval = 0
+    /// Glasses whose spill has already been heard (overflowStarted and served(.spill) arrive together; play once).
+    private var spilledGlasses = Set<Int>()
+    private var lockedGlasses = Set<Int>()
+    /// The Perfect band as revealed by the glass under the spout (the distance at which `inPerfectBand` flips on).
+    private var bandGlassID: Int?
+    private var wasInBand = false
+    private var observedBand: Double?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -146,6 +153,7 @@ final class FeedbackDirector: FeedbackSink {
         }
         let telemetry = snapshot.telemetry
         let texture = SoundBook.texture(for: telemetry.liquid)
+        let band = perfectBand(snapshot)
 
         if paused {
             haptics.updateFlow(flow: 0, fill: 0, now: now)
@@ -154,7 +162,7 @@ final class FeedbackDirector: FeedbackSink {
                 lastBedSend = now
                 let master = soundOn ? BrimAudioEngine.masterGain : 0
                 let bed = SoundBook.pourBed(telemetry: telemetry, foam: activeFoam(snapshot), texture: texture,
-                                            master: master)
+                                            master: master, band: band, streak: snapshot.streak)
                 audio.setBed(bed)
             }
             haptics.updateFlow(flow: telemetry.flow, fill: telemetry.activeFill, now: now)
@@ -195,16 +203,29 @@ final class FeedbackDirector: FeedbackSink {
                 audio.play(SoundBook.splashOnCounter(strength: strength))
             }
         case .enteredPerfectBand:
-            break
-        case .overflowStarted:
-            // The spill lands the moment it happens: splash + drips, heavy wobbly buzz.
-            audio.play(SoundBook.spill(dice: &dice))
-            haptics.play(HapticBook.spill)
-        case .glassArrived:
+            break // the shimmer already sings it
+        case .overflowStarted(let glassID):
+            // Judged live: the spill lands the moment it happens (splash, sheet, "uh-oh", drips; heavy wobbly buzz).
+            spill(glassID: glassID)
+        case .glassArrived(let glassID):
+            // Glass ids restart with every run: forget anything remembered about this id.
+            spilledGlasses.remove(glassID)
+            lockedGlasses.remove(glassID)
             audio.play(SoundBook.arrival(dice: &dice))
             haptics.play(HapticBook.arrival)
-        case .served(_, let judgement, _):
+        case .served(let glassID, let judgement, _):
+            if judgement == .spill { spill(glassID: glassID) }
             served(judgement, streak: snapshot.streak)
+        case .lockedIn(let glassID):
+            if !lockedGlasses.contains(glassID) {
+                if lockedGlasses.count > 64 { lockedGlasses.removeAll() }
+                lockedGlasses.insert(glassID)
+                audio.play(SoundBook.lockedIn(streak: snapshot.streak, dice: &dice))
+                haptics.play(HapticBook.lockedIn)
+            }
+        case .flatArmed:
+            audio.play(SoundBook.flatArmed())
+            haptics.play(HapticBook.flatArmed)
         case .streak:
             break // the ting reads the snapshot's streak; 0 simply restarts the scale
         case .multiplier(let value):
@@ -226,9 +247,21 @@ final class FeedbackDirector: FeedbackSink {
         case .nearingLine:
             break
         case .finished(let result):
+            spilledGlasses.removeAll()
+            lockedGlasses.removeAll()
             audio.play(SoundBook.finished(cleared: result.cleared))
             haptics.play(result.cleared ? HapticBook.celebrate : HapticBook.gentleEnd)
         }
+    }
+
+    /// The spill, exactly once per glass (Core emits `overflowStarted` and `served(.spill)` together; a brim-full
+    /// judgement may arrive with only the latter).
+    private func spill(glassID: Int) {
+        if spilledGlasses.contains(glassID) { return }
+        if spilledGlasses.count > 64 { spilledGlasses.removeAll() }
+        spilledGlasses.insert(glassID)
+        audio.play(SoundBook.spill(dice: &dice))
+        haptics.play(HapticBook.spill)
     }
 
     private func served(_ judgement: Judgement, streak: Int) {
@@ -246,7 +279,7 @@ final class FeedbackDirector: FeedbackSink {
             audio.play(SoundBook.short())
             haptics.play(HapticBook.short)
         case .spill:
-            break // overflowStarted played the splash; the slide below still runs
+            break // the spill already spoke (once); the slide below still runs
         }
         audio.play(SoundBook.serve(dice: &dice))
         haptics.play(HapticBook.serve)
@@ -264,6 +297,27 @@ final class FeedbackDirector: FeedbackSink {
         let interior = glass.shape.interiorHeight
         guard interior > 0 else { return 0 }
         return Double(glass.foamHeight / interior)
+    }
+
+    /// The Perfect band of the glass under the spout. The snapshot doesn't carry it, but the glass reveals it: the
+    /// signed distance at which `inPerfectBand` switches on while the level rises is the band's lower edge.
+    /// Until a glass shows it, the last one seen (or ±3 %) is used.
+    private func perfectBand(_ snapshot: GameSnapshot) -> Double {
+        guard let glass = snapshot.glasses.first(where: { $0.phase == .filling }) else {
+            return observedBand ?? SoundBook.defaultBand
+        }
+        if glass.id != bandGlassID {
+            bandGlassID = glass.id
+            wasInBand = glass.inPerfectBand
+        }
+        if glass.inPerfectBand && !wasInBand {
+            let distance = snapshot.telemetry.distanceToLine
+            if distance.isFinite, distance < -0.004, distance > -0.12 {
+                observedBand = -distance
+            }
+        }
+        wasInBand = glass.inPerfectBand
+        return observedBand ?? SoundBook.defaultBand
     }
 
     private func persist() {

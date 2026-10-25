@@ -28,8 +28,13 @@ targets:
           UIColorName: LaunchBackground
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        # All three, not just portrait: Duo run 40203342285 showed a portrait-only app runs as a letterboxed 469 × 669
+        # compatibility window on the Duo's landscape (book-pose) inner display. The app asks for portrait itself and
+        # shows the "turn me" card in landscape (OrientationLock / PoseCards).
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIStatusBarHidden: true
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Light

@@ -35,9 +35,13 @@ struct SettingsView: View {
                         toggleRow("Touch controls on iPhone Duo", icon: "hand.draw.fill", isOn: $settings.touchOnDuo,
                                   footnote: "Drag up to pour instead of lifting the top half.")
                         divider
-                        infoRow("Reduce motion", icon: "figure.walk.motion",
-                                value: reduceMotion ? "On" : "Off",
-                                footnote: "Follows your system setting.")
+                        if reduceMotion {
+                            infoRow("Calmer motion", icon: "figure.walk.motion", value: "On",
+                                    footnote: "On because Reduce Motion is on in iOS Settings.")
+                        } else {
+                            toggleRow("Calmer motion", icon: "figure.walk.motion", isOn: $settings.calmMotion,
+                                      footnote: "No screen shake, camera bumps or score pops.")
+                        }
                     }
                     section("Progress") {
                         Button {
@@ -65,7 +69,7 @@ struct SettingsView: View {
                                     .font(BrimTheme.text(16, .heavy))
                                     .foregroundStyle(BrimTheme.ink)
                             }
-                            Text("Stand your Duo up like a little laptop and lift the top half to pour. On other iPhones, drag up to tip the jug.")
+                            Text("Turn your Duo so the fold runs side to side. Lay it flat, then lift the top half to pour. On other iPhones, drag up to tip the jug.")
                                 .font(BrimTheme.text(14))
                                 .foregroundStyle(BrimTheme.inkSoft)
                             Text("Every sound is synthesised live. No ads, no in-app purchases, no tracking, no accounts. Every drink is non-alcoholic.")

@@ -43,22 +43,63 @@ enum LevelCatalog {
     }
 
     /// Ten seeded orders for a day (the same for everyone). Drinks come from the campaign's own menu.
+    /// A fair, varied test: two warm-up basics (still drinks, friendly glasses, mid lines), then never the same glass
+    /// or the same drink twice in a row, at most two viscous drinks and three foamy ones, patience tightening from
+    /// 14 s to 9 s, and the curveballs (prefills, fading lines) only in the back half.
     static func dailyOrders(day: Int) -> [GlassOrder] {
         var rng: CoreRNG = CoreRNG(seed: UInt64(bitPattern: Int64(day)) &* 0x2545_F491_4F6C_DD1D &+ 0xDA11_7C0F_FEE5_0001)
         let menu: [(String, LiquidID)] = dailyMenu
+        let warmUp: [(String, LiquidID)] = menu.filter { (p: (String, LiquidID)) -> Bool in
+            let basicGlass: Bool = p.0 == "tumbler" || p.0 == "highball" || p.0 == "jar" || p.0 == "mug"
+            let basicDrink: Bool = p.1 == .water || p.1 == .lemonade || p.1 == .orangeJuice
+            return basicGlass && basicDrink
+        }
         var out: [GlassOrder] = []
         var lastGlass: String = ""
+        var lastLiquid: LiquidID? = nil
+        var viscous: Int = 0
+        var foamy: Int = 0
+        var used: Set<LiquidID> = []
         var i: Int = 0
         while i < 10 {
-            var pair: (String, LiquidID) = menu[rng.int(menu.count)]
+            let pool: [(String, LiquidID)] = (i < 2 && !warmUp.isEmpty) ? warmUp : menu
+            // From the 7th order on, insist on a new drink until at least four different ones have been served.
+            let needNew: Bool = i >= 6 && used.count < 4
+            func acceptable(_ p: (String, LiquidID)) -> Bool {
+                let l: Liquid = LiquidCatalog.liquid(p.1)
+                if p.0 == lastGlass || p.1 == lastLiquid { return false }
+                if l.lagTau >= 0.3 && viscous >= 2 { return false }
+                if l.foamPerVolume > 0.3 && foamy >= 3 { return false }
+                if needNew && used.contains(p.1) { return false }
+                return true
+            }
+            var pair: (String, LiquidID) = pool[rng.int(pool.count)]
             var tries: Int = 0
-            while pair.0 == lastGlass && tries < 4 {
-                pair = menu[rng.int(menu.count)]
+            while tries < 12 && !acceptable(pair) {
+                pair = pool[rng.int(pool.count)]
                 tries += 1
             }
+            if !acceptable(pair) {
+                // Deterministic fallback: the first acceptable pair after a seeded offset.
+                let offset: Int = rng.int(pool.count)
+                var k: Int = 0
+                while k < pool.count {
+                    let candidate: (String, LiquidID) = pool[(offset + k) % pool.count]
+                    if acceptable(candidate) {
+                        pair = candidate
+                        break
+                    }
+                    k += 1
+                }
+            }
             lastGlass = pair.0
+            lastLiquid = pair.1
+            used.insert(pair.1)
+            let chosen: Liquid = LiquidCatalog.liquid(pair.1)
+            if chosen.lagTau >= 0.3 { viscous += 1 }
+            if chosen.foamPerVolume > 0.3 { foamy += 1 }
             let progress: Double = Double(i) / 9.0
-            var line: Double = rng.range(0.42, 0.88)
+            var line: Double = i < 2 ? rng.range(0.55, 0.75) : rng.range(0.42, 0.88)
             line = (line * 100).rounded() / 100
             let patience: Double = (CoreMath.lerp(14, 9, progress) * 2).rounded() / 2
             var fade: Double? = nil
@@ -139,48 +180,53 @@ enum LevelCatalog {
     }
 
     // Venue 1 — basics: water, lemonade, orange juice; tumblers → highballs → a flute. The jug starts emptier
-    // as the venue goes on, so you learn to tip further.
+    // as the venue goes on, so you learn to tip further. One micro-twist every other shift (REVIEW-1 P2-9):
+    // 1-3 a waiting customer (patience), 1-4 "half full" (low lines in big glasses), 1-6 top-ups (prefilled glasses),
+    // 1-7 the first flute, 1-8 last drops (a nearly empty jug: tip far).
+    //
+    // 1-1 is the first minute of the game: a generous band (±4.5 %), the friendliest glass (wide tumbler, mid lines,
+    // still drinks), a full jug that pours at a slight tip, no timers. A first Perfect lands within ~10 s.
     private static func lemonadeStand() -> [Level] {
         let v: VenueID = .lemonadeStand
         return [
-            lv(v, 1, "Grand Opening", jug: 1.0, band: 0.035, [
-                o("tumbler", .water, 0.6), o("tumbler", .water, 0.7), o("tumbler", .lemonade, 0.65),
-                o("tumbler", .lemonade, 0.75), o("tumbler", .water, 0.55),
+            lv(v, 1, "Grand Opening", jug: 0.9, band: 0.045, [
+                o("tumbler", .water, 0.6), o("tumbler", .lemonade, 0.65), o("tumbler", .water, 0.7),
+                o("tumbler", .lemonade, 0.6), o("tumbler", .water, 0.68),
             ]),
-            lv(v, 2, "Squeeze the Day", jug: 1.0, band: 0.032, [
-                o("tumbler", .lemonade, 0.7), o("highball", .lemonade, 0.6), o("tumbler", .lemonade, 0.5),
+            lv(v, 2, "Squeeze the Day", jug: 0.9, band: 0.038, [
+                o("tumbler", .lemonade, 0.7), o("highball", .lemonade, 0.6), o("tumbler", .lemonade, 0.55),
                 o("highball", .lemonade, 0.75), o("tumbler", .lemonade, 0.8), o("highball", .lemonade, 0.65),
             ]),
-            lv(v, 3, "Fresh Squeezed", jug: 0.9, band: 0.03, [
+            lv(v, 3, "Fresh Squeezed", jug: 0.9, band: 0.034, [
                 o("tumbler", .orangeJuice, 0.65, p: 14), o("highball", .orangeJuice, 0.7, p: 14),
                 o("jar", .orangeJuice, 0.6, p: 14), o("tumbler", .orangeJuice, 0.8, p: 14),
                 o("highball", .orangeJuice, 0.55, p: 14), o("jar", .orangeJuice, 0.75, p: 14),
             ]),
-            lv(v, 4, "Lunch Rush", jug: 0.85, band: 0.03, [
-                o("tumbler", .water, 0.7, p: 11), o("highball", .lemonade, 0.8, p: 11),
-                o("jar", .orangeJuice, 0.55, p: 11), o("tumbler", .lemonade, 0.6, p: 11),
-                o("pint", .water, 0.7, p: 11), o("highball", .orangeJuice, 0.65, p: 11),
-                o("tumbler", .water, 0.85, p: 11),
+            lv(v, 4, "Half Full", jug: 0.85, band: 0.032, [
+                o("mug", .water, 0.5, p: 13), o("jar", .lemonade, 0.4, p: 13), o("tumbler", .orangeJuice, 0.7, p: 13),
+                o("pint", .water, 0.38, p: 13), o("mug", .lemonade, 0.42, p: 13), o("jar", .orangeJuice, 0.35, p: 13),
+                o("tumbler", .lemonade, 0.75, p: 13),
             ]),
-            lv(v, 5, "Tall Order", jug: 0.8, band: 0.028, [
+            lv(v, 5, "Tall Order", jug: 0.8, band: 0.03, [
                 o("highball", .lemonade, 0.85, p: 13), o("pint", .water, 0.8, p: 13),
                 o("highball", .orangeJuice, 0.9, p: 13), o("pint", .lemonade, 0.85, p: 13),
                 o("highball", .water, 0.8, p: 13), o("pint", .orangeJuice, 0.88, p: 13),
             ]),
-            lv(v, 6, "Half Measures", jug: 0.6, band: 0.028, [
-                o("jar", .water, 0.4, p: 12), o("pint", .lemonade, 0.35, p: 12), o("mug", .orangeJuice, 0.5, p: 12),
-                o("jar", .lemonade, 0.45, p: 12), o("pint", .water, 0.38, p: 12), o("mug", .water, 0.42, p: 12),
-                o("jar", .orangeJuice, 0.36, p: 12),
+            lv(v, 6, "Top It Up", jug: 0.75, band: 0.03, [
+                o("tumbler", .lemonade, 0.8, p: 12, pre: 0.45), o("highball", .water, 0.75, p: 12, pre: 0.3),
+                o("jar", .orangeJuice, 0.7, p: 12, pre: 0.5), o("tumbler", .water, 0.65, p: 12),
+                o("pint", .lemonade, 0.85, p: 12, pre: 0.6), o("mug", .orangeJuice, 0.8, p: 12, pre: 0.35),
+                o("highball", .lemonade, 0.7, p: 12, pre: 0.25),
             ]),
             lv(v, 7, "First Flute", jug: 0.7, band: 0.028, [
                 o("flute", .lemonade, 0.7, p: 13), o("flute", .water, 0.8, p: 13), o("tumbler", .lemonade, 0.6, p: 13),
                 o("flute", .orangeJuice, 0.75, p: 13), o("highball", .lemonade, 0.7, p: 13),
                 o("flute", .lemonade, 0.85, p: 13),
             ]),
-            lv(v, 8, "Closing Time", jug: 0.6, band: 0.026, [
-                o("tumbler", .lemonade, 0.7, p: 10), o("flute", .water, 0.8, p: 10), o("pint", .orangeJuice, 0.75, p: 10),
-                o("jar", .lemonade, 0.5, p: 10), o("highball", .water, 0.9, p: 10), o("flute", .orangeJuice, 0.65, p: 10),
-                o("mug", .lemonade, 0.6, p: 10), o("tumbler", .water, 0.45, p: 10),
+            lv(v, 8, "Last Drops", jug: 0.5, band: 0.026, [
+                o("tumbler", .lemonade, 0.7, p: 11), o("flute", .water, 0.8, p: 11), o("pint", .orangeJuice, 0.75, p: 11),
+                o("jar", .lemonade, 0.5, p: 11), o("highball", .water, 0.9, p: 11), o("flute", .orangeJuice, 0.65, p: 11),
+                o("mug", .lemonade, 0.6, p: 11, pre: 0.3), o("tumbler", .water, 0.45, p: 11),
             ]),
         ]
     }
