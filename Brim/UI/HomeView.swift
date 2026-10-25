@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Home (REVIEW-1 P0-2, P1-7, P2-4, P2-7): the wordmark on the clean wall at the top, the attract loop pouring in the
-/// middle, and the buttons kept clear of the glass:
-/// - a wide canvas (the Duo's flat half): two button columns, left and right of the centre ~220 pt where the glass
-///   stands, plus a chalkboard beside the jug carrying the Daily status and lifetime stats;
-/// - a narrow phone: one 60 pt row at the very bottom, on the counter front under the glass.
+/// Home (REVIEW-1 P0-2, P1-7, P2-4, P2-7; REVIEW-2 P1-2): the wordmark on the clean wall at the top, the attract loop
+/// pouring in the middle, and the buttons kept clear of every glass. Round 3 centres the pour (glass stop x ≤ 372
+/// world) and parks the next glass on the counter at x ≈ 165, so the whole counter above the front edge belongs to
+/// the scene: the buttons are ONE row at the very bottom, on the counter front under the glasses, on every device.
+/// - the Duo (roomy): a 64 pt row with full labels (Play + the shift, Rush best, Daily number and state, Venues ★),
+///   plus a chalkboard beside the jug on the raised half carrying the Daily status and lifetime stats;
+/// - a narrow phone: a 60 pt row with short labels.
 struct HomeView: View {
     @ObservedObject var controller: GameController
     @ObservedObject var store: ProgressStore
@@ -15,26 +17,27 @@ struct HomeView: View {
 
     private var today: Int { LevelCatalog.dayNumber(for: Date()) }
 
-    /// Width the glass needs clear in the middle of the flat half.
-    static let glassClear: CGFloat = 220
-    static let columnMin: CGFloat = 170
+    /// Wide enough for the full-label row (the Duo's 669 pt).
+    static let roomyWidth: CGFloat = 560
 
-    private var columnWidth: CGFloat {
-        min((info.size.width - Self.glassClear) / 2 - info.sidePad, 230)
+    private var roomy: Bool { info.size.width >= Self.roomyWidth }
+
+    /// Pure (tested): the button row's frame (canvas points), always below the counter line where the glasses stand.
+    static func rowFrame(info: CanvasInfo, roomy: Bool) -> CGRect {
+        let height: CGFloat = roomy ? 64 : 60
+        let bottom = roomy ? info.size.height - max(info.insets.bottom, 12) - 6
+                           : info.size.height - max(info.insets.bottom - 10, 8)
+        // Never above the counter front (+ the coaster's lip).
+        let top = max(bottom - height, info.counterY + 10)
+        return CGRect(x: 0, y: top, width: info.size.width, height: height)
     }
-
-    private var usesColumns: Bool { columnWidth >= Self.columnMin }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             header
             ChalkboardLayer(hud: controller.hud, store: store, info: info, today: today)
                 .opacity(appeared ? 1 : 0)
-            if usesColumns {
-                columns
-            } else {
-                bottomRow
-            }
+            bottomRow
         }
         .frame(width: info.size.width, height: info.size.height, alignment: .topLeading)
         .onAppear {
@@ -66,47 +69,35 @@ struct HomeView: View {
         .opacity(appeared ? 1 : 0)
     }
 
-    // MARK: Wide: two columns on the flat half, the glass between them
-
-    private var columns: some View {
-        let top = info.bottomHalfTop + 14
-        let bottom = info.size.height - max(info.insets.bottom, 12) - 8
-        return HStack(alignment: .center, spacing: 0) {
-            VStack(spacing: 12) {
-                playButton(compact: false)
-                venuesButton(compact: false)
-            }
-            .frame(width: columnWidth)
-            Spacer(minLength: Self.glassClear)
-            VStack(spacing: 12) {
-                rushButton(compact: false)
-                dailyButton(compact: false)
-            }
-            .frame(width: columnWidth)
-        }
-        .padding(.horizontal, info.sidePad)
-        .frame(width: info.size.width, height: max(bottom - top, 0))
-        .offset(y: top)
-        .offset(y: appeared ? 0 : 30)
-        .opacity(appeared ? 1 : 0)
-    }
-
-    // MARK: Narrow: one row at the very bottom
+    // MARK: One row at the very bottom (both devices)
 
     private var bottomRow: some View {
-        let height: CGFloat = 60
-        let bottom = info.size.height - max(info.insets.bottom - 10, 8)
-        return HStack(spacing: 7) {
-            playButton(compact: true)
-                .frame(maxWidth: .infinity)
-                .layoutPriority(1)
-            rushButton(compact: true).frame(width: 74)
-            dailyButton(compact: true).frame(width: 74)
-            venuesButton(compact: true).frame(width: 74)
+        let frame = Self.rowFrame(info: info, roomy: roomy)
+        return Group {
+            if roomy {
+                HStack(spacing: 8) {
+                    playButton(compact: false)
+                        .frame(maxWidth: .infinity)
+                        .layoutPriority(1)
+                    rushButton(compact: false).frame(width: 132)
+                    dailyButton(compact: false).frame(width: 142)
+                    venuesButton(compact: false).frame(width: 112)
+                }
+                .padding(.horizontal, info.sidePad)
+            } else {
+                HStack(spacing: 7) {
+                    playButton(compact: true)
+                        .frame(maxWidth: .infinity)
+                        .layoutPriority(1)
+                    rushButton(compact: true).frame(width: 74)
+                    dailyButton(compact: true).frame(width: 74)
+                    venuesButton(compact: true).frame(width: 74)
+                }
+                .padding(.horizontal, max(info.sidePad - 6, 10))
+            }
         }
-        .padding(.horizontal, max(info.sidePad - 6, 10))
-        .frame(width: info.size.width, height: height)
-        .offset(y: bottom - height)
+        .frame(width: info.size.width, height: frame.height)
+        .offset(y: frame.minY)
         .offset(y: appeared ? 0 : 30)
         .opacity(appeared ? 1 : 0)
     }
@@ -115,14 +106,14 @@ struct HomeView: View {
 
     private func playButton(compact: Bool) -> some View {
         let next = store.data.nextShift
-        return TapButton(kind: .primary, height: compact ? 60 : 84, hPad: compact ? 8 : 14,
+        return TapButton(kind: .primary, height: compact ? 60 : 64, hPad: compact ? 8 : 14,
                          action: { controller.playNextShift() }) {
             HStack(spacing: compact ? 8 : 10) {
                 Image(systemName: "play.fill")
-                    .font(.system(size: compact ? 18 : 22, weight: .heavy))
+                    .font(.system(size: compact ? 18 : 20, weight: .heavy))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Play")
-                        .font(BrimTheme.title(compact ? 21 : 26))
+                        .font(BrimTheme.title(compact ? 21 : 23))
                     if let next {
                         Text(compact ? "Shift \(next.venueNumber)-\(next.index)"
                                      : "\(LevelCatalog.title(of: next.venue)) · \(next.index)")
@@ -139,17 +130,13 @@ struct HomeView: View {
     }
 
     private func rushButton(compact: Bool) -> some View {
-        TapButton(kind: .secondary, height: compact ? 60 : 72, hPad: compact ? 4 : 12,
+        TapButton(kind: .secondary, height: compact ? 60 : 64, hPad: compact ? 4 : 8,
                   action: { controller.start(mode: .rush) }) {
             if compact {
                 smallLabel("Rush", icon: "bolt.fill")
             } else {
-                VStack(spacing: 2) {
-                    Label("Rush", systemImage: "bolt.fill")
-                    Text(store.rushBest > 0 ? "Best \(ShareText.grouped(store.rushBest))" : "Endless")
-                        .font(BrimTheme.text(12, .bold))
-                        .foregroundStyle(BrimTheme.ink.opacity(0.7))
-                }
+                twoLine("Rush", icon: "bolt.fill",
+                        detail: store.rushBest > 0 ? "Best \(ShareText.grouped(store.rushBest))" : "Endless")
             }
         }
         .accessibilityLabel(store.rushBest > 0 ? "Rush, best \(store.rushBest)" : "Rush")
@@ -157,42 +144,51 @@ struct HomeView: View {
 
     private func dailyButton(compact: Bool) -> some View {
         let streak = store.dailyStreak(today: today)
-        return TapButton(kind: .secondary, height: compact ? 60 : 72, hPad: compact ? 4 : 12,
+        return TapButton(kind: .secondary, height: compact ? 60 : 64, hPad: compact ? 4 : 8,
                          action: { controller.playDaily() }) {
             if compact {
-                smallLabel(streak > 0 ? "\(streak)🔥" : "Daily", icon: "calendar")
+                // REVIEW-2 P2-10: the number and the state on the phone too ("#297", "#297 ✓", "#297 🔥3").
+                smallLabel(Self.compactDailyText(today: today, done: store.dailyRecord(day: today) != nil,
+                                                 streak: streak),
+                           icon: "calendar")
             } else {
-                VStack(spacing: 2) {
-                    Label("Daily Pour", systemImage: "calendar")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Text(dailyStatus(streak: streak))
-                        .font(BrimTheme.text(12, .bold))
-                        .foregroundStyle(BrimTheme.ink.opacity(0.7))
-                        .lineLimit(1)
-                }
+                twoLine("Daily", icon: "calendar", detail: dailyStatus(streak: streak))
             }
         }
         .accessibilityLabel("Daily Pour number \(today)\(streak > 0 ? ", streak \(streak) days" : "")")
     }
 
+    /// Pure (tested): the phone's Daily button text.
+    static func compactDailyText(today: Int, done: Bool, streak: Int) -> String {
+        if streak > 1 { return "#\(today) 🔥\(streak)" }
+        return done ? "#\(today) ✓" : "#\(today)"
+    }
+
     private func venuesButton(compact: Bool) -> some View {
-        TapButton(kind: .quiet, height: compact ? 60 : 56, hPad: compact ? 4 : 12,
+        TapButton(kind: .quiet, height: compact ? 60 : 64, hPad: compact ? 4 : 8,
                   action: { controller.showVenues() }) {
             if compact {
                 smallLabel("\(store.totalStars)★", icon: "storefront.fill")
             } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "storefront.fill")
-                    Text("Venues")
-                    Spacer(minLength: 2)
-                    Image(systemName: "star.fill").foregroundStyle(BrimTheme.goldDeep)
-                    Text("\(store.totalStars)")
-                        .font(BrimTheme.number(17))
-                }
+                twoLine("Venues", icon: "storefront.fill", detail: "★ \(store.totalStars)")
             }
         }
         .accessibilityLabel("Venues, \(store.totalStars) stars")
+    }
+
+    /// A roomy button's label: icon + title, a small detail line under it.
+    private func twoLine(_ title: String, icon: String, detail: String) -> some View {
+        VStack(spacing: 2) {
+            Label(title, systemImage: icon)
+                .font(BrimTheme.text(18, .heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(detail)
+                .font(BrimTheme.text(12, .bold))
+                .foregroundStyle(BrimTheme.ink.opacity(0.7))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
     }
 
     private func smallLabel(_ text: String, icon: String) -> some View {

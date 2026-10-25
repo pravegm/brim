@@ -10,11 +10,57 @@ struct StandUpCard: View {
     let onTurnScreen: () -> Void
     let onPlayWithTouch: () -> Void
 
+    /// The fold of a Duo in book pose runs down the middle of the canvas (40 pt band). Content keeps ≥ 24 pt clear.
+    static let creaseHalf: CGFloat = 20
+    static let creaseClear: CGFloat = 24
+
+    /// Pure (tested): a Duo inner display in book pose, where the card splits into one column per page.
+    static func splitsOnFold(_ size: CGSize) -> Bool {
+        size.width > size.height && PoseRule.looksLikeDuoInner(size)
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.7)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
-            ViewThatFits(in: .horizontal) {
+            GeometryReader { geo in
+                if Self.splitsOnFold(geo.size) {
+                    bookPages(geo.size)
+                } else {
+                    flowing
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    /// Book pose on a Duo (REVIEW-2 P2-7): the drawing on the left page, the words and buttons on the right page,
+    /// nothing within 24 pt of the vertical fold.
+    private func bookPages(_ size: CGSize) -> some View {
+        let page = max(size.width / 2 - Self.creaseHalf - Self.creaseClear, 0)
+        return HStack(spacing: 0) {
+            TurnPhoneDrawing()
+                .frame(width: 220, height: 220)
+                .frame(width: page, height: size.height)
+            Color.clear
+                .frame(width: 2 * (Self.creaseHalf + Self.creaseClear), height: size.height)
+            ScrollView(showsIndicators: false) {
+                copy
+                    .padding(.trailing, 20 + insets.trailing)
+                    .padding(.vertical, 24)
+                    .frame(width: page, alignment: .leading)
+                    .frame(minHeight: max(size.height - insets.top - insets.bottom, 0))
+            }
+            .frame(width: page, height: max(size.height - insets.top - insets.bottom, 0))
+            .padding(.top, insets.top)
+            .padding(.bottom, insets.bottom)
+        }
+        .frame(width: size.width, height: size.height, alignment: .leading)
+    }
+
+    private var flowing: some View {
+        ViewThatFits(in: .horizontal) {
                 HStack(spacing: 36) {
                     TurnPhoneDrawing()
                         .frame(width: 220, height: 220)
@@ -37,7 +83,6 @@ struct StandUpCard: View {
             .padding(.bottom, insets.bottom)
             .padding(.leading, insets.leading)
             .padding(.trailing, insets.trailing)
-        }
     }
 
     private var copy: some View {
@@ -50,20 +95,35 @@ struct StandUpCard: View {
                 .font(BrimTheme.text(16))
                 .foregroundStyle(BrimTheme.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                TapButton(kind: .primary, height: 52, action: onTurnScreen) {
-                    Label("Turn the screen", systemImage: "rotate.right.fill")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+            // Side by side when both labels fit whole, else stacked (REVIEW-2 P1-8: never "Turn the scre…").
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    turnButton
+                    touchButton
                 }
-                TapButton(kind: .quiet, height: 52, action: onPlayWithTouch) {
-                    Label("Use touch", systemImage: "hand.draw.fill")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                VStack(spacing: 10) {
+                    turnButton
+                    touchButton
                 }
             }
             .frame(maxWidth: 420)
             .padding(.top, 4)
+        }
+    }
+
+    private var turnButton: some View {
+        TapButton(kind: .primary, height: 52, action: onTurnScreen) {
+            Label("Turn the screen", systemImage: "rotate.right.fill")
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+
+    private var touchButton: some View {
+        TapButton(kind: .quiet, height: 52, action: onPlayWithTouch) {
+            Label("Use touch", systemImage: "hand.draw.fill")
+                .lineLimit(1)
+                .fixedSize()
         }
     }
 }

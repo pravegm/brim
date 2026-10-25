@@ -200,6 +200,34 @@ enum SoundBook {
         return bed
     }
 
+    /// No pour layers, master kept: menus, pause cards and one-shots stay audible (sound off is the engine's job).
+    static func idleBed(master: Float) -> PourBed {
+        var bed = PourBed()
+        bed.master = master
+        bed.turbulence = 0
+        return bed
+    }
+
+    /// The pour bed and the pour's own one-shots (pour start, glugs, splashes) stay quiet while the flat gate is shut:
+    /// at a run's start nothing pours anyway, and after a resume (ROUND-3: every resume re-arms the gate) nothing
+    /// sounds until the player has laid the phone flat and the latch clicks.
+    static func pourIsAudible(needsFlat: Bool) -> Bool {
+        !needsFlat
+    }
+
+    // MARK: Pausing
+
+    /// Closing the phone paused the run: a soft, falling breath of air (two filtered-noise sweeps, ~0.4 s), like a lid
+    /// settling. Quieter than any judgement; nothing plays on resume (the flat latch is the cue that play is back).
+    static func pauseWhoosh() -> [SynthCommand] {
+        [
+            .noise(SynthNoise(.bandPass, cutoff: 1900, to: 520, sweep: 0.34, q: 0.8, attack: 0.07, decay: 0.16,
+                              gain: 0.075)),
+            .noise(SynthNoise(.lowPass, cutoff: 700, to: 260, sweep: 0.3, q: 0.7, attack: 0.05, decay: 0.14,
+                              gain: 0.05, delay: 0.04)),
+        ]
+    }
+
     // MARK: Pour moments
 
     /// One glug: a resonant bubble pop at the vessel's current pitch (it rises as the glass fills), plus a tiny wet tick.

@@ -49,6 +49,15 @@ import UIKit
 //   `BRIM-T screen <route>` when the app's screen changes, `BRIM-T flat armed t=` when the Duo flat gate opens.
 // - `BRIM-T canvas <w>x<h> hasFold=<bool> pose=play|book|cover` whenever the canvas, fold or pose changes (every DEBUG
 //   build, demo or not).
+// - Round 3, closing never pours (every DEBUG build, flushed; GameController):
+//   `BRIM-T autopause angle=<a>`   a live run paused itself: raw hinge < 70° (or the Duo shut / went to the cover).
+//                                  Real runs, and demo runs with `duo` and no `autopilot`.
+//   `BRIM-T resume needsFlat=<0|1>` a live run resumed (any path: reopening, the pause card, the app or the pose
+//                                  coming back); the flat gate re-armed (1 on a fold outside practice).
+//   `BRIM-T served id=<glassID> judgement=<perfect|great|good|short|spill>`   every live serve. ci/duo.sh fails if
+//                                  one falls between `autopause` and the next `resume needsFlat=1`.
+//   `-brimDemo "mode=shift:1-2;duo;orient=portrait"` plays on the real hinge exactly like a real run (pause, card,
+//   resume, flat gate); only the book-pose hold differs (demo runs hold instead of showing the pause card).
 
 enum DemoAutopilot: String, Equatable { case perfect, great, short, spill }
 

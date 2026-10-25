@@ -17,6 +17,8 @@ struct GlassFrame {
     var projected: Double?
     /// World x range stamps and pops must stay inside (the iPhone crop).
     var safeX: ClosedRange<CGFloat>
+    /// ROUND-3 decision 3: no text may reach above this world y (the crease band minus 8 pt).
+    var keepOutTop: CGFloat
 }
 
 /// One glass on the counter. Two roots so the stream can be drawn *between* them:
@@ -40,6 +42,7 @@ final class SceneGlass {
     private let foam: SKShapeNode
     private let foamBubbles: SKShapeNode
     private let bubbles: SKShapeNode
+    private let plume: SKShapeNode
     private let surfaceFlash: SKSpriteNode
 
     // front
@@ -70,6 +73,8 @@ final class SceneGlass {
     private(set) var base: CGFloat = 6
     private var footHW: CGFloat = 20
     private var isStemmed = false
+    private var maxHW: CGFloat = 30
+    private var hasHandle = false
     private var builtLine: CGFloat = -1
     private var builtBand: CGFloat = -1
     private var liquidID: LiquidID?
@@ -84,6 +89,8 @@ final class SceneGlass {
     private var lastX: CGFloat?
     private var lastVX: CGFloat = 0
     private var velocityValid = false
+    /// Seconds the glass has been standing still (a glass waiting in the next-glass slot has been still a while).
+    private(set) var stillFor: Double = 0
     private var shownResult: Judgement?
     private var lastPatience: CGFloat = -1
     private var lineState: Int = -1
@@ -122,6 +129,7 @@ final class SceneGlass {
         foam = SKShapeNode()
         foamBubbles = SKShapeNode()
         bubbles = SKShapeNode()
+        plume = SKShapeNode()
         surfaceFlash = SKSpriteNode(texture: SceneArt.glow)
         walls = SKShapeNode()
         outline = SKShapeNode()
@@ -179,11 +187,16 @@ final class SceneGlass {
         bubbles.strokeColor = UIColor(white: 1, alpha: 0.85)
         bubbles.lineWidth = 0.8
         bubbles.zPosition = 6
+        plume.fillColor = UIColor(white: 1, alpha: 0.45)
+        plume.strokeColor = UIColor(white: 1, alpha: 0.85)
+        plume.lineWidth = 1
+        plume.zPosition = 6.2
+        plume.isHidden = true
         surfaceFlash.zPosition = 6.5
         surfaceFlash.alpha = 0
         surfaceFlash.isHidden = true
         surfaceFlash.blendMode = .add
-        for n in [patienceTrack, patienceArc, shadow, interior, rimBack, liquid, surface, foam, foamBubbles, bubbles] {
+        for n in [patienceTrack, patienceArc, shadow, interior, rimBack, liquid, surface, foam, foamBubbles, bubbles, plume] {
             back.addChild(n)
         }
         back.addChild(surfaceFlash)
@@ -296,6 +309,13 @@ final class SceneGlass {
     var velocityX: CGFloat { velocityValid ? lastVX : 0 }
     /// Spilled and still dripping (the wet glass leaving).
     var isWet: Bool { simTime < wetUntil }
+    /// World rect of the glass at rest (walls, foot, mug handle, rim), for UI keep-outs.
+    var worldFrame: CGRect {
+        let left = maxHW + (hasHandle ? 30 : 0)
+        let right = max(maxHW, footHW)
+        return CGRect(x: x - max(left, footHW), y: counterY - 6, width: max(left, footHW) + right,
+                      height: base + rimY + 12)
+    }
 
     /// 0…1 across the liquid surface if `worldX` is inside the mouth, else nil.
     func surfaceFraction(worldX: CGFloat) -> CGFloat? {
@@ -350,14 +370,14 @@ final class SceneGlass {
             liquid.fillTexture = SceneArt.liquidTexture(g.liquid)
             liquid.fillColor = .white
             let top = SceneColor.opaque(g.liquid.top.skColor)
-            liquidColor = SceneColor.mix(SceneColor.opaque(g.liquid.bottom.skColor), top, 0.6)
+            liquidColor = SceneLiquidLook.stream(g.liquid).body
             surface.strokeColor = SceneColor.lighter(top, 0.65)
             foam.fillTexture = SceneArt.foamTexture(g.liquid)
             foam.fillColor = .white
             let foamColor = SceneColor.opaque(g.liquid.foam?.skColor ?? SceneColor.foamDefault)
             foam.strokeColor = SceneColor.lighter(foamColor, 0.75)
             foamBubbles.strokeColor = SceneColor.darker(foamColor, 0.18).withAlphaComponent(0.5)
-            overflow.fillColor = SceneColor.lighter(liquidColor, 0.08).withAlphaComponent(0.82)
+            overflow.fillColor = SceneColor.lighter(liquidColor, 0.08).withAlphaComponent(0.94)
             wetSheen.fillColor = SceneColor.lighter(liquidColor, 0.15).withAlphaComponent(0.28)
             surfaceFlash.color = SceneColor.lighter(top, 0.8)
             surfaceFlash.colorBlendFactor = 0.3
@@ -381,6 +401,7 @@ final class SceneGlass {
                 }
                 lastVX = vx
                 velocityValid = true
+                if abs(vx) < 4 { stillFor += Double(dt) } else { stillFor = 0 }
             }
             lastX = g.x
             if let t = f.tail, h > 1, abs(t.position.y - surfaceWorldY) < 30, let fr = surfaceFraction(worldX: t.position.x) {
@@ -396,6 +417,7 @@ final class SceneGlass {
 
         placeRoots(g, f)
         drawLiquid(h: h, foamH: foamH, g: g, dt: dt, time: f.time, reduceMotion: f.reduceMotion)
+        drawPlume(h: h, f, thick: SceneStream.isThick(g.liquid.id) || g.liquid.id == .sand)
         drawSurfaceFlash(h: h)
         drawLine(g, f)
         drawOverflow(g, time: f.time)
@@ -467,7 +489,7 @@ final class SceneGlass {
         lp.closeSubpath()
         liquid.path = lp
         liquid.isHidden = false
-        liquid.alpha = CGFloat(0.62 + 0.38 * min(max(g.liquid.opacity, 0), 1))
+        liquid.alpha = SceneLiquidLook.glassAlpha(g.liquid)
 
         let sp = CGMutablePath()
         sp.move(to: surf[0])
@@ -544,6 +566,33 @@ final class SceneGlass {
         } else {
             bubbles.isHidden = true
         }
+    }
+
+    /// Where the stream plunges in: a short plume of bubbles under the surface (replaces the ghost "tongue",
+    /// REVIEW-2 P1-6). Thick drinks coil on top instead (SceneStream).
+    private func drawPlume(h: CGFloat, _ f: GlassFrame, thick: Bool) {
+        guard !thick, f.pouring, h > 12, let t = f.tail, abs(t.position.y - surfaceWorldY) < 30,
+              let fr = surfaceFraction(worldX: t.position.x) else {
+            plume.isHidden = true
+            return
+        }
+        let hwTop = ScenePaths.halfWidth(profile, at: h)
+        let cx = -hwTop + 2 * hwTop * fr
+        let depth = min(36, h - 8)
+        let spread = max(5, min(t.width + 6, hwTop * 0.7))
+        let time = CGFloat(f.time)
+        let p = CGMutablePath()
+        let count = f.reduceMotion ? 4 : 7
+        for k in 0..<count {
+            let u = (time * 1.7 + CGFloat(k) / CGFloat(count)).truncatingRemainder(dividingBy: 1)
+            let y = h - 3 - u * depth
+            let r = 1.3 + 1.9 * (1 - u)
+            let lim = max(0, ScenePaths.halfWidth(profile, at: y) - r - 2)
+            let x = min(max(cx + sin(CGFloat(k) * 2.4 + time * 3) * spread * 0.4 * (0.4 + u), -lim), lim)
+            p.addEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+        }
+        plume.path = p
+        plume.isHidden = false
     }
 
     /// Perfect: a white flash across the surface (0.25 s).
@@ -655,7 +704,8 @@ final class SceneGlass {
             var projectedIn = g.inPerfectBand
             if let pr = f.projected { projectedIn = projectedIn || abs(pr) <= f.band }
             let pulse: CGFloat = projectedIn ? 0.06 * CGFloat(0.5 + 0.5 * sin(f.time * 10)) : 0
-            band.alpha = a * ((projectedIn ? 0.4 : (f.pouring ? 0.2 : 0.14)) + pulse + lock * 0.3)
+            // P2-9: a real 22–26 % strip before and during the pour ("aim here"), brighter once the projection is in.
+            band.alpha = a * ((projectedIn ? 0.42 : (f.pouring ? 0.26 : 0.22)) + pulse + lock * 0.3)
             bandEdges.alpha = a * (projectedIn ? 0.95 : 0.55)
         }
     }
@@ -691,8 +741,9 @@ final class SceneGlass {
             path.addPath(bulge)
         }
 
-        // 2. Side sheets running down both walls, thick and wobbling.
-        let grow = min(1, max(0, (since - 0.08) / 0.35))
+        // 2. Side sheets running down both walls: thick (≥ 12 pt), opaque, wobbling, with a drip bead at the foot.
+        //    (No front curtain: drawn over a full glass it read as a ghost "tongue" inside the drink, REVIEW-2 P1-6.)
+        let grow = min(1, max(0, (since - 0.08) / 0.3))
         let len = fullDrop * (g.overflowing ? grow : 1)
         if len > 2 {
             let samples = 10
@@ -702,9 +753,10 @@ final class SceneGlass {
                 for k in 0...samples {
                     let y = rimY - len * CGFloat(k) / CGFloat(samples)
                     let xw = ScenePaths.halfWidth(profile, at: max(y, 0)) + wallW
-                    let th = max(1.5, (4.5 + 2 * sin(t * 7 + CGFloat(k) * 0.9 + side)) * strength)
+                    let taper = 1 - 0.25 * CGFloat(k) / CGFloat(samples)
+                    let th = max(2, (13 + 2.5 * sin(t * 7 + CGFloat(k) * 0.9 + side)) * taper * max(strength, 0.35))
                     outer.append(CGPoint(x: side * (xw + 0.4 + th), y: y))
-                    inner.append(CGPoint(x: side * (xw - 0.4), y: y))
+                    inner.append(CGPoint(x: side * (xw - 2), y: y))
                 }
                 path.move(to: CGPoint(x: side * (rimHW - 1), y: rimY + 2))
                 for p in outer { path.addLine(to: p) }
@@ -718,40 +770,21 @@ final class SceneGlass {
                     i -= 1
                 }
                 path.closeSubpath()
+                // A fat bead gathering at the foot of the sheet.
+                if let foot = outer.last {
+                    let br = 5.5 * max(strength, 0.4)
+                    path.addEllipse(in: CGRect(x: foot.x - side * br * 1.2 - br, y: foot.y - br * 1.6,
+                                               width: br * 2, height: br * 2.2))
+                }
+                // Glint down the sheet.
+                let s0 = outer[1], s1 = outer[samples / 2]
+                shinePath.move(to: CGPoint(x: s0.x - side * 4, y: s0.y))
+                shinePath.addLine(to: CGPoint(x: s1.x - side * 4, y: s1.y))
             }
-
-            // 3. The front curtain: ≥ 40 % of the rim width, sheeting down the face of the glass.
-            let cx = -rimHW * 0.12 + 2 * sin(t * 2.3)
-            let topHW = rimHW * 0.46 * max(0.35, strength)
-            let curtain = CGMutablePath()
-            var left: [CGPoint] = []
-            var right: [CGPoint] = []
-            let steps = 8
-            for k in 0...steps {
-                let fk = CGFloat(k) / CGFloat(steps)
-                let y = rimY + 1 - len * fk
-                let w = topHW * (1 - 0.4 * fk) + 2.5 * sin(t * 6 + fk * 7)
-                let sway = 3 * sin(t * 4 + fk * 5)
-                left.append(CGPoint(x: cx - w + sway, y: y))
-                right.append(CGPoint(x: cx + w + sway, y: y))
-            }
-            curtain.move(to: left[0])
-            for p in left.dropFirst() { curtain.addLine(to: p) }
-            let lb = left[left.count - 1], rb = right[right.count - 1]
-            curtain.addQuadCurve(to: rb, control: CGPoint(x: (lb.x + rb.x) * 0.5, y: lb.y - 10))
-            var j = right.count - 1
-            while j >= 0 {
-                curtain.addLine(to: right[j])
-                j -= 1
-            }
-            curtain.closeSubpath()
-            path.addPath(curtain)
-            shinePath.move(to: CGPoint(x: left[0].x + topHW * 0.35, y: rimY - 4))
-            shinePath.addLine(to: CGPoint(x: left[steps / 2].x + topHW * 0.3, y: rimY - len * 0.5))
         }
         overflow.path = path
         overflow.isHidden = false
-        overflow.alpha = max(0.15, strength)
+        overflow.alpha = g.overflowing ? 1 : max(0, min(1, strength * 1.5))
         overflowShine.path = shinePath
         overflowShine.isHidden = shinePath.isEmpty
         overflowShine.alpha = strength
@@ -764,7 +797,8 @@ final class SceneGlass {
     // MARK: Patience ring (attached to the glass: drains around the coaster, P2-2)
 
     private func drawPatience(_ g: GlassState, time: Double) {
-        guard let left = g.patienceLeft, let total = g.patienceTotal, total > 0, g.result == nil else {
+        guard let left = g.patienceLeft, let total = g.patienceTotal, total > 0, g.result == nil,
+              !g.isWaitingInSlot else {
             patienceTrack.isHidden = true
             patienceArc.isHidden = true
             lastPatience = -1
@@ -831,21 +865,80 @@ final class SceneGlass {
             }
         }
         if !stamp.isHidden {
-            // Just above the rim, kept inside the crop.
+            // Just above the rim, kept inside the crop and BELOW the crease keep-out (ROUND-3 decision 3): tall glasses
+            // get the stamp over their upper body instead of on the fold. Computed from the live root (Perfect hop).
+            let sy = max(front.yScale, 0.01)
+            let limit = (f.keepOutTop - front.position.y) / sy
+            let top = stamp.size.height * SceneGlass.labelTopFrac * 1.2          // 1.2: the pop overshoot
+            let desired = rimY + 12 + stamp.size.height * 0.5
             stamp.position = CGPoint(x: clampedLocalX(halfWidth: stamp.size.width * 0.5, f),
-                                     y: rimY + 12 + stamp.size.height * 0.5)
+                                     y: min(desired, limit - top))
         }
     }
 
-    func showStreak(_ n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>) {
+    /// Highest world y the stamp's ink reaches (with its pop overshoot); nil when no stamp shows. For tests and UI.
+    var stampReachWorld: CGFloat? {
+        if stamp.isHidden { return nil }
+        let top = stamp.position.y + stamp.size.height * SceneGlass.labelTopFrac * 1.2
+        return front.position.y + front.yScale * top
+    }
+
+    /// Highest world y (glass at rest) the last streak pop reaches, rise and pop overshoot included.
+    private(set) var lastStreakReachWorld: CGFloat?
+
+    /// The visible ink of a `SceneArt.label` sprite reaches this fraction of its height above (and below) its centre,
+    /// and this fraction of its width either side (the sprite carries padding for the outline and shadow).
+    static let labelTopFrac: CGFloat = 0.3
+    static let labelSideFrac: CGFloat = 0.46
+
+    /// Where the streak pop goes (glass-local) and how far it may rise: above the stamp if it fits under the crease
+    /// keep-out (rising less if it must), else beside the stamp on the flat half, else just under it.
+    private func streakPlacement(size: CGSize, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat)
+        -> (position: CGPoint, rise: CGFloat) {
+        // Local limit at rest; allow for the Perfect hop (≤ 13 pt) and its ~2 % stretch while it is running.
+        let hop: CGFloat = celebrateAt != nil ? 22 : 2
+        let limit = keepOutTop - (counterY + base) - hop
+        let popTop = size.height * SceneGlass.labelTopFrac * 1.3
+        let halfW = size.width * SceneGlass.labelSideFrac
+        let hasStamp = !stamp.isHidden
+        let sc = hasStamp ? stamp.position : CGPoint(x: 0, y: rimY + 4)
+        let sTop = hasStamp ? stamp.size.height * SceneGlass.labelTopFrac : 0
+        let sHalfW = hasStamp ? stamp.size.width * SceneGlass.labelSideFrac : 0
+        func clampX(_ lx: CGFloat) -> CGFloat {
+            let lo = safeX.lowerBound + halfW - x, hi = safeX.upperBound - halfW - x
+            return lo <= hi ? min(max(lx, lo), hi) : lx
+        }
+        // A. Above the stamp.
+        let aboveY = sc.y + sTop + 4 + size.height * SceneGlass.labelTopFrac
+        if aboveY + popTop <= limit {
+            return (CGPoint(x: clampX(sc.x), y: aboveY), min(34, max(0, limit - popTop - aboveY)))
+        }
+        // B. Beside the stamp on the flat half (right first: the next glass waits on the left).
+        let sideY = min(sc.y, limit - popTop)
+        let wx = x + sc.x
+        let rightCentre = wx + sHalfW + 10 + halfW
+        if rightCentre + halfW <= safeX.upperBound {
+            return (CGPoint(x: rightCentre - x, y: sideY), min(12, max(0, limit - popTop - sideY)))
+        }
+        let leftCentre = wx - sHalfW - 10 - halfW
+        if leftCentre - halfW >= safeX.lowerBound {
+            return (CGPoint(x: leftCentre - x, y: sideY), min(12, max(0, limit - popTop - sideY)))
+        }
+        // C. Just under the stamp, over the glass.
+        let belowY = sc.y - (hasStamp ? stamp.size.height * SceneGlass.labelTopFrac : 0) - 4
+            - size.height * SceneGlass.labelTopFrac
+        return (CGPoint(x: clampX(sc.x), y: min(belowY, limit - popTop)), 0)
+    }
+
+    /// The streak pop — never on the crease band (ROUND-3 decision 3; see `streakPlacement`).
+    func showStreak(_ n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat) {
         let art = SceneArt.streak(n)
         let node = SKSpriteNode(texture: art.texture, size: art.size)
         node.zPosition = 41
-        let stampH = SceneArt.stamp(.perfect).size.height
-        let hw = art.size.width * 0.5
-        let lo = safeX.lowerBound + hw, hi = safeX.upperBound - hw
-        let wx = lo <= hi ? min(max(x, lo), hi) : x
-        node.position = CGPoint(x: wx - x, y: rimY + 12 + stampH + art.size.height * 0.35)
+        let place = streakPlacement(size: art.size, safeX: safeX, keepOutTop: keepOutTop)
+        node.position = place.position
+        lastStreakReachWorld = counterY + base + place.position.y + place.rise
+            + art.size.height * SceneGlass.labelTopFrac * 1.3
         front.addChild(node)
         node.alpha = 0
         if reduceMotion {
@@ -857,7 +950,7 @@ final class SceneGlass {
             pop.timingMode = .easeOut
             let settle = SKAction.scale(to: 1, duration: 0.12)
             settle.timingMode = .easeInEaseOut
-            let rise = SKAction.moveBy(x: 0, y: 34, duration: 1.1)
+            let rise = SKAction.moveBy(x: 0, y: place.rise, duration: 1.1)
             rise.timingMode = .easeOut
             node.run(SKAction.sequence([
                 SKAction.wait(forDuration: 0.08),
@@ -884,6 +977,10 @@ final class SceneGlass {
         let bowlBottom: CGFloat = isStemmed ? min(base, 7) : base
         let f0 = prof[0].x + wallW
         footHW = isStemmed ? max(f0 + 4, rimHW * 0.62) : f0
+        var widest: CGFloat = 0
+        for p in prof { widest = max(widest, p.x) }
+        maxHW = widest + wallW
+        hasHandle = s.style == .mug
 
         // Interior (the far wall of the glass, seen through).
         var inner: [CGPoint] = []
@@ -961,10 +1058,11 @@ final class SceneGlass {
         extraOutline.isHidden = true
         switch s.style {
         case .mug:
+            // Handle on the LEFT, so the fill-line tab on the right never sits on it (REVIEW-2 P2-5).
             let yTop = rimY * 0.8, yBot = rimY * 0.24
-            let xTop = ScenePaths.halfWidth(prof, at: yTop) + wallW - 1
-            let xBot = ScenePaths.halfWidth(prof, at: yBot) + wallW - 1
-            let bulge = 18 + rimHW * 0.3
+            let xTop = -(ScenePaths.halfWidth(prof, at: yTop) + wallW - 1)
+            let xBot = -(ScenePaths.halfWidth(prof, at: yBot) + wallW - 1)
+            let bulge = -(18 + rimHW * 0.3)
             let hp = CGMutablePath()
             hp.move(to: CGPoint(x: xTop, y: yTop))
             hp.addCurve(to: CGPoint(x: xBot, y: yBot), control1: CGPoint(x: xTop + bulge, y: yTop + 8),

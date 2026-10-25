@@ -41,6 +41,8 @@ final class FeedbackDirector: FeedbackSink {
             guard oldValue != soundOn else { return }
             persist()
             audio.enabled = soundOn
+            // Menus and pause cards keep this; a running game re-sends its bed on the next frame.
+            audio.setBed(idleBed)
         }
     }
 
@@ -73,6 +75,9 @@ final class FeedbackDirector: FeedbackSink {
     private var lastGlugHaptic: CFTimeInterval = 0
     private var lastSplash: CFTimeInterval = 0
     private var lastCounterSplash: CFTimeInterval = 0
+    private var lastWhoosh: CFTimeInterval = -.infinity
+    /// A pause right after the whoosh must not cut it off (`.silence` stops every one-shot).
+    private var whooshUntil: CFTimeInterval = -.infinity
     /// Glasses whose spill has already been heard (overflowStarted and served(.spill) arrive together; play once).
     private var spilledGlasses = Set<Int>()
     private var lockedGlasses = Set<Int>()
@@ -90,6 +95,13 @@ final class FeedbackDirector: FeedbackSink {
         audio.enabled = settings.soundOn
         audio.respectSilentSwitch = settings.respectSilentSwitch
         haptics.enabled = settings.hapticsOn
+        // Menus play before any game frame: start from an audible, empty bed (a master of 0 mutes one-shots too).
+        audio.setBed(idleBed)
+    }
+
+    /// No pour layers, master on (or 0 with sound off).
+    private var idleBed: PourBed {
+        SoundBook.idleBed(master: soundOn ? BrimAudioEngine.masterGain : 0)
     }
 
     /// Audio session + engines. Safe to call more than once; also called lazily by the first sound.
@@ -112,12 +124,28 @@ final class FeedbackDirector: FeedbackSink {
         guard paused != self.paused else { return }
         self.paused = paused
         if paused {
-            var quiet = PourBed()
-            quiet.master = 0
-            audio.setBed(quiet)
-            audio.silence()
-            haptics.updateFlow(flow: 0, fill: 0, now: CACurrentMediaTime())
+            // The pour layers stop; the master stays up so the pause card's buttons (and the closing whoosh) are heard.
+            audio.setBed(idleBed)
+            let now = CACurrentMediaTime()
+            if now >= whooshUntil { audio.silence() }
+            haptics.updateFlow(flow: 0, fill: 0, now: now)
         }
+    }
+
+    /// The App paused the run because the phone is closing (ROUND-3 decision 1): the pour stops at once and a soft
+    /// whoosh plays (at most once a second). Call it with `setPaused(true)`, in either order. Nothing plays on resume;
+    /// the pour stays quiet until the flat gate re-arms (`snapshot.needsFlat`).
+    func autopaused() {
+        ensureStarted()
+        let now = CACurrentMediaTime()
+        audio.setBed(idleBed)
+        haptics.updateFlow(flow: 0, fill: 0, now: now)
+        guard now - lastWhoosh >= 1 else { return }
+        lastWhoosh = now
+        // Stop whatever was ringing (the pour's splashes), then the whoosh; a pause right after must not cut it.
+        audio.silence()
+        audio.play(SoundBook.pauseWhoosh())
+        whooshUntil = now + 0.5
     }
 
     // MARK: - Menu sounds
@@ -154,8 +182,13 @@ final class FeedbackDirector: FeedbackSink {
         let telemetry = snapshot.telemetry
         let texture = SoundBook.texture(for: telemetry.liquid)
         let band = perfectBand(snapshot)
+        let pourAudible = SoundBook.pourIsAudible(needsFlat: snapshot.needsFlat)
 
-        if paused {
+        if paused || !pourAudible {
+            if !paused && now - lastBedSend >= 1.0 / 60 {
+                lastBedSend = now
+                audio.setBed(idleBed)
+            }
             haptics.updateFlow(flow: 0, fill: 0, now: now)
         } else {
             if now - lastBedSend >= 1.0 / 60 {
@@ -169,7 +202,18 @@ final class FeedbackDirector: FeedbackSink {
         }
 
         for event in events {
+            if !pourAudible && Self.isPourTexture(event) { continue }
             react(to: event, snapshot: snapshot, texture: texture, now: now)
+        }
+    }
+
+    /// The pour's own one-shots, kept quiet while the flat gate is shut.
+    nonisolated static func isPourTexture(_ event: GameEvent) -> Bool {
+        switch event {
+        case .pourStarted, .glug, .splashInGlass, .splashOnCounter:
+            return true
+        default:
+            return false
         }
     }
 

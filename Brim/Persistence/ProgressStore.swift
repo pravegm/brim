@@ -31,6 +31,10 @@ struct RecordOutcome: Equatable {
     var dailyCounted = false
     /// Daily: the scored attempt already on file (when this run was practice).
     var dailyOnFile: DailyRecord?
+
+    /// The results card's NEW BEST badge (REVIEW-2 P2-6): only when this run beat an earlier best, never on the first
+    /// run of a shift or of Rush.
+    var showsNewBest: Bool { isNewBest && previousBest > 0 }
 }
 
 /// Everything the game remembers. Saved as JSON under `ProgressStore.key`.

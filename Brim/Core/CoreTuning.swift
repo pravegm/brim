@@ -10,6 +10,7 @@ import Foundation
 // at ~170 × 225 but holds `jugVolumeScale` × its 2D area (it is a deep 3D pitcher), so it still serves a shift.
 // Reference sizes: a tumbler holds ~17,000 pt² (≈ 11,600 to a 0.7 line); the standard jug's polygon is ~24,600 pt²
 // and holds ~86,000 pt² of drink (≈ 7 tumblers to the line). The stream falls ~150–450 pt from the lip to a rim.
+// Round 3: the jug is drawn at `jugScale` 0.93 (polygon ~21,300 pt², same ~86,000 pt² of drink, same flow).
 // `RunResult.poured` is in these units: ~2.2× round 1 per glass (App: rescale any litres conversion).
 
 enum CoreTuning {
@@ -26,23 +27,36 @@ enum CoreTuning {
     // MARK: Jug placement (world)
 
     /// The jug rotates about its spout lip. Resting lip position = layout.jugPivot + (lipOffsetX, −lipDrop):
-    /// (402, 552) on the standard world, 56 pt above the crease. While the jug is too upright for its body to clear
-    /// the crease it is lifted (it rocks up on the crease ledge), so the lip sits ~+56…+90 for jug angles ≥ 55°
-    /// (mid/low jug) and higher (up to ~+190) for the first, shallow pours of a full jug.
-    /// Interior x stays within 155…511 at every angle (walls + handle fit inside 130…540); glasses stop at x ≈ 418.
-    static let lipOffsetX: Double = 50
+    /// (359, 552) on the standard world, 56 pt above the crease. While the jug is too upright for its body to clear
+    /// the crease it is lifted (it rocks up on the crease ledge), so the lip sits ~+56…+78 for jug angles ≥ 55°
+    /// (mid/low jug) and higher for the first, shallow pours of a full jug.
+    /// Round 3 (centre the pour): the lip moved 43 pt left and the jug is drawn at `jugScale`, so glasses stop at
+    /// x ≈ 361…369 (≤ 372) and the body (interior + 9 pt wall) stays right of x ≈ 120 at every angle (≥ 118 rule)
+    /// and left of x ≈ 470, its top ≤ ~786 (under the HUD band).
+    static let lipOffsetX: Double = 7
     static let lipDrop: Double = 88
-    /// The jug's interior never dips below `creaseMaxY + jugClearance`.
+    /// Uniform scale of the house jug's interior (round 3: 0.93, so the tipped body clears x 118 with the pour
+    /// centred). Flow and volume are compensated below so the pour timing is unchanged.
+    static let jugScale: Double = 0.93
+    /// While tipping, the jug's interior never dips below `creaseMaxY + jugClearance` (it may cross the crease band
+    /// with its walls only while tipping).
     static let jugClearance: Double = 4
+    /// At rest (upright) the interior sits this far above `creaseMaxY`, so the drawn walls (~9 pt) clear the fold
+    /// keep-out (crease + 8). The clearance eases from this to `jugClearance` over the first `jugRestBlendAngle`
+    /// degrees of jug angle (a full jug starts pouring at ~10.5°, so pours are unaffected).
+    static let jugRestClearance: Double = 21
+    static let jugRestBlendAngle: Double = 10
 
     // MARK: Jug outflow (weir law: target = flowK · head^1.5)
 
     /// Weir coefficient (pt²/s per pt^1.5 of head above the lip). With `jugVolumeScale` 3.5 a tumbler to a 0.7 line
     /// takes ~2.3–2.7 s (after the stream lands) at 15° of lid past the pour point (4 s from a 0.9 jug, whose head
     /// grows slowly), and ~1.5–2.1 s at 20°. A held tilt slowly eases off as the jug drains: tip further as it empties.
-    static let flowK: Double = 17
-    /// Drink volume (glass pt²) the jug holds per pt² of its 2D interior polygon.
-    static let jugVolumeScale: Double = 3.5
+    /// (Round 3: 17 at scale 1, divided by jugScale^1.5 because the head shrinks with the jug.)
+    static let flowK: Double = 17.0 / (jugScale * jugScale.squareRoot())
+    /// Drink volume (glass pt²) the jug holds per pt² of its 2D interior polygon. (3.5 at scale 1, divided by
+    /// jugScale² so the drink volume of a full jug is unchanged.)
+    static let jugVolumeScale: Double = 3.5 / (jugScale * jugScale)
     /// Outflow that reads as `flow = 1.0` in snapshots/telemetry (≈ a mid jug tipped ~22° of lid past its pour point).
     static let flowNormRef: Double = 10000
     /// Hard ceiling on the target outflow.
@@ -92,9 +106,10 @@ enum CoreTuning {
 
     /// Exit speed at the lip = (min + perFlow · flow) / (1 + viscositySlow · lagTau). Kept low so the stream drops
     /// almost straight down: it lands ~4–20 pt right of the lip for every angle and flow, and glasses stop on the
-    /// middle of that range, so every pour lands within ±8 pt of the glass centre.
-    static let exitSpeedMin: Double = 18
-    static let exitSpeedPerFlow: Double = 14
+    /// middle of that range, so every pour lands within ±8 pt of the glass centre. (Round 3: 12 + 10·flow, so it
+    /// lands ~3…10 pt right of the lip and the glass can stand closer to the centre.)
+    static let exitSpeedMin: Double = 12
+    static let exitSpeedPerFlow: Double = 10
     static let exitViscositySlow: Double = 0.8
     /// The exit direction (degrees from +x, y up) is the spout direction clamped to this range.
     static let exitDirMinDeg: Double = -60
@@ -165,6 +180,16 @@ enum CoreTuning {
     /// jug angle, flows 0.15…0.9) and the glass stops on the middle of that range, plus this bias.
     static let glassPlacementBias: Double = 0
     static let placementAngleSpan: Double = 45
+    /// Round 3: the next glass waits on the counter (phase `.arriving`, `lineOpacity` 0, standing still) at this
+    /// world x, then slides into place as the judged one leaves while the one after slides into the slot. Nudged right
+    /// so it is never cropped on narrow phones (outer edge ≥ visibleRect.minX + `nextGlassEdgeMargin`), and left so it
+    /// keeps `nextGlassGap` from the glass at the stop. Not used on conveyors (glasses ride the belt) or in practice.
+    static let nextGlassX: Double = 165
+    static let nextGlassEdgeMargin: Double = 4
+    static let nextGlassGap: Double = 8
+    /// Round 3 (pause / resume): after `requireFlat()`, the glass under the spout is not judged by stopping (no
+    /// lock-in, no idle serve) until the player pours again. If they never do, it is served after this long flat.
+    static let resumeServeIdle: Double = 4.0
 
     // MARK: Foam
 
@@ -211,6 +236,10 @@ enum CoreTuning {
     static let puddlePointSpacing: Double = 12
     static let puddlePointInset: Double = 8
     static let maxPuddlePoints: Int = 48
+    /// Round 3: a puddle belongs to the glass that spilled it. Once that glass starts leaving (or for a spill with
+    /// no glass nearby, at once) it dries: its encoded run shrinks (radius × (1 − u²), u = age / dryTime) and its
+    /// points are gone `puddleDryTime` seconds later.
+    static let puddleDryTime: Double = 1.5
     /// Puddle centres are kept inside the always-visible band (x 130…540), radius included.
     static let safeMinX: Double = 130
     static let safeMaxX: Double = 540

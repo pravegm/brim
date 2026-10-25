@@ -156,7 +156,8 @@ enum AnchorMath {
             jug = CGRect(x: layout.jugPivot.x - 110, y: layout.jugPivot.y - 130, width: 220, height: 250)
         }
         var glass: GlassAnchor?
-        if let g = s.glasses.first(where: { $0.phase == .filling }) ?? s.glasses.first(where: { $0.phase == .arriving }) {
+        if let g = s.glasses.first(where: { $0.phase == .filling })
+            ?? s.glasses.first(where: { $0.phase == .arriving && !$0.isWaitingInSlot }) {
             let floor = layout.counterY + g.shape.baseThickness
             glass = GlassAnchor(id: g.id, x: g.x, lineY: floor + g.lineHeight,
                                 halfWidthAtLine: halfWidth(g.shape, at: g.lineHeight) + g.shape.wall,

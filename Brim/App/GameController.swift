@@ -34,6 +34,8 @@ final class HUDState: ObservableObject {
     @Published var serveTick = 0
     /// Duo flat gate: show "Lay it flat to start" (the session needs a flat lid and has for a moment).
     @Published var showFlatGate = false
+    /// The gate was re-armed by a resume (after a pause or closing the phone): "Lay it flat to carry on".
+    @Published var gateAfterPause = false
     /// Where the jug and the glass under the spout are (world), for hints and the "Fill to here" callout.
     @Published var anchors: PlayAnchors?
 
@@ -64,7 +66,13 @@ struct ResultSummary: Equatable {
 /// GameSession.step → FeedbackDirector → HUD. Owns the session, the scene, the tilt sources and the app's route.
 @MainActor
 final class GameController: ObservableObject, SceneDriver {
-    private enum PauseReason: Hashable { case user, inactive, pose }
+    private enum PauseReason: Hashable { case user, inactive, pose, closing }
+
+    /// ROUND-3 decision 1 (App layer): below this raw hinge angle the inner display is about to go dark, so a live
+    /// run pauses itself.
+    static let autopauseBelow = 70.0
+    /// A run paused by closing resumes by itself once the phone is open past this again (and then waits for flat).
+    static let autoResumeAbove = 100.0
 
     // MARK: Published state (changes rarely; the HUD lives in `hud`)
 
@@ -76,6 +84,8 @@ final class GameController: ObservableObject, SceneDriver {
     /// The home screen's backdrop: practice played by the autopilot, silent.
     @Published private(set) var isAttract = true
     @Published private(set) var isUserPaused = false
+    /// The run paused itself because the phone was closing (hinge < 70°) or shut: the calm "Open me up" card.
+    @Published private(set) var isClosedPaused = false
     @Published private(set) var summary: ResultSummary?
     @Published private(set) var activeHint: HintKind?
     /// A hinge has reported this launch (or on an earlier launch of this device), or demo `duo`.
@@ -113,6 +123,8 @@ final class GameController: ObservableObject, SceneDriver {
     private var lastRawAngle: Double?
     private var recap: [GlassRecap] = []
     private var flatSince: TimeInterval?
+    /// True while start/attract clear the pauses of a run that is being replaced (no resume hook for it).
+    private var replacingRun = false
 
     // Demo freeze / streak seed
     private var frozen = false
@@ -229,18 +241,29 @@ final class GameController: ObservableObject, SceneDriver {
         if active {
             setPause(.inactive, false)
         } else {
-            if route == .playing && !isAttract && summary == nil && demo == nil { setUserPaused(true) }
+            // A run already paused by closing keeps its calm card: reopening resumes it (then the flat gate).
+            if isLiveRun && demo == nil && !isClosedPaused { setUserPaused(true) }
             setPause(.inactive, true)
         }
     }
 
-    /// Book pose or cover display: the game holds still. A real run shows the pause card when it comes back (the flat
-    /// gate re-arms on resume); demo runs just hold, so CI's orientation request doesn't leave them paused.
-    func setPosePaused(_ paused: Bool) {
-        if paused && route == .playing && !isAttract && summary == nil && demo == nil {
+    /// The display's pose changed. Book pose: the game holds still; a real run shows the pause card when it comes
+    /// back, demo runs just hold (so CI's orientation request doesn't leave them paused). Cover / shut on a Duo: the
+    /// run pauses as "closed" (the same as closing past 70°), and opening the phone resumes it behind the flat gate.
+    /// Every resume re-arms the flat gate (`resumeHook`).
+    func setPose(_ pose: DevicePose) {
+        let paused = pose != .play
+        if pose == .cover && closingGuardActive && isLiveRun {
+            engageClosingPause(angle: lastRawAngle)
+        } else if paused && isLiveRun && demo == nil && !isClosedPaused {
             setUserPaused(true)
         }
         setPause(.pose, paused)
+    }
+
+    /// Round-2 entry point (kept): true = the book-pose hold.
+    func setPosePaused(_ paused: Bool) {
+        setPose(paused ? .standUp : .play)
     }
 
     /// The system Reduce Motion setting changed.
@@ -270,6 +293,48 @@ final class GameController: ObservableObject, SceneDriver {
         } else if angle <= 15 {
             isShut = true
         }
+        // ROUND-3 decision 1: closing never pours. Below 70° the run pauses (no step, so nothing is judged); open
+        // past 100° again and it resumes behind the flat gate.
+        guard closingGuardActive else { return }
+        if angle < Self.autopauseBelow {
+            if isLiveRun { engageClosingPause(angle: angle) }
+        } else if isClosedPaused && angle >= Self.autoResumeAbove && !isShut {
+            releaseClosingPause()
+        }
+    }
+
+    /// The closing guard applies wherever the hinge is real input: every real run on a Duo, and demo runs with `duo`
+    /// (ci/duo.sh's close-mid-pour scenario); autopilot store frames never pause themselves.
+    private var closingGuardActive: Bool {
+        guard hingeSeen else { return false }
+        if let demo { return demo.duo && demo.autopilot == nil }
+        return true
+    }
+
+    /// A run the player is in the middle of (not the attract loop, not finished, not on results, not a CI freeze).
+    private var isLiveRun: Bool {
+        guard route == .playing, !isAttract, summary == nil, !frozen, let session else { return false }
+        return !session.isFinished
+    }
+
+    private func engageClosingPause(angle: Double?) {
+        guard !isClosedPaused else { return }
+        isClosedPaused = true
+        touch.cancelled()
+        setPause(.closing, true)
+        feedback.autopaused()
+        trace(String(format: "BRIM-T autopause angle=%.1f", angle ?? -1))
+    }
+
+    private func releaseClosingPause() {
+        guard isClosedPaused else { return }
+        isClosedPaused = false
+        setPause(.closing, false)
+    }
+
+    /// "Open me up" card: the player taps Resume instead of opening further (re-pauses at once if still < 70°).
+    func resumeFromClosed() {
+        releaseClosingPause()
     }
 
     func hingeUnavailable() {
@@ -308,7 +373,7 @@ final class GameController: ObservableObject, SceneDriver {
         isAttract = false
         self.mode = mode
         summary = nil
-        setUserPaused(false)
+        clearRunPauses()
         setRoute(.playing)
         configureSources()
         buildSession()
@@ -323,10 +388,8 @@ final class GameController: ObservableObject, SceneDriver {
         setUserPaused(true)
     }
 
+    /// The pause card's Resume. The flat gate re-arms when the last pause reason clears (`resumeHook`).
     func resume() {
-        // The hinge may have moved while paused: no outflow until the phone has been laid flat again (Duo only;
-        // a no-op without a fold).
-        if !isAttract { session?.requireFlat() }
         flatSince = nil
         setUserPaused(false)
     }
@@ -370,6 +433,11 @@ final class GameController: ObservableObject, SceneDriver {
         }
         let step = min(max(dt, 0), 1.0 / 30.0)
         let tilt = activeSource.tilt(at: now)
+        // ROUND-3 decision 1: a slow close between the input guard's cut (78°) and the autopause (70°) must not get the
+        // glass judged as a Short; lock it behind the flat gate the moment the hinge reads as closing.
+        if closingGuardActive && isLiveRun && hinge.isClosing && !session.snapshot.needsFlat {
+            session.requireFlat()
+        }
         let events = session.step(dt: step, tilt: tilt)
         simTime += step
         let snapshot = session.snapshot
@@ -404,8 +472,41 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     private func setPause(_ reason: PauseReason, _ on: Bool) {
+        let wasPaused = isPaused
         if on { pauseReasons.insert(reason) } else { pauseReasons.remove(reason) }
         syncFeedbackPause()
+        if wasPaused && !isPaused { resumeHook() }
+    }
+
+    /// Every resume of a live run — the pause card, reopening the phone, the app coming back, the book pose ending,
+    /// demo included — re-arms the flat gate (ROUND-3 decision 1): the hinge may have moved while nothing was
+    /// stepping, so no outflow until the phone has been laid flat again. `needsFlat` stays 0 without a fold (touch
+    /// phones) and in practice. Logs `BRIM-T resume needsFlat=<0|1>`.
+    private func resumeHook() {
+        guard !replacingRun, isLiveRun, let session else { return }
+        session.requireFlat()
+        hinge.reset()
+        flatSince = nil
+        let needsFlat = session.snapshot.needsFlat
+        if hud.gateAfterPause != needsFlat { hud.gateAfterPause = needsFlat }
+        trace("BRIM-T resume needsFlat=\(needsFlat ? 1 : 0)")
+    }
+
+    /// Clears the pauses of a run that is being replaced (start, restart, menu) without the resume hook.
+    private func clearRunPauses() {
+        replacingRun = true
+        isClosedPaused = false
+        setPause(.closing, false)
+        setUserPaused(false)
+        replacingRun = false
+    }
+
+    /// CI / debug trace line (DEBUG builds only; flushed so ci/duo.sh sees it in order).
+    private func trace(_ line: String) {
+        #if DEBUG
+        print(line)
+        fflush(stdout)
+        #endif
     }
 
     private func syncFeedbackPause() {
@@ -422,7 +523,7 @@ final class GameController: ObservableObject, SceneDriver {
         summary = nil
         hintTask?.cancel()
         activeHint = nil
-        setUserPaused(false)
+        clearRunPauses()
         setRoute(.home)
         configureSources()
         buildSession()
@@ -487,6 +588,7 @@ final class GameController: ObservableObject, SceneDriver {
         hintTask?.cancel()
         activeHint = nil
         hud.lastJudgement = nil
+        if hud.gateAfterPause { hud.gateAfterPause = false }
         // Demo `streak=N`: really play the run up to an N-Perfect streak, so score, served count and streak agree.
         if demo != nil && streakSeed > 0 && !isAttract {
             let progress = DemoRunner.playUpToStreak(newSession, streak: streakSeed)
@@ -526,6 +628,8 @@ final class GameController: ObservableObject, SceneDriver {
                     activeHint = .stop
                 }
             case let .served(glassID, judgement, _):
+                // ci/duo.sh: no `served` line may fall between `autopause` and `resume needsFlat=1`.
+                trace("BRIM-T served id=\(glassID) judgement=\(judgement.rawValue)")
                 servedCount += 1
                 hud.lastJudgement = judgement
                 hud.serveTick &+= 1
@@ -695,6 +799,7 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     static func activeGlass(_ s: GameSnapshot) -> GlassState? {
-        s.glasses.first(where: { $0.phase == .filling }) ?? s.glasses.first(where: { $0.phase == .arriving })
+        s.glasses.first(where: { $0.phase == .filling })
+            ?? s.glasses.first(where: { $0.phase == .arriving && !$0.isWaitingInSlot })
     }
 }

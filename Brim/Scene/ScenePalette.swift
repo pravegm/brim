@@ -79,6 +79,15 @@ enum VesselDecal: String {
     case sun        // Sand Bar: a desert sun
 }
 
+/// The signature vessel per venue (REVIEW-2 P1-9): a different EXTERIOR drawn around Core's one interior outline.
+enum VesselForm: String {
+    case pitcher      // Lemonade Stand / Conveyor: clear glass pitcher, ceramic lid with a knob, loop handle
+    case dispenser    // Soda Fountain: glass dispenser jug, red handle, chrome hoops, flat chrome lid
+    case shakeTin     // Milkshake Diner: brushed-steel shake tin with a sight window, rolled lip, no handle
+    case flask        // Potion Shop: thick glass flask with a cork and twine
+    case scoop        // Sand Bar: copper measuring scoop, open top, wooden stick handle, graduated sight glass
+}
+
 /// How the jug is dressed. The shape itself comes from Core (`JugState.outline`); the scene only paints it.
 struct VesselStyle {
     /// Ceramic / metal accent: rim band, handle, foot band, spout lip.
@@ -91,6 +100,8 @@ struct VesselStyle {
     var decal: VesselDecal
     /// Brushed-metal accents (soda chrome, the diner's steel shake tin): adds hairline highlights.
     var metallic: Bool
+    /// The exterior drawn around the interior outline.
+    var form: VesselForm = .pitcher
 }
 
 /// The flat half's surface (seen from above on a Duo).
@@ -159,7 +170,8 @@ struct ScenePalette {
                 vignette: h(0x8A2F3F, 0.16), glow: h(0xFFE0E4, 0.55), seam: h(0xD9B5B5, 1),
                 surface: .marble,
                 vessel: VesselStyle(accent: h(0xE8505B), accentDark: h(0xB8323F),
-                                    glassTint: h(0xFFF6F7, 0.40), wall: h(0xF4F7FA, 0.82), decal: .fizz, metallic: true),
+                                    glassTint: h(0xFFF6F7, 0.40), wall: h(0xF4F7FA, 0.82), decal: .fizz, metallic: false,
+                                    form: .dispenser),
                 isDark: false)
         case .milkshakeDiner:
             return ScenePalette(
@@ -167,13 +179,14 @@ struct ScenePalette {
                 wallTop: h(0xFFF9EE, 1), wallBottom: h(0xFFF0DB, 1),
                 tile: h(0xBFDDF5, 1), grout: h(0xEBF5FD, 1), trim: h(0xC9D3DB, 1),
                 shelf: h(0x9BAAB6, 1), silhouette: h(0xEBE0CD, 1), plant: h(0xA6D8BE, 1), board: h(0x34404D, 1),
-                counterTopBack: h(0xFFEEF3, 1), counterTop: h(0xF6C3D1, 1), counterEdge: h(0xE3E8EC, 1),
-                counterFront: h(0x6CC4C9, 1), counterFrontDark: h(0x4CA3AA, 1),
+                counterTopBack: h(0xE2F7EF, 1), counterTop: h(0xA9DECB, 1), counterEdge: h(0xE3E8EC, 1),
+                counterFront: h(0x4FAFA4, 1), counterFrontDark: h(0x3A8F86, 1),
                 coaster: h(0xFFFFFF, 1), coasterRing: h(0xFF8FA3, 1),
                 vignette: h(0x5A3A4A, 0.15), glow: h(0xFFE9C4, 0.5), seam: h(0xC9C0B4, 1),
                 surface: .formica,
                 vessel: VesselStyle(accent: h(0xAEB9C3), accentDark: h(0x7D8A96),
-                                    glassTint: h(0xE9EEF2, 0.46), wall: h(0xDCE3E9, 0.86), decal: .cherry, metallic: true),
+                                    glassTint: h(0xE9EEF2, 0.46), wall: h(0xDCE3E9, 0.86), decal: .cherry, metallic: true,
+                                    form: .shakeTin),
                 isDark: false)
         case .conveyor:
             return ScenePalette(
@@ -201,7 +214,8 @@ struct ScenePalette {
                 vignette: h(0x120B20, 0.38), glow: h(0xFFC27A, 0.34), seam: h(0x281F40, 1),
                 surface: .darkWood,
                 vessel: VesselStyle(accent: h(0xE8B84A), accentDark: h(0xB0862A),
-                                    glassTint: h(0xD9C8FF, 0.30), wall: h(0xE6DAFF, 0.70), decal: .moon, metallic: false),
+                                    glassTint: h(0xD9C8FF, 0.30), wall: h(0xE6DAFF, 0.70), decal: .moon, metallic: false,
+                                    form: .flask),
                 isDark: true)
         case .sandBar:
             return ScenePalette(
@@ -214,8 +228,9 @@ struct ScenePalette {
                 coaster: h(0xF5E5C6, 1), coasterRing: h(0xC9A27E, 1),
                 vignette: h(0x7A5530, 0.2), glow: h(0xFFE7B5, 0.55), seam: h(0xD2B892, 1),
                 surface: .wood,
-                vessel: VesselStyle(accent: h(0xC98A4B), accentDark: h(0x94602D),
-                                    glassTint: h(0xFFF4DE, 0.40), wall: h(0xFFF2DD, 0.80), decal: .sun, metallic: false),
+                vessel: VesselStyle(accent: h(0xC9824B), accentDark: h(0x94602D),
+                                    glassTint: h(0xFFF4DE, 0.40), wall: h(0xFFF2DD, 0.80), decal: .sun, metallic: true,
+                                    form: .scoop),
                 isDark: false)
         }
     }
@@ -243,5 +258,49 @@ struct ScenePalette {
         p.seam = h(0x5A4570)
         p.isDark = true
         return p
+    }
+}
+
+// MARK: - How a drink looks in the air and in the glass (REVIEW-2 P1-5)
+
+/// Stream + in-glass colours. Streams are opaque and saturated: a darker keyline, a rich body, a bright core, like
+/// the icon. Water gets its own saturated blue (`#7CC8F2`) so it reads on warm wood.
+enum SceneLiquidLook {
+    struct Stream {
+        var edge: UIColor
+        var body: UIColor
+        var core: UIColor
+        /// Never below 0.9 (P1-5: "never below 70 %").
+        var alpha: CGFloat
+    }
+
+    static let waterBody = SceneColor.hex(0x7CC8F2)
+
+    static func stream(_ l: Liquid) -> Stream {
+        let top = SceneColor.opaque(l.top.skColor)
+        let bottom = SceneColor.opaque(l.bottom.skColor)
+        var body = SceneColor.mix(bottom, top, 0.4)
+        var core = SceneColor.lighter(top, 0.55)
+        if l.id == .water {
+            body = waterBody
+            core = SceneColor.hex(0xE4F6FF)
+        } else if l.id == .lemonade {
+            body = SceneColor.hex(0xFFE04F)
+            core = SceneColor.hex(0xFFFBD6)
+        }
+        let edge = SceneColor.darker(body, 0.3)
+        return Stream(edge: edge, body: body, core: core, alpha: CGFloat(max(0.9, min(1, l.opacity + 0.2))))
+    }
+
+    /// Top and bottom colours for the in-glass / in-jug gradient (water saturated so a full glass reads as water).
+    static func gradient(_ l: Liquid) -> (top: UIColor, bottom: UIColor) {
+        if l.id == .water { return (SceneColor.hex(0xBEE9FF), SceneColor.hex(0x5DB9EE)) }
+        return (SceneColor.opaque(l.top.skColor), SceneColor.opaque(l.bottom.skColor))
+    }
+
+    /// Opacity of the drink inside a glass (water ≥ 0.8 so it isn't invisible).
+    static func glassAlpha(_ l: Liquid) -> CGFloat {
+        let o = CGFloat(min(max(l.opacity, 0), 1))
+        return max(l.id == .water ? 0.82 : 0.7, 0.62 + 0.38 * o)
     }
 }

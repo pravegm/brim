@@ -154,10 +154,211 @@ private func runToyBar(_ bar: ToyBar, _ pilot: AutopilotTiltSource, seconds: Dou
     return tilts
 }
 
+/// Deterministic jitter in −1…1 (a 32-bit LCG), for the hold-stabiliser tests.
+private struct InputJitter {
+    var state: UInt32
+
+    init(seed: UInt32) {
+        state = seed
+    }
+
+    mutating func next() -> Double {
+        state = state &* 1_664_525 &+ 1_013_904_223
+        return Double(state) / 4_294_967_296.0 * 2 - 1
+    }
+}
+
+/// A hinge held at 150° with ±1° report jitter (30 Hz reports, 120 Hz frames, 5 s): the tilt's spread and mean after
+/// the first second.
+@MainActor
+private func inputHeldSpread(stabilise: Bool) -> (sd: Double, mean: Double) {
+    let source = HingeTiltSource(stabilise: stabilise)
+    var dice = InputJitter(seed: 42)
+    var tilts: [Double] = []
+    for frame in 0..<600 {
+        let time = Double(frame) / 120
+        if frame % 4 == 0 { source.ingest(angleDegrees: 150 + dice.next(), at: time) }
+        let tilt = source.tilt(at: time)
+        if time >= 1 { tilts.append(tilt) }
+    }
+    let mean = tilts.reduce(0, +) / Double(max(tilts.count, 1))
+    var variance = 0.0
+    for tilt in tilts { variance += (tilt - mean) * (tilt - mean) }
+    return (sd: (variance / Double(max(tilts.count, 1))).squareRoot(), mean: mean)
+}
+
 // MARK: - Tests
 
 @MainActor
 struct InputTests {
+    // MARK: Closing guard (ROUND-3 decision 1: closing never pours)
+
+    @Test func theClosedTiltIsUprightButNeverFlat() {
+        // The jug stands exactly upright (no outflow) …
+        #expect(Rules.jugAngle(forLidTilt: ClosingGuard.closedTilt) == 0.0)
+        // … but a closing phone never reads as "laid flat", so it can't open the flat gate on its way back.
+        #expect(!(ClosingGuard.closedTilt < Rules.deadZone))
+        #expect(ClosingGuard.cutBelow < ClosingGuard.reopenAbove)
+    }
+
+    @Test func fastCloseCutsThePourWithinOneSample() {
+        // Held at 150° (reporting, or one report then the Duo's silence while still), then shut at 300°/s to 20°.
+        // 30 Hz reports, 120 Hz frames.
+        for silentBefore in [false, true] {
+            let source = HingeTiltSource()
+            var tiltBefore = 0.0
+            var firstMoveFrame: Int?
+            var leakedFrames = 0
+            for frame in 0..<360 {
+                let time = Double(frame) / 120
+                if frame % 4 == 0 {
+                    if time < 1 {
+                        if !silentBefore || frame == 0 { source.ingest(angleDegrees: 150, at: time) }
+                    } else {
+                        let angle = max(150 - 300 * (time - 1), 20)
+                        source.ingest(angleDegrees: angle, at: time)
+                        if angle < 150 && firstMoveFrame == nil { firstMoveFrame = frame }
+                    }
+                }
+                let tilt = source.tilt(at: time)
+                if frame == 119 { tiltBefore = tilt }
+                // From the frame of the first moving report on, the pour is cut.
+                if firstMoveFrame != nil && tilt != ClosingGuard.closedTilt { leakedFrames += 1 }
+            }
+            #expect(abs(tiltBefore - 30) < 0.5)
+            #expect(firstMoveFrame != nil)
+            #expect(leakedFrames == 0)
+            #expect(source.isClosing)
+            #expect(Rules.jugAngle(forLidTilt: source.tilt(at: 3.5)) == 0.0)
+        }
+    }
+
+    @Test func slowCloseCutsBelow78AndOnlyReopensAbove88() {
+        // 150° → 60° at 30°/s, a second shut-ish, then back to 150° at 30°/s.
+        let source = HingeTiltSource()
+        var raw = 150.0
+        var problems: [String] = []
+        var sawClamp = false
+        for frame in 0..<(120 * 8) {
+            let time = Double(frame) / 120
+            let closing = time < 3
+            if frame % 4 == 0 {
+                if time < 3 {
+                    raw = 150 - 30 * time
+                } else if time < 4 {
+                    raw = 60
+                } else {
+                    raw = min(60 + 30 * (time - 4), 150)
+                }
+                source.ingest(angleDegrees: raw, at: time)
+            }
+            let tilt = source.tilt(at: time)
+            let cut = tilt == ClosingGuard.closedTilt
+            let label = String(format: "t=%.3f raw=%.1f tilt=%.2f", time, raw, tilt)
+            if closing && raw > ClosingGuard.cutBelow && raw < 90 {
+                // Between 90° and 78°: full tip (clamped to 90), not cut — a slow close isn't a fast one.
+                if tilt > 85 { sawClamp = true } else { problems.append("clamp " + label) }
+            }
+            if raw < ClosingGuard.cutBelow && !cut { problems.append("below78 " + label) }
+            if !closing && raw <= ClosingGuard.reopenAbove && !cut { problems.append("reopen<=88 " + label) }
+            if !closing && raw > ClosingGuard.reopenAbove && cut { problems.append("reopen>88 " + label) }
+            if source.isClosing != cut { problems.append("isClosing " + label) }
+        }
+        #expect(problems == [String]())
+        #expect(sawClamp)
+        #expect(abs(source.tilt(at: 8.5) - 30) < 0.5)
+    }
+
+    @Test func aQuickDeliberateLiftStillPours() {
+        // Lifting the lid from flat to 120° at 120°/s is a pour, not a close.
+        let source = HingeTiltSource()
+        var everCut = false
+        var tilt = 0.0
+        for frame in 0..<360 {
+            let time = Double(frame) / 120
+            if frame % 4 == 0 { source.ingest(angleDegrees: time < 1 ? 175 : max(175 - 120 * (time - 1), 120), at: time) }
+            tilt = source.tilt(at: time)
+            if source.isClosing { everCut = true }
+        }
+        #expect(everCut == false)
+        #expect(abs(tilt - 60) < 0.5)
+    }
+
+    @Test func aFastFlickHoldsTheCutBrieflyThenPoursAgain() {
+        // 150° → 120° at 300°/s, then held: cut for 0.35 s after the last fast report, then the jug follows again.
+        let source = HingeTiltSource()
+        var tiltDuring = 0.0
+        var closingDuring = false
+        var tiltAfter = 0.0
+        var closingAfter = true
+        for frame in 0..<360 {
+            let time = Double(frame) / 120
+            if frame % 4 == 0 { source.ingest(angleDegrees: time < 1 ? 150 : max(150 - 300 * (time - 1), 120), at: time) }
+            let tilt = source.tilt(at: time)
+            if frame == 144 {
+                tiltDuring = tilt
+                closingDuring = source.isClosing
+            }
+            if frame == 180 {
+                tiltAfter = tilt
+                closingAfter = source.isClosing
+            }
+        }
+        #expect(tiltDuring == ClosingGuard.closedTilt)
+        #expect(closingDuring)
+        #expect(closingAfter == false)
+        #expect(abs(tiltAfter - 60) < 1)
+        // `lastAngle` stays current from the reports alone (the App reads it while the run is paused).
+        source.ingest(angleDegrees: 64, at: 3.2)
+        #expect(source.lastAngle == 64.0)
+        #expect(source.isClosing)
+    }
+
+    // MARK: Hold stabiliser (REVIEW-2 hinge-noise risk)
+
+    @Test func holdStabiliserCalmsAHeldHinge() {
+        let calm = inputHeldSpread(stabilise: true)
+        let plain = inputHeldSpread(stabilise: false)
+        #expect(calm.sd < 0.25)
+        #expect(calm.sd < plain.sd * 0.5)
+        #expect(abs(calm.mean - 30) < 0.3)
+    }
+
+    @Test func holdStabiliserAddsNoLagToDeliberateMoves() {
+        for speed in [60.0, 30.0] {
+            let calm = HingeTiltSource()
+            let plain = HingeTiltSource(stabilise: false)
+            let duration = 60 / speed
+            var worstExtra = 0.0
+            var worstLate = 0.0
+            var settled = 99.0
+            for frame in 0..<600 {
+                let time = Double(frame) / 120
+                let truth: Double = time < 1 ? 170 : max(170 - speed * (time - 1), 110)
+                if frame % 4 == 0 {
+                    calm.ingest(angleDegrees: truth, at: time)
+                    plain.ingest(angleDegrees: truth, at: time)
+                }
+                _ = calm.tilt(at: time)
+                _ = plain.tilt(at: time)
+                let calmError = abs((calm.lastAngle ?? 0) - truth)
+                let plainError = abs((plain.lastAngle ?? 0) - truth)
+                if time >= 1 && time <= 1 + duration {
+                    worstExtra = max(worstExtra, calmError - plainError)
+                    if time >= 1 + duration / 2 { worstLate = max(worstLate, abs(calmError - plainError)) }
+                }
+                if abs(time - (1 + duration + 0.3)) < 1.0 / 240 { settled = calmError }
+            }
+            // At most a fraction of a degree in the first instants of a move, none once it is under way, and the
+            // stop settles as fast as without the stabiliser.
+            #expect(worstExtra < (speed >= 60 ? 0.5 : 1.0))
+            #expect(worstLate < 0.05)
+            #expect(settled < 0.3)
+        }
+    }
+
+    // MARK: Filters and the other sources
+
     @Test func oneEuroSmoothsJitter() {
         var filter = OneEuroSmoother(minCutoff: 2.0, beta: 0.12, dCutoff: 1.5)
         var worst = 0.0

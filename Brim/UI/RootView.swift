@@ -127,7 +127,7 @@ struct RootView: View {
         let pose = self.pose(for: canvas)
         let fold = hasFold(canvas)
         logCanvas(canvas, hasFold: fold, pose: pose)
-        controller.setPosePaused(pose != .play)
+        controller.setPose(pose)
         guard pose == .play else { return }
         if canvas.height >= canvas.width { controller.clearBookTouchOverride() }
         controller.updateCanvas(PoseRule.playRect(in: canvas).size, hasFold: fold)
@@ -194,7 +194,7 @@ struct RootView: View {
     @ViewBuilder
     private func playLayer(_ info: CanvasInfo) -> some View {
         ZStack {
-            if controller.usesTouch && !controller.isUserPaused {
+            if controller.usesTouch && !controller.isUserPaused && !controller.isClosedPaused {
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(
@@ -223,10 +223,20 @@ struct RootView: View {
             if controller.isUserPaused {
                 PauseView(controller: controller, info: info)
                     .transition(.opacity)
+            } else if controller.isClosedPaused {
+                ClosedPauseView(controller: controller, info: info)
+                    .transition(.opacity)
             }
         }
         .animation(BrimTheme.settle(reduceMotion), value: controller.isUserPaused)
+        .animation(BrimTheme.settle(reduceMotion), value: controller.isClosedPaused)
         .onChange(of: controller.isUserPaused) { _, paused in
+            if paused && dragging {
+                dragging = false
+                controller.touch.ended()
+            }
+        }
+        .onChange(of: controller.isClosedPaused) { _, paused in
             if paused && dragging {
                 dragging = false
                 controller.touch.ended()

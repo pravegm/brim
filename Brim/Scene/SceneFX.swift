@@ -318,31 +318,40 @@ final class SceneFX {
 
     // MARK: Puddles (spread 2–3× across the coaster and counter)
 
+    /// Mirrors Core's puddles (decision 4: a puddle belongs to the glass that spilled it). A puddle grows to 2–3× the
+    /// coaster over 0.4 s while its glass spills; when its glass leaves it starts to dry (`dryPuddles`); when Core drops
+    /// its points it fades away instead of vanishing.
     func syncPuddles(_ pts: [CGPoint], counterY: CGFloat, color: UIColor) {
-        // Cheap signature so the blob pass only runs when Core's puddle list changes.
+        // Cheap signature so the decode pass only runs when Core's puddle list changes.
         var sig = pts.count &* 7919
         for q in pts { sig = sig &* 31 &+ Int(q.x.rounded()) }
         if sig == puddleSignature { return }
         puddleSignature = sig
-        let blobs = ScenePaths.puddleBlobs(pts, radius: 34)
+        let runs = ScenePaths.puddleRuns(pts, spacing: CGFloat(CoreTuning.puddlePointSpacing))
+        let inset = CGFloat(CoreTuning.puddlePointInset)
         var keep = Array(repeating: false, count: puddles.count)
-        for b in blobs {
+        for r in runs {
+            let radius = r.halfSpan + inset
             var match = -1
-            for (i, pv) in puddles.enumerated() where !keep[i] && abs(pv.x - b.center.x) < 40 {
-                match = i
-                break
+            var bestD = CGFloat.greatestFiniteMagnitude
+            for (i, pv) in puddles.enumerated() where !keep[i] && !pv.dying {
+                let d = abs(pv.x - r.center.x)
+                if d < max(40, radius * 0.8) && d < bestD {
+                    match = i
+                    bestD = d
+                }
             }
             if match >= 0 {
                 keep[match] = true
-                puddles[match].setCount(b.count, reduceMotion: reduceMotion)
-                puddles[match].node.position = CGPoint(x: b.center.x, y: counterY + 1)
-                puddles[match].x = b.center.x
+                puddles[match].x = r.center.x
+                puddles[match].node.position = CGPoint(x: r.center.x, y: counterY + 1)
+                puddles[match].setRadius(radius, reduceMotion: reduceMotion)
             } else {
-                let pv = PuddleView(color: color, seed: UInt64(truncatingIfNeeded: Int(b.center.x * 13) &+ pts.count))
-                pv.x = b.center.x
-                pv.node.position = CGPoint(x: b.center.x, y: counterY + 1)
+                let pv = PuddleView(color: color, seed: UInt64(truncatingIfNeeded: Int(r.center.x * 13) &+ pts.count))
+                pv.x = r.center.x
+                pv.node.position = CGPoint(x: r.center.x, y: counterY + 1)
                 puddleLayer.addChild(pv.node)
-                pv.setCount(b.count, reduceMotion: reduceMotion)
+                pv.setRadius(radius, reduceMotion: reduceMotion)
                 puddles.append(pv)
                 keep.append(true)
             }
@@ -350,10 +359,21 @@ final class SceneFX {
         var i = puddles.count - 1
         while i >= 0 {
             if i < keep.count && !keep[i] {
-                puddles[i].node.removeFromParent()
-                puddles.remove(at: i)
+                if puddles[i].dying {
+                    // Already fading; drop the bookkeeping once its node is gone.
+                    if puddles[i].node.parent == nil { puddles.remove(at: i) }
+                } else {
+                    puddles[i].fadeAway(reduceMotion: reduceMotion)
+                }
             }
             i -= 1
+        }
+    }
+
+    /// The glass standing over these puddles has left: they start drying (the shine goes, the pool pales).
+    func dryPuddles(nearX x: CGFloat, halfWidth: CGFloat) {
+        for pv in puddles where !pv.dying && abs(pv.x - x) < halfWidth + 30 {
+            pv.startDrying(reduceMotion: reduceMotion)
         }
     }
 }
@@ -363,11 +383,10 @@ final class SceneFX {
 final class PuddleView {
     let node: SKNode
     var x: CGFloat = 0
-    private var count = 0
     private let pool: SKShapeNode
 
     static let width: CGFloat = 170
-    static let height: CGFloat = 26
+    static let height: CGFloat = 28
 
     init(color: UIColor, seed: UInt64) {
         node = SKNode()
@@ -385,9 +404,9 @@ final class PuddleView {
         }
         path.closeSubpath()
         pool = SKShapeNode(path: path)
-        pool.fillColor = c.withAlphaComponent(0.8)
-        pool.strokeColor = SceneColor.darker(c, 0.3).withAlphaComponent(0.45)
-        pool.lineWidth = 1.5
+        pool.fillColor = c.withAlphaComponent(0.86)
+        pool.strokeColor = SceneColor.darker(c, 0.3).withAlphaComponent(0.6)
+        pool.lineWidth = 2
         node.addChild(pool)
         let shine = SKShapeNode(ellipseOf: CGSize(width: w * 0.36, height: h * 0.24))
         shine.fillColor = UIColor(white: 1, alpha: 0.5)
@@ -403,22 +422,69 @@ final class PuddleView {
             d.position = CGPoint(x: rng.sign() * rng.range(w * 0.5 + 6, w * 0.5 + 26), y: rng.range(-h * 0.4, h * 0.3))
             node.addChild(d)
         }
-        node.xScale = 0.2
-        node.yScale = 0.35
+        // Glossy rim: a bright arc along the far edge.
+        let rim = CGMutablePath()
+        let arc = ScenePaths.ellipseArc(center: .zero, rx: w * 0.47, ry: h * 0.4, from: 0.35, to: CGFloat.pi - 0.5,
+                                        segments: 14)
+        rim.move(to: arc[0])
+        for p in arc.dropFirst() { rim.addLine(to: p) }
+        let rimNode = SKShapeNode(path: rim)
+        rimNode.strokeColor = UIColor(white: 1, alpha: 0.55)
+        rimNode.lineWidth = 2
+        rimNode.lineCap = .round
+        rimNode.zPosition = 0.12
+        node.addChild(rimNode)
+        gloss = [shine, rimNode]
+        node.setScale(0.15)
     }
 
-    func setCount(_ n: Int, reduceMotion: Bool) {
-        guard n != count else { return }
-        count = n
-        let target = min(1.7, 1 + 0.22 * CGFloat(max(0, n - 1)))
-        node.removeAllActions()
-        if reduceMotion {
-            node.xScale = target
-            node.yScale = target
-        } else {
-            let grow = SKAction.scaleX(to: target, y: target, duration: 0.8)
-            grow.timingMode = .easeOut
-            node.run(grow)
+    private(set) var dying = false
+    private var drying = false
+    private var gloss: [SKNode] = []
+    private var radius: CGFloat = 0
+
+    /// Display width ≈ 3 × Core's radius (a spill spreads 2–3× the coaster), reached in 0.4 s.
+    func setRadius(_ r: CGFloat, reduceMotion: Bool) {
+        guard abs(r - radius) > 0.5 else { return }
+        if drying && r > radius + 1 {
+            // Fed again (a new spill joined it): wet and glossy again.
+            drying = false
+            node.removeAction(forKey: "dry")
+            node.alpha = 1
+            for g in gloss {
+                g.removeAllActions()
+                g.alpha = 1
+            }
         }
+        radius = r
+        let target = min(2.0, max(0.18, (r * 3) / PuddleView.width))
+        node.removeAction(forKey: "grow")
+        if reduceMotion {
+            node.setScale(target)
+        } else {
+            let grow = SKAction.scale(to: target, duration: 0.4)
+            grow.timingMode = .easeOut
+            node.run(grow, withKey: "grow")
+        }
+    }
+
+    /// Its glass has left: the gloss goes and the stain pales (Core removes it ~1.5 s later).
+    func startDrying(reduceMotion: Bool) {
+        guard !drying else { return }
+        drying = true
+        for g in gloss { g.run(SKAction.fadeOut(withDuration: reduceMotion ? 0.3 : 0.9)) }
+        node.run(SKAction.fadeAlpha(to: 0.6, duration: reduceMotion ? 0.3 : 1.2), withKey: "dry")
+    }
+
+    /// Core dropped it: fade (and shrink a touch), then leave the tree.
+    func fadeAway(reduceMotion: Bool) {
+        guard !dying else { return }
+        dying = true
+        node.removeAllActions()
+        let d: Double = reduceMotion ? 0.3 : 0.6
+        let fade = SKAction.fadeOut(withDuration: d)
+        fade.timingMode = .easeIn
+        let shrink = SKAction.scale(by: 0.9, duration: d)
+        node.run(SKAction.sequence([SKAction.group([fade, shrink]), SKAction.removeFromParent()]))
     }
 }

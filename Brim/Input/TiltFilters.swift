@@ -70,6 +70,157 @@ struct OneEuroSmoother {
     }
 }
 
+/// The closing guard (ROUND-3 decision 1, "closing never pours"), on the raw hinge reports (the freshest truth).
+///
+/// Cut the pour when the hinge is below `cutBelow` (latched until it is above `reopenAbove`), or when it closes faster
+/// than `fastCloseSpeed` (the cut holds `fastCloseHold` after the last fast report). Between 90° and 78° the lid tilt
+/// is simply clamped to 90 by `TiltMath.lidTilt`. Pure, with explicit times, so it is testable.
+///
+/// Speed from report pairs: the Duo sends nothing while the hinge is still, so a report after a long silence is
+/// treated as one nominal interval of motion (a close from rest is caught on its first report, not its second).
+struct ClosingGuard {
+    static let cutBelow = 78.0
+    static let reopenAbove = 88.0
+    /// °/s of closing (angle falling) that cuts the pour at any angle.
+    static let fastCloseSpeed = 160.0
+    static let fastCloseHold = 0.35
+    /// A gap longer than this means the hinge had stopped reporting (it was still).
+    static let staleGap = 0.25
+    /// The Duo's report interval while moving (25–30 Hz).
+    static let nominalInterval = 1.0 / 30
+    /// Lid tilt reported while the guard cuts: the jug stands exactly upright (`Rules.jugAngle` = 0, no outflow), but
+    /// it is NOT inside the dead zone (`tilt < Rules.deadZone` arms the flat gate), so a closing or half-shut phone
+    /// can never open the flat gate on its way back. Set it to 0 to get the literal "tilt 0".
+    static let closedTilt: Double = Rules.deadZone
+
+    /// Latched below `cutBelow`, released above `reopenAbove`.
+    private(set) var belowLatch = false
+    /// The fast-close cut lasts until this time.
+    private(set) var holdUntil = -Double.infinity
+    /// °/s, positive while closing, from the last two reports (diagnostics).
+    private(set) var closingSpeed = 0.0
+    private var previousAngle: Double?
+    private var previousTime = 0.0
+
+    init() {}
+
+    mutating func sample(_ angle: Double, at time: Double) {
+        if let previous = previousAngle {
+            let gap = time - previousTime
+            let dt = gap > Self.staleGap ? Self.nominalInterval : TiltMath.clamp(gap, 1.0 / 60, Self.staleGap)
+            closingSpeed = (previous - angle) / dt
+        } else {
+            closingSpeed = 0
+        }
+        previousAngle = angle
+        previousTime = time
+        if angle < Self.cutBelow {
+            belowLatch = true
+        } else if angle > Self.reopenAbove {
+            belowLatch = false
+        }
+        if closingSpeed > Self.fastCloseSpeed {
+            holdUntil = max(holdUntil, time + Self.fastCloseHold)
+        }
+    }
+
+    func isCut(at time: Double) -> Bool {
+        belowLatch || time < holdUntil
+    }
+
+    /// Forget the motion; keep the below-78° latch (the phone is as shut as it was until a report says otherwise).
+    mutating func reset() {
+        previousAngle = nil
+        closingSpeed = 0
+        holdUntil = -Double.infinity
+    }
+}
+
+/// The hold stabiliser (REVIEW-2 risk "hinge noise": ±5° hinge → ±8° jug). After the One-Euro, it filters harder
+/// while the hand is holding still and gets out of the way while it moves.
+///
+/// Intent is read from the NET speed of the raw reports over the last `window` (tremor and quantisation cancel out,
+/// a deliberate move doesn't), or from a deviation larger than `escape`. Held: a first-order low-pass at `restCutoff`.
+/// Moving (≥ `moveSpeed`): pass-through, zero added lag. A short `hangover` keeps it open just after a move stops, so
+/// the tracker's settle isn't smeared. Pure, with explicit times, so it is testable.
+struct HoldStabiliser {
+    static let restCutoff = 0.6
+    static let restSpeed = 6.0
+    static let moveSpeed = 20.0
+    static let window = 0.25
+    static let escape = 4.0
+    static let hangover = 0.12
+    static let capacity = 12
+
+    private var times: [Double] = []
+    private var angles: [Double] = []
+    private(set) var value: Double?
+    /// 0 = held (full smoothing) … 1 = moving (pass-through).
+    private(set) var motion = 0.0
+    private var lastTime = 0.0
+
+    init() {}
+
+    mutating func reset() {
+        times.removeAll()
+        angles.removeAll()
+        value = nil
+        motion = 0
+    }
+
+    /// A raw hinge report (degrees, receipt time).
+    mutating func sample(_ angle: Double, at time: Double) {
+        times.append(time)
+        angles.append(angle)
+        if times.count > Self.capacity {
+            let extra = times.count - Self.capacity
+            times.removeFirst(extra)
+            angles.removeFirst(extra)
+        }
+    }
+
+    /// Net speed of the raw reports (°/s) over the last `window`; 0 once the reports have stopped.
+    func speed(at time: Double) -> Double {
+        let count = times.count
+        guard count >= 2 else { return 0 }
+        let newestTime = times[count - 1]
+        let newestAngle = angles[count - 1]
+        if time - newestTime > Self.window { return 0 }
+        var index = count - 1
+        while index > 0 && newestTime - times[index - 1] <= Self.window {
+            index -= 1
+        }
+        if index < count - 1 {
+            return abs(newestAngle - angles[index]) / max(newestTime - times[index], 1.0 / 60)
+        }
+        // The first report after a silence: assume one nominal interval of motion.
+        return abs(newestAngle - angles[count - 2]) / ClosingGuard.nominalInterval
+    }
+
+    mutating func filter(_ x: Double, at time: Double) -> Double {
+        guard x.isFinite else { return value ?? 180 }
+        guard let previous = value else {
+            value = x
+            lastTime = time
+            motion = 0
+            return x
+        }
+        let dt = TiltMath.clamp(time - lastTime, 1.0 / 240, 0.2)
+        lastTime = time
+        let bySpeed = TiltMath.clamp((speed(at: time) - Self.restSpeed) / (Self.moveSpeed - Self.restSpeed), 0, 1)
+        let byDeviation = TiltMath.clamp((abs(x - previous) - Self.escape) / Self.escape, 0, 1)
+        let u = max(bySpeed, byDeviation)
+        let k = max(u * u * (3 - 2 * u), motion * exp(-dt / Self.hangover))
+        motion = k
+        let r = 2 * Double.pi * Self.restCutoff * dt
+        let rest = r / (r + 1)
+        let alpha = rest + (1 - rest) * k
+        let out = previous + (x - previous) * alpha
+        value = out
+        return out
+    }
+}
+
 /// Critically damped spring, integrated with the exact closed form so it is stable at any frame time.
 struct FeelSpring {
     var value: Double = 0

@@ -37,14 +37,17 @@ struct ResultsView: View {
         return ShareText.daily(day: day, judgements: result.judgements, score: result.score)
     }
 
-    /// Pure (tested): "Flawless" only when every glass was Perfect.
+    /// Pure (tested): "Flawless" only when every glass was Perfect. A failed shift says what ended it (REVIEW-2 P2-6:
+    /// never "So close" on a three-spill run).
     static func headline(for result: RunResult, dailyOnFile: Bool) -> String {
         switch result.mode {
         case .shift:
             if !result.judgements.isEmpty && result.judgements.allSatisfy({ $0 == .perfect }) { return "Flawless shift!" }
             if result.stars >= 3 { return "Great shift!" }
             if result.cleared { return "Shift cleared" }
-            return "So close"
+            let spills = result.judgements.filter { $0 == .spill }.count
+            if spills >= 3 { return "Shift over — \(spills) spills" }
+            return "Not quite"
         case .daily:
             return dailyOnFile ? "Practice pour" : "Daily poured"
         case .rush, .practice:
@@ -54,19 +57,11 @@ struct ResultsView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [BrimTheme.cream.opacity(0.93), BrimTheme.peach.opacity(0.9)],
-                           startPoint: .top, endPoint: .bottom)
             if info.hasFold {
-                DuoSplit(info: info) {
-                    cardBlock
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                } bottom: {
-                    buttonsBlock
-                        .padding(.horizontal, 22)
-                        .frame(maxWidth: 460)
-                }
+                duoLayout
             } else {
+                LinearGradient(colors: [BrimTheme.cream.opacity(0.93), BrimTheme.peach.opacity(0.9)],
+                               startPoint: .top, endPoint: .bottom)
                 VStack(spacing: 22) {
                     Spacer(minLength: 0)
                     cardBlock
@@ -81,6 +76,78 @@ struct ResultsView: View {
             }
         }
         .task { await playIntro() }
+    }
+
+    // MARK: Duo (REVIEW-2 P1-10): card on the raised half, the shift's glasses on the flat half's counter
+
+    /// The raised half is a clean wall (opaque: no frozen play scene peeking out under the card); the flat half is a
+    /// counter whose front edge sits on the crease, with the served glasses standing on it at their true levels and
+    /// relative sizes, each on a coaster in its verdict colour; one row of buttons at the bottom.
+    private var duoLayout: some View {
+        ZStack(alignment: .top) {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.95)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: max(info.topHalfHeight, 0))
+                ResultsCounter()
+            }
+            .frame(width: info.size.width, height: info.size.height)
+            DuoSplit(info: info) {
+                cardBlock
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+            } bottom: {
+                VStack(spacing: 0) {
+                    if !summary.recap.isEmpty {
+                        CounterRecap(recap: summary.recap, shown: appeared)
+                            .padding(.top, 18)
+                            .padding(.bottom, 12)
+                    } else {
+                        Spacer(minLength: 0)
+                        if !result.judgements.isEmpty { judgementStrip }
+                        Spacer(minLength: 0)
+                    }
+                    duoButtonRow
+                        .frame(maxWidth: 560)
+                        .offset(y: appeared ? 0 : 36)
+                        .opacity(appeared ? 1 : 0)
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .frame(width: info.size.width, height: info.size.height)
+    }
+
+    private var duoButtonRow: some View {
+        HStack(spacing: 10) {
+            if let nextID = summary.nextLevelID {
+                TapButton(kind: .primary, height: 60, hPad: 8, action: { controller.start(mode: .shift(nextID)) }) {
+                    Label("Next shift", systemImage: "arrow.right")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+            }
+            if let shareText {
+                ShareLink(item: shareText) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .buttonStyle(BrimButtonStyle(kind: summary.nextLevelID == nil ? .primary : .secondary, height: 60,
+                                             hPad: 8))
+            }
+            TapButton(kind: summary.nextLevelID == nil && shareText == nil ? .primary : .secondary, height: 60, hPad: 8,
+                      action: { controller.restart() }) {
+                Label(dailyDay != nil ? "Practice" : "Retry", systemImage: "arrow.counterclockwise")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            TapButton(kind: .quiet, height: 60, hPad: 8, action: { controller.quitToMenu() }) {
+                Label("Menu", systemImage: "house.fill")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        }
     }
 
     private var cardBlock: some View {
@@ -123,7 +190,7 @@ struct ResultsView: View {
                 .accessibilityLabel("\(result.stars) of 3 stars")
             }
             VStack(spacing: 2) {
-                if outcome.isNewBest {
+                if outcome.showsNewBest {
                     Pill(text: "NEW BEST", fill: BrimTheme.cyan, fontSize: 12)
                         .scaleEffect(showBadge ? 1 : 0.4)
                         .opacity(showBadge ? 1 : 0)
@@ -141,11 +208,14 @@ struct ResultsView: View {
                 .foregroundStyle(BrimTheme.inkSoft)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
-            if !summary.recap.isEmpty {
-                RecapRow(recap: summary.recap, maxCount: info.size.width < 420 ? 8 : 10)
-                    .padding(.top, 2)
-            } else if !result.judgements.isEmpty {
-                judgementStrip
+            // On a Duo the glasses stand on the flat half's counter instead (duoLayout).
+            if !info.hasFold {
+                if !summary.recap.isEmpty {
+                    RecapRow(recap: summary.recap, maxCount: info.size.width < 420 ? 8 : 10)
+                        .padding(.top, 2)
+                } else if !result.judgements.isEmpty {
+                    judgementStrip
+                }
             }
             if let note = note {
                 Text(note)
@@ -280,7 +350,7 @@ struct ResultsView: View {
     }
 
     private func celebrateIfEarned() {
-        if outcome.isNewBest || (isShift && result.stars >= 3) {
+        if outcome.showsNewBest || (isShift && result.stars >= 3) {
             FeedbackDirector.shared.celebrate()
         }
     }
@@ -318,9 +388,104 @@ struct RecapRow: View {
     }
 }
 
+// MARK: - Duo results: the shift on the counter
+
+/// The flat half behind the Duo results: a counter whose front edge sits on the crease (like the play frame), a warm
+/// surface with a few faint plank lines. Purely decorative.
+struct ResultsCounter: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            LinearGradient(colors: [Color(brimHex: 0xEFC39C), Color(brimHex: 0xDFA27A)],
+                           startPoint: .top, endPoint: .bottom)
+            Canvas { ctx, size in
+                var y: CGFloat = 70
+                var row = 0
+                while y < size.height {
+                    var line = Path()
+                    line.move(to: CGPoint(x: 0, y: y))
+                    line.addLine(to: CGPoint(x: size.width, y: y))
+                    ctx.stroke(line, with: .color(BrimTheme.ink.opacity(0.06)), lineWidth: 1.5)
+                    // A staggered plank joint on every row.
+                    let jx = size.width * (row % 2 == 0 ? 0.3 : 0.7)
+                    var joint = Path()
+                    joint.move(to: CGPoint(x: jx, y: y))
+                    joint.addLine(to: CGPoint(x: jx, y: min(y + 64, size.height)))
+                    ctx.stroke(joint, with: .color(BrimTheme.ink.opacity(0.05)), lineWidth: 1.5)
+                    y += 64
+                    row += 1
+                }
+            }
+            // The counter's front edge (on the crease band).
+            VStack(spacing: 0) {
+                Rectangle().fill(Color(brimHex: 0xF6D8B8)).frame(height: 10)
+                Rectangle().fill(Color(brimHex: 0xC98A62)).frame(height: 4)
+                LinearGradient(colors: [BrimTheme.ink.opacity(0.12), BrimTheme.ink.opacity(0)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 18)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// The served glasses standing in a row on the counter, all at one scale (≈ 60 % of the play size, smaller if the
+/// row or the height needs it), each at its served level against its line, on a coaster in its verdict colour.
+struct CounterRecap: View {
+    let recap: [GlassRecap]
+    /// Slide in (one after another) once the results have appeared.
+    let shown: Bool
+    var maxCount: Int = 10
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Pure (tested): one scale for the whole row so it fits `size` (glass interiors only; coasters and gaps added).
+    static func rowScale(_ items: [GlassRecap], size: CGSize, spacing: CGFloat, preferred: CGFloat = 0.6) -> CGFloat {
+        guard !items.isEmpty, size.width > 0, size.height > 0 else { return preferred }
+        let widths = items.map { 2 * max($0.shape.profile.map { $0.x }.max() ?? 1, 1) }
+        let tallest = items.map { max($0.shape.interiorHeight, 1) }.max() ?? 1
+        let gaps = spacing * CGFloat(items.count - 1)
+        let byWidth = max(size.width - gaps, 1) / max(widths.reduce(0, +), 1)
+        let byHeight = max(size.height - 26, 1) / tallest
+        return max(min(preferred, byWidth, byHeight), 0.05)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let items = Array(recap.suffix(maxCount))
+            let spacing: CGFloat = items.count > 7 ? 10 : 18
+            let scale = Self.rowScale(items, size: geo.size, spacing: spacing)
+            HStack(alignment: .bottom, spacing: spacing) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    let half = max(item.shape.profile.map { $0.x }.max() ?? 1, 1)
+                    let width = 2 * half * scale + 6
+                    VStack(spacing: -4) {
+                        MiniGlass(item: item, scale: scale)
+                            .frame(width: width, height: item.shape.interiorHeight * scale + 4)
+                            .zIndex(1)
+                        Ellipse()
+                            .fill(BrimTheme.color(for: item.judgement))
+                            .overlay(Ellipse().stroke(BrimTheme.ink.opacity(0.25), lineWidth: 1))
+                            .frame(width: width + 14, height: 12)
+                            .shadow(color: BrimTheme.ink.opacity(0.18), radius: 3, y: 2)
+                    }
+                    .offset(y: shown ? 0 : 26)
+                    .opacity(shown ? 1 : 0)
+                    .animation(reduceMotion ? nil
+                               : BrimTheme.pop(false).delay(0.35 + 0.07 * Double(index)), value: shown)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(recap.map { $0.judgement.rawValue }.joined(separator: ", "))
+    }
+}
+
 /// One glass from its real profile, liquid at the served level, the fill line across it.
 struct MiniGlass: View {
     let item: GlassRecap
+    /// Points per world point; nil = fit the glass into the box.
+    var scale: CGFloat? = nil
 
     var body: some View {
         Canvas { ctx, size in
@@ -329,7 +494,7 @@ struct MiniGlass: View {
             let maxHalf = max(profile.map { $0.x }.max() ?? 1, 1)
             let interior = last.y
             // Fit the glass (interior plus a little headroom for spills) into the box, keeping its aspect.
-            let scale = min(size.height * 0.92 / interior, size.width * 0.5 / maxHalf)
+            let scale = self.scale ?? min(size.height * 0.92 / interior, size.width * 0.5 / maxHalf)
             let cx = size.width / 2
             let floorY = size.height - 1
             func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: cx + x * scale, y: floorY - y * scale) }

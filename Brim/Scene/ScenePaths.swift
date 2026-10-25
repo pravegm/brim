@@ -10,6 +10,13 @@ struct PuddleBlob: Equatable {
     var count: Int
 }
 
+/// One decoded Core puddle (see `ScenePaths.puddleRuns`).
+struct PuddleRun: Equatable {
+    var center: CGPoint
+    var halfSpan: CGFloat
+    var count: Int
+}
+
 enum ScenePaths {
 
     // MARK: Glass profile
@@ -149,6 +156,34 @@ enum ScenePaths {
             if !merged { blobs.append(PuddleBlob(center: q, count: 1)) }
         }
         return blobs
+    }
+
+    /// Decodes Core's puddle encoding: each puddle is a run of points `spacing` apart, left to right along the counter
+    /// (CoreTuning.puddlePointSpacing). A new run starts where x stops increasing by about one spacing.
+    /// `halfSpan` = half the distance between the run's first and last point (0 for a single point).
+    static func puddleRuns(_ pts: [CGPoint], spacing: CGFloat) -> [PuddleRun] {
+        var out: [PuddleRun] = []
+        guard !pts.isEmpty else { return out }
+        let sp = max(spacing, 1)
+        var start = 0
+        var i = 1
+        while i <= pts.count {
+            let breakHere: Bool
+            if i == pts.count {
+                breakHere = true
+            } else {
+                let dx = pts[i].x - pts[i - 1].x
+                breakHere = dx <= sp * 0.25 || dx > sp * 1.6
+            }
+            if breakHere {
+                let a = pts[start], b = pts[i - 1]
+                out.append(PuddleRun(center: CGPoint(x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5),
+                                     halfSpan: abs(b.x - a.x) * 0.5, count: i - start))
+                start = i
+            }
+            i += 1
+        }
+        return out
     }
 
     /// Splits an ordered polyline into runs wherever two consecutive points are further apart than `gap`
@@ -305,14 +340,23 @@ enum ScenePaths {
     /// An open polyline visiting `pts` in `order`, keeping only the parts at or above y = `level` (each run becomes
     /// its own subpath; crossings are interpolated).
     static func polylineAbove(_ pts: [CGPoint], order: [Int], level: CGFloat) -> CGMutablePath {
+        polylineSide(pts, order: order, level: level, above: true)
+    }
+
+    /// Same as `polylineAbove`, keeping the parts at or below y = `level` (the jug's ceramic foot ring).
+    static func polylineBelow(_ pts: [CGPoint], order: [Int], level: CGFloat) -> CGMutablePath {
+        polylineSide(pts, order: order, level: level, above: false)
+    }
+
+    private static func polylineSide(_ pts: [CGPoint], order: [Int], level: CGFloat, above: Bool) -> CGMutablePath {
         let path = CGMutablePath()
         var prev: CGPoint?
         var drawing = false
         for idx in order where idx >= 0 && idx < pts.count {
             let p = pts[idx]
-            let inside = p.y >= level
+            let inside = above ? p.y >= level : p.y <= level
             if let q = prev {
-                let qIn = q.y >= level
+                let qIn = above ? q.y >= level : q.y <= level
                 if qIn != inside {
                     let dy = p.y - q.y
                     let t = abs(dy) > 1e-9 ? (level - q.y) / dy : 0
@@ -335,6 +379,47 @@ enum ScenePaths {
             prev = p
         }
         return path
+    }
+
+    /// Shortest distance from `p` to the segment a–b.
+    static func distanceToSegment(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let l2 = dx * dx + dy * dy
+        if l2 < 1e-9 { return distance(p, a) }
+        let t = min(max(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0), 1)
+        return distance(p, CGPoint(x: a.x + t * dx, y: a.y + t * dy))
+    }
+
+    /// Shortest distance from `p` to an open polyline (∞ for an empty one; the point distance for one vertex).
+    static func distanceToPolyline(_ p: CGPoint, _ pts: [CGPoint]) -> CGFloat {
+        guard let first = pts.first else { return CGFloat.greatestFiniteMagnitude }
+        if pts.count == 1 { return distance(p, first) }
+        var best = CGFloat.greatestFiniteMagnitude
+        for i in 1..<pts.count { best = min(best, distanceToSegment(p, pts[i - 1], pts[i])) }
+        return best
+    }
+
+    /// A vertical pill (capsule) as a polygon, wound CLOCKWISE (y up) so it cuts a hole when appended to a
+    /// counter-clockwise outline (either fill rule).
+    static func pillClockwise(centerX cx: CGFloat, minY: CGFloat, maxY: CGFloat, halfWidth r: CGFloat,
+                              segments: Int = 10) -> [CGPoint] {
+        let rr = max(0.5, min(r, (maxY - minY) * 0.5))
+        let top = CGPoint(x: cx, y: maxY - rr), bottom = CGPoint(x: cx, y: minY + rr)
+        var ccw = ellipseArc(center: top, rx: rr, ry: rr, from: 0, to: .pi, segments: segments)
+        ccw.append(contentsOf: ellipseArc(center: bottom, rx: rr, ry: rr, from: .pi, to: 2 * .pi, segments: segments))
+        return Array(ccw.reversed())
+    }
+
+    /// Stream width the scene draws for a Core ribbon width (REVIEW-2 P1-5): a typical pour (Core flow ≈ 0.35, width
+    /// ≈ 15) reads ≥ 20 pt, full flow 26 pt; it still tapers as it falls but far less than Core's physical thinning.
+    /// Thick drinks (shake, honey, syrup, smoothie) are 1.6× wider.
+    static func streamDisplayWidth(_ coreWidth: CGFloat, coreMax: CGFloat, thick: Bool) -> CGFloat {
+        guard coreWidth > 0.01 else { return 0 }
+        let ref = max(coreMax, 1)
+        let r = min(max(coreWidth / ref, 0), 1.25)
+        var w = 26 * CGFloat(pow(Double(r), 0.45))
+        if thick { w *= 1.6 }
+        return min(thick ? 46 : 32, max(3, w))
     }
 
     /// Index of the polygon vertex nearest to `p` (-1 for an empty polygon).

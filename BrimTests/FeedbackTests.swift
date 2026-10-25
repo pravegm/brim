@@ -196,6 +196,70 @@ struct FeedbackTests {
         #expect(shimmerPeak < 0.2)
     }
 
+    @Test func pauseWhooshIsSoftShortAndFalling() {
+        let whoosh = SoundBook.pauseWhoosh()
+        #expect(!whoosh.isEmpty)
+        var dice = FeelDice(seed: 3)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &dice).map { $0.gain }.max() ?? 0
+        var noises = 0
+        for command in whoosh {
+            #expect(command.gain > 0)
+            #expect(command.gain <= 0.08)
+            #expect(command.gain < perfectPeak * 0.3)
+            if case .noise(let noise) = command {
+                noises += 1
+                // A falling breath of air, gone in well under a second.
+                #expect(noise.cutoffEnd < noise.cutoff)
+                #expect(noise.delay + noise.attack + 4 * noise.decay < 0.9)
+            }
+        }
+        #expect(noises == whoosh.count)
+    }
+
+    @Test func pourStaysQuietUntilTheFlatGateRearms() {
+        #expect(SoundBook.pourIsAudible(needsFlat: false))
+        #expect(SoundBook.pourIsAudible(needsFlat: true) == false)
+        #expect(FeedbackDirector.isPourTexture(.pourStarted))
+        #expect(FeedbackDirector.isPourTexture(.glug(intensity: 0.5)))
+        #expect(FeedbackDirector.isPourTexture(.splashInGlass(glassID: 1, x: 300, strength: 0.5)))
+        #expect(FeedbackDirector.isPourTexture(.splashOnCounter(x: 300, strength: 0.5)))
+        // The latch click, judgements and arrivals still speak.
+        #expect(FeedbackDirector.isPourTexture(.flatArmed) == false)
+        #expect(FeedbackDirector.isPourTexture(.served(glassID: 1, judgement: .perfect, points: 100)) == false)
+        #expect(FeedbackDirector.isPourTexture(.glassArrived(glassID: 2)) == false)
+    }
+
+    @MainActor
+    @Test func idleBedPoursNothingButKeepsOneShotsAudible() {
+        let bed = SoundBook.idleBed(master: BrimAudioEngine.masterGain)
+        #expect(bed.master == BrimAudioEngine.masterGain)
+        #expect(bed.splashGain == Float(0))
+        #expect(bed.resonanceGain == Float(0))
+        #expect(bed.fizzGain == Float(0))
+        #expect(bed.hissGain == Float(0))
+        #expect(bed.shimmerGain == Float(0))
+        // A pause card's tap or the closing whoosh rings through it (a master of 0 would mute every one-shot).
+        let synth = PourSynth(sampleRate: 48_000)
+        synth.send(.bed(bed))
+        for command in SoundBook.pauseWhoosh() { synth.send(command) }
+        let frames = 512
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+        defer { buffer.deallocate() }
+        var peak: Float = 0
+        var finite = true
+        for _ in 0..<60 {
+            synth.render(frames: frames, into: buffer)
+            for index in 0..<frames {
+                let value = buffer[index]
+                if !value.isFinite { finite = false }
+                peak = max(peak, abs(value))
+            }
+        }
+        #expect(finite)
+        #expect(peak > 0.002)
+        #expect(peak < 1)
+    }
+
     @Test func hapticFlowMapping() {
         #expect(HapticBook.flowLevel(flow: 0) == Float(0))
         #expect(abs(HapticBook.flowLevel(flow: 1) - 0.7) < 0.0001)

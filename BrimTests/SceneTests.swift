@@ -125,6 +125,90 @@ final class SceneTests: XCTestCase {
         XCTAssertTrue(ScenePaths.puddleBlobs([], radius: 10).isEmpty)
     }
 
+    func testPuddleRunsDecodeCoresEncoding() {
+        // Core: each puddle is a left-to-right run of points 12 apart; separate puddles are further apart.
+        let y: CGFloat = 104
+        let pts = [CGPoint(x: 288, y: y), CGPoint(x: 300, y: y), CGPoint(x: 312, y: y),
+                   CGPoint(x: 450, y: y),
+                   CGPoint(x: 500, y: y), CGPoint(x: 512, y: y)]
+        let runs = ScenePaths.puddleRuns(pts, spacing: 12)
+        XCTAssertEqual(runs.count, 3)
+        XCTAssertEqual(runs[0].center.x, 300, accuracy: 0.001)
+        XCTAssertEqual(runs[0].halfSpan, 12, accuracy: 0.001)
+        XCTAssertEqual(runs[0].count, 3)
+        XCTAssertEqual(runs[1].halfSpan, 0, accuracy: 0.001)
+        XCTAssertEqual(runs[2].center.x, 506, accuracy: 0.001)
+        // A run that restarts to the left is a new puddle even if it overlaps.
+        let back = ScenePaths.puddleRuns([CGPoint(x: 300, y: y), CGPoint(x: 312, y: y), CGPoint(x: 296, y: y),
+                                          CGPoint(x: 308, y: y)], spacing: 12)
+        XCTAssertEqual(back.count, 2)
+        XCTAssertTrue(ScenePaths.puddleRuns([], spacing: 12).isEmpty)
+    }
+
+    func testStreamIsFatAtATypicalPourAndWiderForThickDrinks() {
+        let coreMax = CGFloat(CoreTuning.streamWidthMax)
+        // Core's width at the lip is max · √flow; a typical pour is flow ≈ 0.35.
+        let typical = coreMax * CGFloat(0.35.squareRoot())
+        let w = ScenePaths.streamDisplayWidth(typical, coreMax: coreMax, thick: false)
+        XCTAssertGreaterThanOrEqual(w, 20)
+        XCTAssertEqual(ScenePaths.streamDisplayWidth(coreMax, coreMax: coreMax, thick: false), 26, accuracy: 0.5)
+        let thick = ScenePaths.streamDisplayWidth(typical, coreMax: coreMax, thick: true)
+        XCTAssertEqual(thick / w, 1.6, accuracy: 0.05)
+        XCTAssertEqual(ScenePaths.streamDisplayWidth(0, coreMax: coreMax, thick: false), 0, accuracy: 0.0001)
+        var last: CGFloat = 0
+        for i in 1...20 {
+            let x = ScenePaths.streamDisplayWidth(coreMax * CGFloat(i) / 20, coreMax: coreMax, thick: false)
+            XCTAssertGreaterThanOrEqual(x, last)
+            last = x
+        }
+    }
+
+    func testPillCutsAHoleAndDistances() {
+        let pill = ScenePaths.pillClockwise(centerX: 0, minY: 0, maxY: 100, halfWidth: 15)
+        XCTAssertLessThan(ScenePaths.signedArea(pill), 0)               // clockwise
+        let b = ScenePaths.bounds(pill)
+        XCTAssertEqual(b.width, 30, accuracy: 0.01)
+        XCTAssertEqual(b.height, 100, accuracy: 0.01)
+        XCTAssertEqual(ScenePaths.distanceToPolyline(CGPoint(x: 0, y: 5), [CGPoint(x: -10, y: 0), CGPoint(x: 10, y: 0)]),
+                       5, accuracy: 0.0001)
+        XCTAssertEqual(ScenePaths.distanceToSegment(CGPoint(x: 13, y: 4), CGPoint(x: -10, y: 0), CGPoint(x: 10, y: 0)),
+                       5, accuracy: 0.0001)
+        let square = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 0, y: 10)]
+        let below = ScenePaths.polylineBelow(square, order: [0, 1, 2, 3, 0], level: 3)
+        XCTAssertFalse(below.isEmpty)
+        XCTAssertLessThanOrEqual(below.boundingBoxOfPath.maxY, 3 + 0.0001)
+    }
+
+    /// ROUND-3 decision 3: no stamp or streak pop may reach the crease band, for every glass, on the Duo and phones,
+    /// through the Perfect hop.
+    @MainActor
+    func testStampsAndStreakPopsStayOffTheCrease() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let keepOut = layout.creaseMinY - 8
+        let cases: [(CGFloat, ClosedRange<CGFloat>)] = [(372, 14...656), (340, 130...540), (418, 130...540)]
+        for shape in GlassCatalog.all {
+            for (x, safe) in cases {
+                let glass = SceneGlass(id: 1, darkBackdrop: false)
+                let state = GlassState(id: 1, shape: shape, liquid: LiquidCatalog.liquid(.lemonade), x: x, phase: .served,
+                                       liquidHeight: shape.interiorHeight * 0.7, foamHeight: 0,
+                                       lineHeight: shape.interiorHeight * 0.7, lineOpacity: 1, inPerfectBand: true,
+                                       overflowing: false, patienceLeft: nil, patienceTotal: nil, result: .perfect)
+                var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: false, tail: nil,
+                                   advanced: true, reduceMotion: false, band: 0.025, projected: nil, safeX: safe,
+                                   keepOutTop: keepOut)
+                glass.update(state, f)
+                glass.celebrate()
+                glass.showStreak(5, reduceMotion: false, safeX: safe, keepOutTop: keepOut)
+                XCTAssertLessThanOrEqual(glass.lastStreakReachWorld ?? 0, keepOut + 0.5, "\(shape.id) streak at x \(x)")
+                for k in 1...45 {
+                    f.time = 1 + Double(k) / 60
+                    glass.update(state, f)
+                    XCTAssertLessThanOrEqual(glass.stampReachWorld ?? 0, keepOut + 0.5, "\(shape.id) stamp at x \(x)")
+                }
+            }
+        }
+    }
+
     func testWobbleLeavesTheSpoutAlone() {
         var pts: [CGPoint] = []
         var ws: [CGFloat] = []
@@ -195,6 +279,15 @@ final class SceneTests: XCTestCase {
                 scene.update(t)
             }
             XCTAssertFalse(scene.jugWorldBounds.isNull)
+            // Every signature vessel builds and draws (mid-pour).
+            driver.tilt = 48
+            for v in VenueID.allCases {
+                scene.venue = v
+                for _ in 0..<20 {
+                    t += 1.0 / 60.0
+                    scene.update(t)
+                }
+            }
             scene.venue = .potionShop
             scene.rushLook = true
             scene.dailyNumber = 300

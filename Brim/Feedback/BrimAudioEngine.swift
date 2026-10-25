@@ -50,6 +50,7 @@ final class BrimAudioEngine {
     private(set) var lastError: String?
     private var startFailures = 0
     private var lastRebuild: CFTimeInterval = -.infinity
+    private var lastBed = PourBed()
 
     init() {}
 
@@ -73,8 +74,10 @@ final class BrimAudioEngine {
         for command in commands { synth.send(command) }
     }
 
-    /// The continuous pour layers (always forwarded, so a master of 0 reaches the synth).
+    /// The continuous pour layers (always forwarded, so a master of 0 reaches the synth). Remembered, so a synth built
+    /// later (lazy start, rebuild after a media-services reset) starts from it instead of a silent master.
     func setBed(_ bed: PourBed) {
+        lastBed = bed
         synth?.send(.bed(bed))
     }
 
@@ -136,6 +139,7 @@ final class BrimAudioEngine {
         engine.connect(node, to: engine.mainMixerNode, format: format)
         engine.mainMixerNode.outputVolume = 1
         engine.prepare()
+        synth.send(.bed(lastBed))
         self.synth = synth
         sourceNode = node
 

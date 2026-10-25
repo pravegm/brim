@@ -12,7 +12,8 @@ import UIKit
 ///
 /// Layering (content node, back to front):
 ///   backdrop (one pre-rendered texture)          z −100
-///   belt slats (Conveyor) −30 · coaster −20 · puddles −10
+///   lift shadow under the crease (Duo)           z −90
+///   belt slats (Conveyor) −30 · puddles −25 (under the coasters) · coaster + next-glass slot coaster −20
 ///   glass backs (ring, shadow, interior, liquid, foam, bubbles, flash)   z 0
 ///   splash droplets inside the glasses                                   z 8
 ///   stream ribbon + droplets                                              z 10
@@ -55,6 +56,13 @@ final class GameScene: SKScene {
     private(set) var jugWorldBounds: CGRect = .null
     /// World point at the right end of the active glass's fill line (for a "Fill to here" callout). nil if none.
     private(set) var activeLineWorld: CGPoint?
+    /// World rect of the glass under the spout (the last glass that stood there filling; kept between glasses so UI
+    /// keep-outs don't flicker). nil before the first one. Use it for Home's button keep-out (REVIEW-2 P1-2).
+    private(set) var activeGlassWorldFrame: CGRect?
+    /// World rect of the next glass waiting on the counter (ROUND-3 decision 2), nil when none is waiting.
+    private(set) var waitingGlassWorldFrame: CGRect?
+    /// ROUND-3 decision 3: no scene text (stamps, streak pops) reaches above this world y (crease bottom − 8).
+    var foldKeepOutTop: CGFloat { layout.creaseMinY - 8 }
     /// The x range (world) that is on screen on every supported device: visibleRect inset by 14, ≥ 130…540 on phones.
     let safeX: ClosedRange<CGFloat>
 
@@ -73,6 +81,12 @@ final class GameScene: SKScene {
     private let coaster: SKShapeNode
     private let coasterEdge: SKShapeNode
     private let coasterInner: SKShapeNode
+    /// The next-glass slot's own coaster (ROUND-3 decision 2).
+    private let slotCoaster: SKShapeNode
+    private let slotCoasterEdge: SKShapeNode
+    private let slotCoasterInner: SKShapeNode
+    /// A soft shadow under the crease that deepens as the top half is lifted (REVIEW-2 P2-3, Duo only).
+    private let liftShadow: SKSpriteNode
     private let glassBackLayer: SKNode
     private let streamLayer: SKNode
     private let glassFrontLayer: SKNode
@@ -95,6 +109,10 @@ final class GameScene: SKScene {
     private var coasterX: CGFloat = 0
     private var coasterScale: CGFloat = 1
     private var coasterShown = false
+    private var slotX: CGFloat?
+    private var slotScale: CGFloat = 1
+    private var slotAlpha: CGFloat = 0
+    private var lastPhase: [Int: GlassPhase] = [:]
     private var spillColor: UIColor = SceneColor.coral
     private var lastCounterSplash: Double = -10
     private var lastServedGlass: Int?
@@ -119,6 +137,12 @@ final class GameScene: SKScene {
         coaster = SKShapeNode()
         coasterEdge = SKShapeNode()
         coasterInner = SKShapeNode()
+        slotCoaster = SKShapeNode()
+        slotCoasterEdge = SKShapeNode()
+        slotCoasterInner = SKShapeNode()
+        liftShadow = SKSpriteNode(texture: SceneArt.verticalGradient(
+            key: "lift-shadow", colors: [SceneColor.ink.withAlphaComponent(0.55), SceneColor.ink.withAlphaComponent(0.18),
+                                         SceneColor.ink.withAlphaComponent(0)], locations: [0, 0.35, 1]))
         glassBackLayer = SKNode()
         streamLayer = SKNode()
         glassFrontLayer = SKNode()
@@ -167,24 +191,35 @@ final class GameScene: SKScene {
         beltSlats.isHidden = true
         content.addChild(beltSlats)
 
-        coaster.path = CGPath(ellipseIn: CGRect(x: -60, y: -12, width: 120, height: 24), transform: nil)
-        coaster.lineWidth = 1.4
-        coasterEdge.path = CGPath(ellipseIn: CGRect(x: -60, y: -15.5, width: 120, height: 24), transform: nil)
-        coasterEdge.strokeColor = .clear
-        coasterEdge.zPosition = -0.5
-        coasterInner.path = CGPath(ellipseIn: CGRect(x: -44, y: -8, width: 88, height: 16), transform: nil)
-        coasterInner.fillColor = .clear
-        coasterInner.lineWidth = 1.6
-        coasterInner.zPosition = 0.1
-        coaster.addChild(coasterEdge)
-        coaster.addChild(coasterInner)
-        coaster.zPosition = -20
-        coaster.alpha = 0
-        coaster.position = CGPoint(x: layout.jugPivot.x, y: layout.counterY + 2)
-        content.addChild(coaster)
+        for (c, e, i) in [(coaster, coasterEdge, coasterInner), (slotCoaster, slotCoasterEdge, slotCoasterInner)] {
+            c.path = CGPath(ellipseIn: CGRect(x: -60, y: -12, width: 120, height: 24), transform: nil)
+            c.lineWidth = 1.4
+            e.path = CGPath(ellipseIn: CGRect(x: -60, y: -15.5, width: 120, height: 24), transform: nil)
+            e.strokeColor = .clear
+            e.zPosition = -0.5
+            i.path = CGPath(ellipseIn: CGRect(x: -44, y: -8, width: 88, height: 16), transform: nil)
+            i.fillColor = .clear
+            i.lineWidth = 1.6
+            i.zPosition = 0.1
+            c.addChild(e)
+            c.addChild(i)
+            c.zPosition = -20
+            c.alpha = 0
+            c.position = CGPoint(x: layout.jugPivot.x, y: layout.counterY + 2)
+            content.addChild(c)
+        }
 
-        fx.puddleLayer.zPosition = -10
+        // Puddles lie UNDER the coasters (REVIEW-2 P1-4): a spill spreads around the coaster, never over it.
+        fx.puddleLayer.zPosition = -25
         content.addChild(fx.puddleLayer)
+
+        liftShadow.anchorPoint = CGPoint(x: 0.5, y: 1)
+        liftShadow.size = CGSize(width: layout.size.width + 40, height: 90)
+        liftShadow.position = CGPoint(x: layout.size.width * 0.5, y: layout.creaseMinY)
+        liftShadow.zPosition = -90
+        liftShadow.alpha = 0
+        liftShadow.isHidden = !layout.hasFold
+        content.addChild(liftShadow)
 
         glassBackLayer.zPosition = 0
         fx.innerRoot.zPosition = 8
@@ -229,6 +264,12 @@ final class GameScene: SKScene {
         coaster.removeAllActions()
         coaster.alpha = 0
         coasterShown = false
+        slotCoaster.alpha = 0
+        slotAlpha = 0
+        slotX = nil
+        lastPhase.removeAll()
+        activeGlassWorldFrame = nil
+        waitingGlassWorldFrame = nil
         content.isPaused = false
         frozen = false
         lastServedGlass = nil
@@ -296,11 +337,15 @@ final class GameScene: SKScene {
                 break
             }
         }
-        stream.update(points: s.stream, droplets: s.droplets, liquid: s.jug.liquid, time: s.time, landing: landing)
+        stream.update(points: s.stream, droplets: s.droplets, liquid: s.jug.liquid, time: s.time, landing: landing,
+                      lip: s.jug.flow > 0.004 ? s.jug.lip : nil)
         jug.update(s.jug, streamWidth: stream.displayWidth(s.stream.first?.width ?? 0))
+        updateLiftShadow(s, dt: dt)
         if s.jug.outline.count >= 3 {
-            jugWorldBounds = ScenePaths.bounds(s.jug.outline).insetBy(dx: -10, dy: -10).offsetBy(dx: jugLayer.position.x,
-                                                                                                 dy: jugLayer.position.y)
+            // Everything drawn (lid, knob, handle included), so hints beside the jug never overlap it.
+            var drawn = jug.worldBounds
+            if drawn.isNull { drawn = ScenePaths.bounds(s.jug.outline).insetBy(dx: -10, dy: -10) }
+            jugWorldBounds = drawn.insetBy(dx: -4, dy: -4).offsetBy(dx: jugLayer.position.x, dy: jugLayer.position.y)
         }
 
         let pouring = s.jug.flow > 0.02 || !s.stream.isEmpty
@@ -309,6 +354,7 @@ final class GameScene: SKScene {
         var activeID: Int?
         for g in s.glasses where g.phase == .filling { activeID = g.id; break }
         activeLineWorld = nil
+        var waitingID: Int?
         var seen = Set<Int>()
         for (i, g) in s.glasses.enumerated() {
             seen.insert(g.id)
@@ -327,11 +373,20 @@ final class GameScene: SKScene {
             let gf = GlassFrame(counterY: cy, dt: dt, time: s.time, pouring: pouring, tail: tail, advanced: advanced,
                                 reduceMotion: reduceMotion, band: bandEstimate[g.id] ?? baseBand,
                                 projected: g.id == activeID ? s.telemetry.projectedDistanceToLine : nil,
-                                safeX: safeX)
+                                safeX: safeX, keepOutTop: foldKeepOutTop)
             view.update(g, gf)
             if g.id == activeID {
                 activeLineWorld = CGPoint(x: g.x + view.outerRimHalfWidth + 12, y: cy + view.base + g.lineHeight)
+                if view.isStill { activeGlassWorldFrame = view.worldFrame }
+            } else if g.isWaitingInSlot && view.isStill && view.stillFor > 0.1 {
+                waitingID = g.id
+                waitingGlassWorldFrame = view.worldFrame
             }
+            // Decision 4: when a glass starts to leave, the puddle under it starts drying.
+            if let prev = lastPhase[g.id], prev != g.phase, g.phase == .leaving {
+                fx.dryPuddles(nearX: g.x, halfWidth: view.baseOuterHalfWidth + 40)
+            }
+            lastPhase[g.id] = g.phase
             // Overflow / wet drips.
             if advanced && dt > 0 {
                 let rate: Double = g.overflowing ? 0.07 : 0.22
@@ -349,10 +404,13 @@ final class GameScene: SKScene {
             glasses[id] = nil
             bandEstimate[id] = nil
             wasInBand[id] = nil
+            lastPhase[id] = nil
             spilled.remove(id)
         }
+        if waitingID == nil { waitingGlassWorldFrame = nil }
 
         updateCoaster(s, dt: dt)
+        updateSlotCoaster(s, waitingID: waitingID, dt: dt)
         updateBelt(s, dt: dt)
         fx.syncPuddles(s.puddles, counterY: cy, color: spillColor)
     }
@@ -409,6 +467,52 @@ final class GameScene: SKScene {
         coaster.position = CGPoint(x: coasterX, y: layout.counterY + 2)
         coaster.xScale = coasterScale
         coaster.yScale = coasterScale
+    }
+
+    /// The next-glass slot (ROUND-3 decision 2): a coaster of its own under the waiting glass. It learns the slot from
+    /// where Core parks the waiting glass, stays while a glass is in or near the slot, and fades when the slot empties.
+    private func updateSlotCoaster(_ s: GameSnapshot, waitingID: Int?, dt: CGFloat) {
+        if palette.venue == .conveyor {
+            slotCoaster.isHidden = true
+            return
+        }
+        slotCoaster.isHidden = false
+        if let id = waitingID, let v = glasses[id] {
+            if slotX == nil { slotScale = min(1.5, max(0.75, (v.baseOuterHalfWidth * 2 + 40) / 120)) }
+            slotX = v.x
+            let target = min(1.5, max(0.75, (v.baseOuterHalfWidth * 2 + 40) / 120))
+            if dt > 0 { slotScale += (target - slotScale) * min(1, dt * 8) }
+        }
+        guard let sx = slotX else {
+            slotCoaster.alpha = 0
+            return
+        }
+        // Occupied: a glass queued for the slot (Core: `.arriving` with its line hidden) stands in or near it.
+        var occupied = false
+        for g in s.glasses where g.isWaitingInSlot && abs(g.x - sx) < 60 { occupied = true; break }
+        let target: CGFloat = occupied ? 1 : 0
+        if dt > 0 {
+            let rate: CGFloat = occupied ? 6 : 2.5
+            slotAlpha += (target - slotAlpha) * min(1, dt * rate)
+        } else if waitingID != nil && slotAlpha < 0.01 {
+            slotAlpha = 1
+        }
+        slotCoaster.alpha = slotAlpha
+        slotCoaster.position = CGPoint(x: sx, y: layout.counterY + 2)
+        slotCoaster.setScale(slotScale)
+    }
+
+    /// Duo: the raised half casts a soft shadow onto the counter that deepens as the lid lifts (REVIEW-2 P2-3).
+    private func updateLiftShadow(_ s: GameSnapshot, dt: CGFloat) {
+        guard layout.hasFold else { return }
+        let lift = CGFloat(min(max(s.jug.angle / 90, 0), 1))
+        let target = 0.1 + 0.4 * lift
+        if dt > 0 {
+            liftShadow.alpha += (target - liftShadow.alpha) * min(1, dt * 6)
+        } else if liftShadow.alpha <= 0.001 {
+            liftShadow.alpha = target
+        }
+        liftShadow.yScale = 0.7 + 0.5 * lift
     }
 
     /// Conveyor: the belt slats move with whatever glass is riding it.
@@ -476,7 +580,7 @@ final class GameScene: SKScene {
                 }
             case let .streak(n):
                 if n >= 2, let id = lastServedGlass, let v = glasses[id] {
-                    v.showStreak(n, reduceMotion: reduceMotion, safeX: safeX)
+                    v.showStreak(n, reduceMotion: reduceMotion, safeX: safeX, keepOutTop: foldKeepOutTop)
                 }
             case .jugRefilled:
                 fx.refillGlints(at: s.jug.lip)
@@ -598,6 +702,10 @@ final class GameScene: SKScene {
         coaster.strokeColor = SceneColor.darker(palette.coasterRing, 0.1).withAlphaComponent(0.7)
         coasterEdge.fillColor = SceneColor.darker(palette.coasterRing, 0.15)
         coasterInner.strokeColor = palette.coasterRing.withAlphaComponent(0.75)
+        slotCoaster.fillColor = palette.coaster
+        slotCoaster.strokeColor = coaster.strokeColor
+        slotCoasterEdge.fillColor = coasterEdge.fillColor
+        slotCoasterInner.strokeColor = coasterInner.strokeColor
         jug.setStyle(palette.vessel)
     }
 

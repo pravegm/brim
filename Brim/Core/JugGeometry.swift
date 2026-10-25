@@ -27,11 +27,12 @@ enum JugGeometry {
     ///   channel roof back to where the lid starts;
     /// - `lidIndices` 15…18: the lid (closed mouth), spout side → handle side. Draw a lid here, not an open rim;
     /// - 18…25: left wall (handle side) back down to the floor.
-    static let standard: JugShape = JugGeometry.makeStandard(scale: 1.0)
+    /// Round 3: built at `CoreTuning.jugScale` (0.93), so the interior is ~158 × 201 (the vertex map is unchanged).
+    static let standard: JugShape = JugGeometry.makeStandard(scale: CoreTuning.jugScale)
 
-    /// Rush's "one big shared jug" (same shape, scaled by `CoreTuning.rushJugScale`; its extra volume comes from
-    /// `CoreTuning.rushVolumeBoost`).
-    static let big: JugShape = JugGeometry.makeStandard(scale: CoreTuning.rushJugScale)
+    /// Rush's "one big shared jug" (same shape, scaled by `CoreTuning.rushJugScale` on top of `jugScale`; its extra
+    /// volume comes from `CoreTuning.rushVolumeBoost`).
+    static let big: JugShape = JugGeometry.makeStandard(scale: CoreTuning.jugScale * CoreTuning.rushJugScale)
 
     static let rightWallIndices: ClosedRange<Int> = 0...8
     static let spoutChannelIndices: ClosedRange<Int> = 8...15

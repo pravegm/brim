@@ -46,6 +46,8 @@ struct HUDView: View {
             Spacer(minLength: 4)
             if hud.streak > 0 {
                 streakPill
+                    .fixedSize()
+                    .layoutPriority(1)
                     .transition(.scale(scale: 0.6, anchor: .trailing).combined(with: .opacity))
             }
             if !isPractice {
@@ -58,6 +60,7 @@ struct HUDView: View {
                     .animation(reduceMotion ? nil : Animation.snappy(duration: 0.25), value: hud.score)
                     .scaleEffect(bump ? 1.14 : 1, anchor: .trailing)
                     .shadow(color: BrimTheme.cream.opacity(0.9), radius: 3)
+                    .layoutPriority(1)
                     .accessibilityLabel("Score \(hud.score)")
             }
             RoundIconButton(systemName: "pause.fill", size: 44, accessibility: "Pause", action: onPause)
@@ -78,17 +81,22 @@ struct HUDView: View {
         }
     }
 
+    /// "×3 · 🔥7": the multiplier, then the streak with a flame (★ means stars earned everywhere else, P2-4).
     private var streakPill: some View {
         HStack(spacing: 4) {
             if hud.multiplier > 1 {
                 Text("×\(hud.multiplier)")
                     .font(BrimTheme.number(16))
+                Rectangle()
+                    .fill(BrimTheme.ink.opacity(0.25))
+                    .frame(width: 1.5, height: 14)
             }
-            Image(systemName: "star.fill")
-                .font(.system(size: 10, weight: .black))
+            Image(systemName: "flame.fill")
+                .font(.system(size: 11, weight: .black))
             Text("\(hud.streak)")
                 .font(BrimTheme.number(14))
         }
+        .lineLimit(1)
         .foregroundStyle(BrimTheme.ink)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -133,13 +141,25 @@ struct HUDView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(hud.ordersDone) of \(total) glasses")
         } else if !isPractice {
-            Text("\(hud.ordersDone) served")
-                .font(BrimTheme.text(12, .heavy))
-                .foregroundStyle(BrimTheme.inkSoft)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(BrimTheme.card.opacity(0.75)))
+            // Rush: "7 served", or "✓ 7" when the row is tight (REVIEW-2 P1-8: never "7 se…").
+            ViewThatFits(in: .horizontal) {
+                servedChip(Text("\(hud.ordersDone) served"))
+                servedChip(Text("\(Image(systemName: "checkmark")) \(hud.ordersDone)"))
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(hud.ordersDone) served")
         }
+    }
+
+    private func servedChip(_ label: Text) -> some View {
+        label
+            .font(BrimTheme.text(12, .heavy))
+            .foregroundStyle(BrimTheme.inkSoft)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(BrimTheme.card.opacity(0.75)))
     }
 }
 
@@ -288,7 +308,8 @@ struct FillToHereCallout: View {
 
     var body: some View {
         let m = info.mapper
-        let lineY = m.y(glass.lineY)
+        // Never on the crease (ROUND-3 decision 3): the pill's top stays ≥ 8 pt below the fold.
+        let lineY = info.hasFold ? max(m.y(glass.lineY), info.bottomHalfTop + 8 + 15) : m.y(glass.lineY)
         let left = m.x(glass.x - glass.halfWidthAtLine)
         let right = m.x(glass.x + glass.halfWidthAtLine)
         let pillWidth: CGFloat = 128
@@ -336,7 +357,7 @@ struct FlatGateOverlay: View {
                 VStack(spacing: 10) {
                     LayFlatGlyph()
                         .frame(width: 96, height: 64)
-                    Text("Lay it flat to start")
+                    Text(hud.gateAfterPause ? "Lay it flat to carry on" : "Lay it flat to start")
                         .font(BrimTheme.title(20))
                         .foregroundStyle(BrimTheme.ink)
                         .multilineTextAlignment(.center)
@@ -397,6 +418,73 @@ struct LayFlatGlyph: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Paused by closing (ROUND-3 decision 1)
+
+/// The calm card when the run paused itself because the phone was closing (hinge < 70°) or shut: nothing is judged
+/// while it shows; opening the phone resumes the run behind the flat gate ("Lay it flat to carry on"). The card sits
+/// on the raised half, the two quiet buttons on the flat half, nothing on the crease.
+struct ClosedPauseView: View {
+    @ObservedObject var controller: GameController
+    let info: CanvasInfo
+
+    var body: some View {
+        ZStack {
+            BrimTheme.ink.opacity(0.3)
+                .contentShape(Rectangle())
+                .onTapGesture {}
+            DuoSplit(info: info) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    VStack(spacing: 10) {
+                        LayFlatGlyph()
+                            .frame(width: 110, height: 72)
+                        Text("Open me up and lay me flat")
+                            .font(BrimTheme.title(info.isCompact ? 22 : 25))
+                            .foregroundStyle(BrimTheme.ink)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Your shift is paused. It carries on once the phone lies flat.")
+                            .font(BrimTheme.text(14, .bold))
+                            .foregroundStyle(BrimTheme.inkSoft)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 18)
+                    .frame(maxWidth: 400)
+                    .background(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(BrimTheme.card)
+                            .shadow(color: BrimTheme.ink.opacity(0.2), radius: 14, y: 6)
+                    )
+                    .accessibilityElement(children: .combine)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 24)
+            } bottom: {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 12) {
+                        TapButton(kind: .secondary, height: 56, action: { controller.resumeFromClosed() }) {
+                            Label("Resume", systemImage: "play.fill")
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        TapButton(kind: .quiet, height: 56, action: { controller.quitToMenu() }) {
+                            Label("Menu", systemImage: "house.fill")
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                    }
+                    .frame(maxWidth: 420)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+            }
+        }
     }
 }
 

@@ -231,9 +231,10 @@ enum SceneArt {
     }
 
     static func liquidTexture(_ l: Liquid) -> SKTexture {
-        let top = SceneColor.opaque(l.top.skColor)
-        let bottom = SceneColor.opaque(l.bottom.skColor)
-        return verticalGradient(key: "liquid-\(l.id.rawValue)",
+        let g = SceneLiquidLook.gradient(l)
+        let top = g.top
+        let bottom = g.bottom
+        return verticalGradient(key: "liquid2-\(l.id.rawValue)",
                                 colors: [SceneColor.lighter(top, 0.34), top, SceneColor.mix(top, bottom, 0.55), bottom],
                                 locations: [0, 0.06, 0.45, 1])
     }
@@ -455,6 +456,9 @@ private struct SceneBackdropPainter {
 
     static let hudBandY: CGFloat = 842
     static let ledgeY: CGFloat = 766
+    /// Phones: wall props (ledge, shelf props, tap tower, neon, calendar, string lights) sit this much lower so their
+    /// tops stay ≥ ~35 pt below the score and pause button.
+    static let phonePropDrop: CGFloat = 48
 
     func uy(_ worldY: CGFloat) -> CGFloat { H - worldY }
 
@@ -715,8 +719,9 @@ private struct SceneBackdropPainter {
 
     private func paintFormica(top: CGFloat) {
         var rng = SceneRNG(seed: 52)
-        let colors: [UIColor] = [SceneColor.ink.withAlphaComponent(0.12), UIColor(white: 1, alpha: 0.6),
-                                 SceneColor.hex(0x6CC4C9, 0.35), SceneColor.hex(0xFFC23D, 0.35)]
+        // Mint formica (REVIEW-2 P1-9: the pink shake pops against it), with white, ink and cherry flecks.
+        let colors: [UIColor] = [SceneColor.ink.withAlphaComponent(0.14), UIColor(white: 1, alpha: 0.7),
+                                 SceneColor.hex(0xE2324A, 0.3), SceneColor.hex(0x2F8F84, 0.3)]
         for i in 0..<320 {
             let x = rng.range(0, W), y = rng.range(14, top)
             let len = rng.range(3, 7) * (0.5 + 0.5 * (1 - y / max(top, 1)))
@@ -805,6 +810,11 @@ private struct SceneBackdropPainter {
         case .lemonadeStand: paintAwning()
         default: break
         }
+        // iPhone (REVIEW-2 P1-7): the aspect-fill crop + Dynamic Island push the HUD (score, pause, title chip) ~60 pt
+        // down into the wall art the Duo keeps clear, so every wall prop drops `Self.phonePropDrop` on phones.
+        ctx.saveGState()
+        if !layout.hasFold { ctx.translateBy(x: 0, y: Self.phonePropDrop) }
+        defer { ctx.restoreGState() }
         paintFramedPrint()
         switch p.venue {
         case .lemonadeStand:

@@ -336,7 +336,130 @@ struct ResultsCopyTests {
         #expect(ResultsView.headline(for: run([.perfect, .perfect, .perfect], stars: 3), dailyOnFile: false) == "Flawless shift!")
         #expect(ResultsView.headline(for: run([.perfect, .good, .perfect], stars: 3), dailyOnFile: false) == "Great shift!")
         #expect(ResultsView.headline(for: run([.good, .short], stars: 1), dailyOnFile: false) == "Shift cleared")
-        #expect(ResultsView.headline(for: run([.spill, .spill], stars: 0), dailyOnFile: false) == "So close")
+        // REVIEW-2 P2-6: a failed shift never says "So close"; three spills say what ended it.
+        #expect(ResultsView.headline(for: run([.spill, .spill], stars: 0), dailyOnFile: false) == "Not quite")
+        #expect(ResultsView.headline(for: run([.good, .spill, .spill, .spill], stars: 0), dailyOnFile: false)
+                == "Shift over — 3 spills")
+    }
+
+    @Test func newBestOnlyWhenAnEarlierBestExisted() {
+        var data = ProgressData()
+        let first = data.record(RunResult(mode: .shift("1-1"), score: 30, stars: 0, perfects: 0, bestStreak: 0,
+                                          judgements: [.spill, .spill, .spill], poured: 0, cleared: false), today: 1)
+        #expect(first.isNewBest)
+        #expect(!first.showsNewBest)
+        let second = data.record(RunResult(mode: .shift("1-1"), score: 400, stars: 1, perfects: 1, bestStreak: 1,
+                                           judgements: [.perfect, .good], poured: 0, cleared: true), today: 1)
+        #expect(second.showsNewBest)
+        let rush = data.record(RunResult(mode: .rush, score: 900, stars: 0, perfects: 0, bestStreak: 0,
+                                         judgements: [.good], poured: 0, cleared: false), today: 1)
+        #expect(!rush.showsNewBest)
+    }
+}
+
+// MARK: - Round 3: closing never pours, nothing on the fold, Duo home and results
+
+@MainActor
+struct ClosingGuardTests {
+    private func makeController(_ args: String) -> GameController {
+        let store = ProgressStore(inMemory: ProgressData())
+        let settings = SettingsStore(defaults: nil)
+        let demo = DemoConfig.parse(args, today: 1)
+        let controller = GameController(store: store, settings: settings, demo: demo)
+        controller.updateCanvas(CGSize(width: 669, height: 951), hasFold: true)
+        return controller
+    }
+
+    @Test func closingPausesTheRunAndReopeningResumesBehindTheFlatGate() {
+        let c = makeController("mode=shift:1-2;duo;orient=portrait")
+        c.start(mode: .shift("1-2"))
+        c.hingeSample(angle: 150, time: 10)
+        #expect(!c.isPaused)
+        c.hingeSample(angle: 65, time: 10.3)
+        #expect(c.isClosedPaused)
+        #expect(c.isPaused)
+        // Nothing steps while paused: the session clock holds, so no glass can be judged.
+        let a = c.advance(dt: 1.0 / 60.0, now: 10.31)?.0.time
+        let b = c.advance(dt: 1.0 / 60.0, now: 10.35)?.0.time
+        #expect(a != nil && a == b)
+        // Still closed-ish: no resume yet.
+        c.hingeSample(angle: 90, time: 11)
+        #expect(c.isClosedPaused)
+        c.hingeSample(angle: 130, time: 11.4)
+        #expect(!c.isClosedPaused)
+        #expect(!c.isPaused)
+        // The resume re-armed the flat gate.
+        #expect(c.hud.gateAfterPause)
+    }
+
+    @Test func userResumeAlsoReArmsTheGate() {
+        let c = makeController("mode=shift:1-1;duo")
+        c.start(mode: .shift("1-1"))
+        c.pause()
+        #expect(c.isUserPaused)
+        c.resume()
+        #expect(!c.isPaused)
+        #expect(c.hud.gateAfterPause)
+    }
+
+    @Test func autopilotDemoFramesNeverPauseThemselves() {
+        let c = makeController("mode=shift:1-1;duo;autopilot=perfect")
+        c.start(mode: .shift("1-1"))
+        c.hingeSample(angle: 40, time: 5)
+        #expect(!c.isClosedPaused)
+    }
+
+    @Test func theAttractLoopNeverPauses() {
+        let c = makeController("screen=menu;duo")
+        c.hingeSample(angle: 40, time: 5)
+        #expect(!c.isClosedPaused)
+        #expect(!c.isPaused)
+    }
+}
+
+@MainActor
+struct Round3LayoutTests {
+    @Test func duoHomeRowSitsUnderTheCounter() {
+        let duo = CanvasInfo(size: CGSize(width: 669, height: 951), insets: EdgeInsets(), hasFold: true)
+        let row = HomeView.rowFrame(info: duo, roomy: true)
+        #expect(row.minY >= duo.counterY + 10)
+        #expect(row.maxY <= 951)
+        #expect(row.minY > duo.bottomHalfTop)
+        let phone = CanvasInfo(size: CGSize(width: 402, height: 874),
+                               insets: EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0), hasFold: false)
+        let phoneRow = HomeView.rowFrame(info: phone, roomy: false)
+        #expect(phoneRow.minY >= phone.counterY + 10)
+        #expect(phoneRow.maxY <= 874)
+    }
+
+    @Test func compactDailyShowsNumberAndState() {
+        #expect(HomeView.compactDailyText(today: 297, done: false, streak: 0) == "#297")
+        #expect(HomeView.compactDailyText(today: 297, done: true, streak: 1) == "#297 ✓")
+        #expect(HomeView.compactDailyText(today: 297, done: true, streak: 4) == "#297 🔥4")
+    }
+
+    @Test func bookCardSplitsOnlyOnADuoInBookPose() {
+        #expect(StandUpCard.splitsOnFold(CGSize(width: 951, height: 669)))
+        #expect(!StandUpCard.splitsOnFold(CGSize(width: 669, height: 951)))
+        #expect(!StandUpCard.splitsOnFold(CGSize(width: 874, height: 402)))
+    }
+
+    @Test func counterRecapFitsTheFlatHalf() {
+        let shape = GlassShape(id: "t", name: "t", style: .tumbler,
+                               profile: [CGPoint(x: 40, y: 0), CGPoint(x: 57, y: 150)], baseThickness: 10, wall: 4)
+        let liquid = Liquid(id: .water, name: "Water", top: RGBA(hex: 0x7CC8F2), bottom: RGBA(hex: 0x4FA9DE), foam: nil,
+                            lagTau: 0.04, foamPerVolume: 0, foamSettle: 1, reposeDegrees: 0, opacity: 0.8, fizzy: false)
+        let glass = GlassState(id: 1, shape: shape, liquid: liquid, x: 300, phase: .served, liquidHeight: 100,
+                               foamHeight: 0, lineHeight: 105, lineOpacity: 1, inPerfectBand: true, overflowing: false,
+                               patienceLeft: nil, patienceTotal: nil, result: .perfect)
+        let few = Array(repeating: GlassRecap(glass: glass, judgement: .perfect), count: 4)
+        #expect(abs(CounterRecap.rowScale(few, size: CGSize(width: 629, height: 320), spacing: 18) - 0.6) < 0.0001)
+        let many = Array(repeating: GlassRecap(glass: glass, judgement: .great), count: 10)
+        let s = CounterRecap.rowScale(many, size: CGSize(width: 629, height: 320), spacing: 10)
+        #expect(s < 0.6)
+        #expect(10 * 114 * s + 9 * 10 <= 629.5)
+        let short = CounterRecap.rowScale(few, size: CGSize(width: 629, height: 80), spacing: 18)
+        #expect(150 * short <= 80 - 26 + 0.5)
     }
 }
 
