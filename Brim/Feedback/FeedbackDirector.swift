@@ -67,6 +67,11 @@ final class FeedbackDirector: FeedbackSink {
     private let haptics = BrimHaptics()
     private var started = false
     private var paused = false
+    /// `setIdle(true)` from the App (menus).
+    private var menuIdle = false
+    /// Paused for `pausedIdleDelay` s.
+    private var pausedIdle = false
+    private var pauseGeneration = 0
     private var activationObserver: NSObjectProtocol?
     private var dice = FeelDice(seed: 0xB1A1_F00D)
     private var lastBedSend: CFTimeInterval = 0
@@ -123,13 +128,53 @@ final class FeedbackDirector: FeedbackSink {
     func setPaused(_ paused: Bool) {
         guard paused != self.paused else { return }
         self.paused = paused
+        pauseGeneration &+= 1
         if paused {
             // The pour layers stop; the master stays up so the pause card's buttons (and the closing whoosh) are heard.
             audio.setBed(idleBed)
             let now = CACurrentMediaTime()
             if now >= whooshUntil { audio.silence() }
             haptics.updateFlow(flow: 0, fill: 0, now: now)
+            // A pause that lasts (the attract loop under the menus, a pause card left open) idles the engines too.
+            let generation = pauseGeneration
+            let delay = Self.pausedIdleDelay
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard let self, self.paused, self.pauseGeneration == generation else { return }
+                self.pausedIdle = true
+                self.applyIdle()
+            }
+        } else if pausedIdle {
+            pausedIdle = false
+            applyIdle()
         }
+    }
+
+    /// Round 4 (QA P2-7, battery): the App calls `setIdle(true)` on screens with no pour (Home, Venues, Settings,
+    /// Results once shown) and `setIdle(false)` when a run starts. Idle: the haptic pour-bed player stops and the haptic
+    /// engine may shut down by itself; the audio engine pauses after a few quiet seconds. Menu sounds (`uiTap`,
+    /// `uiConfirm`, `celebrate`) still play: the engines wake for them. Also entered by itself after
+    /// `pausedIdleDelay` s of `setPaused(true)`, and left by `setPaused(false)` or by a pour in `handle`.
+    func setIdle(_ idle: Bool) {
+        guard idle != menuIdle else { return }
+        menuIdle = idle
+        if idle {
+            audio.setBed(idleBed)
+            haptics.updateFlow(flow: 0, fill: 0, now: CACurrentMediaTime())
+        }
+        applyIdle()
+    }
+
+    /// True while the engines are idling (menus, or a long pause).
+    var isIdle: Bool { menuIdle || pausedIdle }
+
+    /// Seconds of `setPaused(true)` before the engines idle by themselves.
+    static let pausedIdleDelay: Double = 3
+
+    private func applyIdle() {
+        let sleepy = menuIdle || pausedIdle
+        audio.idle = sleepy
+        haptics.idle = sleepy
     }
 
     /// The App paused the run because the phone is closing (ROUND-3 decision 1): the pour stops at once and a soft
@@ -173,6 +218,11 @@ final class FeedbackDirector: FeedbackSink {
 
     func handle(events: [GameEvent], snapshot: GameSnapshot) {
         ensureStarted()
+        // Safety net: a live pour wakes the engines even if the App forgot `setIdle(false)` (a finished run behind the
+        // results card sends no events and no flow, so it stays idle).
+        if menuIdle && !paused && (snapshot.telemetry.flow > 0.004 || !events.isEmpty) {
+            setIdle(false)
+        }
         let now = CACurrentMediaTime()
         if now - lastHeal > 1 {
             lastHeal = now

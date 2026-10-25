@@ -223,6 +223,126 @@ final class SceneTests: XCTestCase {
         }
     }
 
+    func testWobbleRespectsTheThickRopeCap() {
+        var pts: [CGPoint] = []
+        var ws: [CGFloat] = []
+        for i in 0..<60 { pts.append(CGPoint(x: 0, y: 600 - CGFloat(i) * 10)); ws.append(46) }
+        for k in 0..<10 {
+            var w = pts
+            ScenePaths.wobble(&w, widths: ws, amplitude: 0.14, time: CGFloat(k) * 0.37, maxOffset: 3)
+            for p in w { XCTAssertLessThanOrEqual(abs(p.x), 3.01) }
+        }
+    }
+
+    /// REVIEW-3 P1-2: a broken tail is 3–6 drops (not a bead chain), sized 60–100 %, spacing growing down the fall.
+    @MainActor
+    func testBrokenTailIsAFewVariedDropsWithGrowingSpacing() {
+        XCTAssertEqual(SceneStream.dropCount(forLength: 10), 1)
+        for len in stride(from: CGFloat(30), through: 600, by: 15) {
+            let n = SceneStream.dropCount(forLength: len)
+            XCTAssertGreaterThanOrEqual(n, 3)
+            XCTAssertLessThanOrEqual(n, 6)
+            XCTAssertEqual(SceneStream.dropOffset(0, of: n, length: len), 0, accuracy: 0.0001)   // starts at the lip
+            var lastGap: CGFloat = 0
+            for k in 1..<n {
+                let gap = SceneStream.dropOffset(k, of: n, length: len) - SceneStream.dropOffset(k - 1, of: n, length: len)
+                XCTAssertGreaterThan(gap, lastGap - 0.0001)
+                lastGap = gap
+            }
+            XCTAssertLessThanOrEqual(SceneStream.dropOffset(n - 1, of: n, length: len), len)
+        }
+        for s in SceneStream.dropSizes {
+            XCTAssertGreaterThanOrEqual(s, 0.6)
+            XCTAssertLessThanOrEqual(s, 1.0)
+        }
+        XCTAssertNotEqual(SceneStream.dropSizes.min(), SceneStream.dropSizes.max())
+        // Gone within ~0.4 s of the stop.
+        XCTAssertLessThanOrEqual(SceneStream.tailFadeDelay + SceneStream.tailFade, 0.41)
+    }
+
+    /// A stopped stream draws without traps, then empties.
+    @MainActor
+    func testStoppedStreamBreaksUpAndClears() {
+        let stream = SceneStream()
+        let liquid = LiquidCatalog.liquid(.orangeJuice)
+        var points: [StreamPoint] = []
+        for i in 0..<40 { points.append(StreamPoint(position: CGPoint(x: 360, y: 560 - CGFloat(i) * 8), width: 10)) }
+        stream.update(points: points, droplets: [], liquid: liquid, time: 1, landing: nil,
+                      lip: CGPoint(x: 360, y: 560))
+        for k in 1...30 {
+            stream.update(points: points, droplets: [], liquid: liquid, time: 1 + Double(k) / 60, landing: nil, lip: nil)
+        }
+        XCTAssertFalse(stream.root.isHidden)
+        stream.update(points: [], droplets: [], liquid: liquid, time: 2, landing: nil, lip: nil)
+        XCTAssertTrue(stream.root.isHidden)
+    }
+
+    /// REVIEW-3 P1-1: the glass waiting in the slot is drawn smaller, lower and dimmer, and grows to full size as it
+    /// slides to the stop.
+    @MainActor
+    func testWaitingGlassIsSmallerDimmerAndGrowsWhenItsTurnComes() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let shape = GlassCatalog.all[0]
+        let glass = SceneGlass(id: 3, darkBackdrop: false)
+        var state = GlassState(id: 3, shape: shape, liquid: LiquidCatalog.liquid(.lemonade), x: 165, phase: .arriving,
+                               liquidHeight: 0, foamHeight: 0, lineHeight: shape.interiorHeight * 0.7, lineOpacity: 0,
+                               inPerfectBand: false, overflowing: false, patienceLeft: nil, patienceTotal: nil, result: nil)
+        XCTAssertTrue(state.isWaitingInSlot)
+        var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: false, tail: nil, advanced: true,
+                           reduceMotion: false, band: 0.025, projected: nil, safeX: 14...656,
+                           keepOutTop: layout.creaseMinY - 8)
+        f.waitingScale = 0.82
+        f.waitingDrop = 10
+        f.waitingAlpha = 0.6
+        glass.update(state, f)
+        XCTAssertEqual(glass.displayScale, 0.82, accuracy: 0.001)
+        XCTAssertEqual(glass.dropY, 10, accuracy: 0.001)
+        XCTAssertEqual(glass.drawnAlpha, 0.6, accuracy: 0.01)
+        let small = glass.worldFrame
+        XCTAssertLessThan(small.minY, layout.counterY - 6 - 9)
+
+        // Its turn: the line appears and it slides; within 0.5 s it is a full-size, fully opaque glass.
+        state.lineOpacity = 1
+        for k in 1...30 {
+            f.time = 1 + Double(k) / 60
+            state.x = 165 + CGFloat(k) * 6.6
+            glass.update(state, f)
+        }
+        XCTAssertEqual(glass.displayScale, 1, accuracy: 0.001)
+        XCTAssertEqual(glass.dropY, 0, accuracy: 0.001)
+        XCTAssertEqual(glass.drawnAlpha, 1, accuracy: 0.001)
+        XCTAssertGreaterThan(glass.worldFrame.width, small.width * 1.15)
+    }
+
+    /// On a phone the waiting glass never sits on the bezel: its reported frame keeps clear of the crop.
+    @MainActor
+    func testWaitingGlassFrameStaysInsideThePhoneCrop() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 402, height: 874), hasFold: false)
+        let session = GameSession(mode: .shift(LevelCatalog.levels.first?.id ?? "1-1"), layout: layout, seed: 3)
+        let scene = GameScene(layout: layout)
+        let driver = SceneTestDriver(session)
+        scene.driver = driver
+        scene.reset(for: session.snapshot)
+        var t: TimeInterval = 50
+        for frame in 0..<(60 * 8) {
+            let s = Double(frame) / 60
+            driver.tilt = s < 0.5 ? 0 : (s.truncatingRemainder(dividingBy: 3) < 1.6 ? 48 : 0)
+            t += 1.0 / 60.0
+            scene.update(t)
+            if let w = scene.waitingGlassWorldFrame {
+                XCTAssertGreaterThanOrEqual(w.minX, layout.visibleRect.minX + 3.9)
+                if let a = scene.activeGlassWorldFrame { XCTAssertLessThan(w.maxX, a.maxX) }
+            }
+        }
+    }
+
+    @MainActor
+    func testGrownPuddleSpreadsPastTheCoaster() {
+        XCTAssertGreaterThan(PuddleView.displayWidth(radius: 30), 160)
+        XCTAssertGreaterThan(PuddleView.displayWidth(radius: 105), 330)
+        XCTAssertGreaterThan(PuddleView.displayWidth(radius: 60), PuddleView.displayWidth(radius: 30))
+    }
+
     func testEveryVenueHasAPaletteAndDuskIsDark() {
         for v in VenueID.allCases {
             let p = ScenePalette.forVenue(v)

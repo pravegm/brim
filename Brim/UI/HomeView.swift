@@ -14,21 +14,35 @@ struct HomeView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
-
-    private var today: Int { LevelCatalog.dayNumber(for: Date()) }
+    /// QA-1 P2-23: re-read every 30 s, so the Daily button rolls over at UTC midnight while Home stays open.
+    @State private var today = LevelCatalog.dayNumber(for: Date())
 
     /// Wide enough for the full-label row (the Duo's 669 pt).
     static let roomyWidth: CGFloat = 560
+    /// How far a glass's coaster reaches below the counter line (world pt).
+    static let coasterDepth: CGFloat = 14
+    /// REVIEW-3 P2-5: clear space between the lowest coaster and the button row.
+    static let coasterClearance: CGFloat = 12
 
     private var roomy: Bool { info.size.width >= Self.roomyWidth }
 
-    /// Pure (tested): the button row's frame (canvas points), always below the counter line where the glasses stand.
-    static func rowFrame(info: CanvasInfo, roomy: Bool) -> CGRect {
-        let height: CGFloat = roomy ? 64 : 60
+    /// Pure (tested): the button row's frame (canvas points), always ≥ 12 pt below the lowest coaster on the counter
+    /// (`lowestGlassWorldY`: the lowest glass base, world; a waiting glass may stand a little lower than the counter).
+    /// The row may shrink to 52 pt rather than sink into the home-indicator edge.
+    static func rowFrame(info: CanvasInfo, roomy: Bool, lowestGlassWorldY: CGFloat = WorldLayout.counter) -> CGRect {
+        let preferred: CGFloat = roomy ? 64 : 60
         let bottom = roomy ? info.size.height - max(info.insets.bottom, 12) - 6
                            : info.size.height - max(info.insets.bottom - 10, 8)
-        // Never above the counter front (+ the coaster's lip).
-        let top = max(bottom - height, info.counterY + 10)
+        let hardBottom = roomy ? info.size.height - max(info.insets.bottom * 0.5, 6)
+                               : info.size.height - max(info.insets.bottom - 14, 6)
+        let coasterBottom = info.mapper.y(min(lowestGlassWorldY, WorldLayout.counter) - coasterDepth)
+        let minTop = max(coasterBottom + coasterClearance, info.counterY + 10)
+        var top = max(bottom - preferred, minTop)
+        var height = preferred
+        if top + height > hardBottom {
+            height = max(hardBottom - top, 52)
+            top = min(top, hardBottom - height)
+        }
         return CGRect(x: 0, y: top, width: info.size.width, height: height)
     }
 
@@ -42,6 +56,13 @@ struct HomeView: View {
         .frame(width: info.size.width, height: info.size.height, alignment: .topLeading)
         .onAppear {
             withAnimation(BrimTheme.pop(reduceMotion).delay(0.05)) { appeared = true }
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                let now = LevelCatalog.dayNumber(for: Date())
+                if now != today { today = now }
+            }
         }
     }
 
@@ -71,27 +92,32 @@ struct HomeView: View {
 
     // MARK: One row at the very bottom (both devices)
 
+    /// The lowest glass base on the counter (world): the waiting glass stands ~10 pt nearer the player than the counter
+    /// line (Scene's waiting look, REVIEW-3 P1-1). A constant, so the row never jumps.
+    static let lowestGlassWorldY: CGFloat = WorldLayout.counter - 10
+
     private var bottomRow: some View {
-        let frame = Self.rowFrame(info: info, roomy: roomy)
+        let frame = Self.rowFrame(info: info, roomy: roomy, lowestGlassWorldY: Self.lowestGlassWorldY)
+        let h = frame.height
         return Group {
             if roomy {
                 HStack(spacing: 8) {
-                    playButton(compact: false)
+                    playButton(compact: false, height: h)
                         .frame(maxWidth: .infinity)
                         .layoutPriority(1)
-                    rushButton(compact: false).frame(width: 132)
-                    dailyButton(compact: false).frame(width: 142)
-                    venuesButton(compact: false).frame(width: 112)
+                    rushButton(compact: false, height: h).frame(width: 132)
+                    dailyButton(compact: false, height: h).frame(width: 142)
+                    venuesButton(compact: false, height: h).frame(width: 112)
                 }
                 .padding(.horizontal, info.sidePad)
             } else {
                 HStack(spacing: 7) {
-                    playButton(compact: true)
+                    playButton(compact: true, height: h)
                         .frame(maxWidth: .infinity)
                         .layoutPriority(1)
-                    rushButton(compact: true).frame(width: 74)
-                    dailyButton(compact: true).frame(width: 74)
-                    venuesButton(compact: true).frame(width: 74)
+                    rushButton(compact: true, height: h).frame(width: 74)
+                    dailyButton(compact: true, height: h).frame(width: 74)
+                    venuesButton(compact: true, height: h).frame(width: 74)
                 }
                 .padding(.horizontal, max(info.sidePad - 6, 10))
             }
@@ -104,9 +130,9 @@ struct HomeView: View {
 
     // MARK: Buttons
 
-    private func playButton(compact: Bool) -> some View {
+    private func playButton(compact: Bool, height: CGFloat) -> some View {
         let next = store.data.nextShift
-        return TapButton(kind: .primary, height: compact ? 60 : 64, hPad: compact ? 8 : 14,
+        return TapButton(kind: .primary, height: height, hPad: compact ? 8 : 14,
                          action: { controller.playNextShift() }) {
             HStack(spacing: compact ? 8 : 10) {
                 Image(systemName: "play.fill")
@@ -129,8 +155,8 @@ struct HomeView: View {
         .accessibilityLabel("Play \(next.map { GameController.title(for: .shift($0.id)) } ?? "")")
     }
 
-    private func rushButton(compact: Bool) -> some View {
-        TapButton(kind: .secondary, height: compact ? 60 : 64, hPad: compact ? 4 : 8,
+    private func rushButton(compact: Bool, height: CGFloat) -> some View {
+        TapButton(kind: .secondary, height: height, hPad: compact ? 4 : 8,
                   action: { controller.start(mode: .rush) }) {
             if compact {
                 smallLabel("Rush", icon: "bolt.fill")
@@ -142,9 +168,9 @@ struct HomeView: View {
         .accessibilityLabel(store.rushBest > 0 ? "Rush, best \(store.rushBest)" : "Rush")
     }
 
-    private func dailyButton(compact: Bool) -> some View {
+    private func dailyButton(compact: Bool, height: CGFloat) -> some View {
         let streak = store.dailyStreak(today: today)
-        return TapButton(kind: .secondary, height: compact ? 60 : 64, hPad: compact ? 4 : 8,
+        return TapButton(kind: .secondary, height: height, hPad: compact ? 4 : 8,
                          action: { controller.playDaily() }) {
             if compact {
                 // REVIEW-2 P2-10: the number and the state on the phone too ("#297", "#297 ✓", "#297 🔥3").
@@ -164,8 +190,8 @@ struct HomeView: View {
         return done ? "#\(today) ✓" : "#\(today)"
     }
 
-    private func venuesButton(compact: Bool) -> some View {
-        TapButton(kind: .quiet, height: compact ? 60 : 64, hPad: compact ? 4 : 8,
+    private func venuesButton(compact: Bool, height: CGFloat) -> some View {
+        TapButton(kind: .quiet, height: height, hPad: compact ? 4 : 8,
                   action: { controller.showVenues() }) {
             if compact {
                 smallLabel("\(store.totalStars)★", icon: "storefront.fill")

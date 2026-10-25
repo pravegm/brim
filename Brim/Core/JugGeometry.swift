@@ -77,24 +77,32 @@ enum JugGeometry {
 
     /// Only the head above the lip (cheaper than `pose` when the polygons aren't needed).
     static func head(_ jug: JugShape, angle: Double, fill: Double) -> CGFloat {
+        var scratch: [CGPoint] = []
+        return head(jug, angle: angle, fill: fill, scratch: &scratch)
+    }
+
+    /// `head` without per-call allocations (round 4, QA P2-8): the rotated outline is written into `scratch`, which
+    /// the caller keeps between calls (the session does, every sub-step). Same numbers as `head(_:angle:fill:)`.
+    static func head(_ jug: JugShape, angle: Double, fill: Double, scratch: inout [CGPoint]) -> CGFloat {
         let o: CGPoint = CGPoint(x: 0, y: 0)
-        let outline: [CGPoint] = transform(jug.outline, jug: jug, angle: angle, at: o)
+        transform(jug.outline, jug: jug, angle: angle, at: o, into: &scratch)
         let lip: CGPoint = transform(point: jug.lip, jug: jug, angle: angle, at: o)
         let volume: CGFloat = CGFloat(CoreMath.clamp(fill, 0, 1)) * jug.capacity
         if volume <= 0 {
-            var minY: CGFloat = outline[0].y
-            for p in outline where p.y < minY { minY = p.y }
+            var minY: CGFloat = scratch[0].y
+            for p in scratch where p.y < minY { minY = p.y }
             return minY - lip.y
         }
-        return CorePolygon.levelForArea(outline, area: volume) - lip.y
+        return CorePolygon.levelForArea(scratch, area: volume) - lip.y
     }
 
     /// The smallest jug angle (0…180, 0.25° steps) at which a jug with this fill starts to pour.
     static func pourThreshold(_ jug: JugShape, fill: Double, step: Double = 0.25) -> Double {
         let inc: Double = max(0.05, step)
+        var scratch: [CGPoint] = []
         var a: Double = 0
         while a <= 180 {
-            if head(jug, angle: a, fill: fill) > 0 { return a }
+            if head(jug, angle: a, fill: fill, scratch: &scratch) > 0 { return a }
             a += inc
         }
         return 180
@@ -124,9 +132,19 @@ enum JugGeometry {
 
     /// How far the pivot must be raised above `at` so the rotated interior stays above `floorY`.
     static func liftToClear(_ jug: JugShape, angle: Double, at pivot: CGPoint, floorY: CGFloat) -> CGFloat {
-        let outline: [CGPoint] = transform(jug.outline, jug: jug, angle: angle, at: pivot)
-        var minY: CGFloat = outline[0].y
-        for p in outline where p.y < minY { minY = p.y }
+        // Same per-point arithmetic as `transform(_:jug:angle:at:)`, without building the rotated outline.
+        let pts: [CGPoint] = jug.outline
+        if pts.isEmpty { return 0 }
+        let r: Double = CoreMath.radians(angle)
+        let c: Double = cos(r)
+        let s: Double = sin(r)
+        var minY: CGFloat = CGFloat.greatestFiniteMagnitude
+        for p in pts {
+            let dx: Double = Double(p.x - jug.pivot.x)
+            let dy: Double = Double(p.y - jug.pivot.y)
+            let y: CGFloat = pivot.y + CGFloat(-dx * s + dy * c)
+            if y < minY { minY = y }
+        }
         return max(0, floorY - minY)
     }
 
@@ -154,6 +172,20 @@ enum JugGeometry {
             out.append(CGPoint(x: at.x + CGFloat(dx * c + dy * s), y: at.y + CGFloat(-dx * s + dy * c)))
         }
         return out
+    }
+
+    /// `transform(_:jug:angle:at:)` into a reused buffer (cleared first, capacity kept).
+    static func transform(_ pts: [CGPoint], jug: JugShape, angle: Double, at: CGPoint, into out: inout [CGPoint]) {
+        let r: Double = CoreMath.radians(angle)
+        let c: Double = cos(r)
+        let s: Double = sin(r)
+        out.removeAll(keepingCapacity: true)
+        out.reserveCapacity(pts.count)
+        for p in pts {
+            let dx: Double = Double(p.x - jug.pivot.x)
+            let dy: Double = Double(p.y - jug.pivot.y)
+            out.append(CGPoint(x: at.x + CGFloat(dx * c + dy * s), y: at.y + CGFloat(-dx * s + dy * c)))
+        }
     }
 
     /// Rotate world points clockwise by `angle` degrees about `center` (used to tilt a sand pile's surface).
@@ -233,9 +265,45 @@ enum CorePolygon {
         var it: Int = 0
         while it < 34 {
             let mid: CGFloat = (lo + hi) * 0.5
-            if CorePolygon.area(CorePolygon.clipBelow(p, level: mid)) < target { lo = mid } else { hi = mid }
+            if CorePolygon.areaBelow(p, level: mid) < target { lo = mid } else { hi = mid }
             it += 1
         }
         return (lo + hi) * 0.5
+    }
+
+    /// `area(clipBelow(p, level:))` without building the clipped polygon (round 4, QA P2-8: the bisection above runs
+    /// 34 times per sub-step). It walks the same vertices in the same order and sums the same shoelace terms in the
+    /// same order, so the result is bit-for-bit the same.
+    static func areaBelow(_ p: [CGPoint], level: CGFloat) -> CGFloat {
+        let n: Int = p.count
+        if n < 3 { return 0 }
+        var count: Int = 0
+        var first: CGPoint = CGPoint(x: 0, y: 0)
+        var prev: CGPoint = CGPoint(x: 0, y: 0)
+        var sum: CGFloat = 0
+        var i: Int = 0
+        while i < n {
+            let a: CGPoint = p[i]
+            let b: CGPoint = p[(i + 1) % n]
+            let aIn: Bool = a.y <= level
+            let bIn: Bool = b.y <= level
+            if aIn {
+                if count == 0 { first = a } else { sum += prev.x * a.y - a.x * prev.y }
+                prev = a
+                count += 1
+            }
+            if aIn != bIn {
+                let dy: CGFloat = b.y - a.y
+                let t: CGFloat = abs(dy) > 1e-12 ? (level - a.y) / dy : 0
+                let q: CGPoint = CGPoint(x: a.x + t * (b.x - a.x), y: level)
+                if count == 0 { first = q } else { sum += prev.x * q.y - q.x * prev.y }
+                prev = q
+                count += 1
+            }
+            i += 1
+        }
+        if count < 3 { return 0 }
+        sum += prev.x * first.y - first.x * prev.y
+        return abs(sum * 0.5)
     }
 }

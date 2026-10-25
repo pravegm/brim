@@ -19,6 +19,13 @@ struct GlassFrame {
     var safeX: ClosedRange<CGFloat>
     /// ROUND-3 decision 3: no text may reach above this world y (the crease band minus 8 pt).
     var keepOutTop: CGFloat
+    /// REVIEW-3 P1-1: a glass waiting in the next-glass slot is drawn as *waiting* — this scale (0.82 on the Duo,
+    /// 0.75 on phones), this many pt lower on the counter and this opaque. It grows and brightens as it slides to the stop.
+    var waitingScale: CGFloat = 0.82
+    var waitingDrop: CGFloat = 10
+    var waitingAlpha: CGFloat = 0.6
+    /// Fade the glass out (a waiting glass that would not fit inside the crop with a clear margin).
+    var suppressed: Bool = false
 }
 
 /// One glass on the counter. Two roots so the stream can be drawn *between* them:
@@ -102,6 +109,16 @@ final class SceneGlass {
     private var lastOverflowing = false
     private var simTime: Double = 0
     private let darkBackdrop: Bool
+    /// 0 = a glass to pour into, 1 = waiting in the slot (linear; eased when drawn). See `GlassFrame.waitingScale`.
+    private var waitAmount: CGFloat = 0
+    private var waitKnown = false
+    /// 1 = shown, 0 = suppressed (eased).
+    private var shown: CGFloat = 1
+    /// Current drawn scale (about the base) and how far below the counter line the base sits (waiting look).
+    private(set) var displayScale: CGFloat = 1
+    private(set) var dropY: CGFloat = 0
+    /// Seconds a glass takes to go from the waiting look to full size (its slide to the stop is 0.45 s).
+    static let waitBlendTime: CGFloat = 0.4
 
     private(set) var liquidColor: UIColor = .white
     private(set) var level: CGFloat = 0
@@ -262,7 +279,8 @@ final class SceneGlass {
         lineInk.zPosition = 3.2
         tab.lineWidth = 1.6
         tab.strokeColor = ink.withAlphaComponent(0.7)
-        tab.zPosition = 3.3
+        // Above the spill sheets (z 5…5.1) so a spill never hides the fill tab (REVIEW-3 P2-10).
+        tab.zPosition = 5.3
         overflow.strokeColor = .clear
         overflow.zPosition = 5
         overflowShine.fillColor = .clear
@@ -297,25 +315,38 @@ final class SceneGlass {
 
     // MARK: World-space helpers for the scene's FX
 
-    var rimWorld: CGPoint { CGPoint(x: x, y: counterY + base + rimY) }
-    var surfaceWorldY: CGFloat { counterY + base + level }
-    var outerRimHalfWidth: CGFloat { rimHW + wallW }
-    var innerRimHalfWidth: CGFloat { rimHW }
+    var rimWorld: CGPoint { CGPoint(x: x, y: counterY - dropY + (base + rimY) * displayScale) }
+    var surfaceWorldY: CGFloat { counterY - dropY + (base + level) * displayScale }
+    var outerRimHalfWidth: CGFloat { (rimHW + wallW) * displayScale }
+    var innerRimHalfWidth: CGFloat { rimHW * displayScale }
+    /// 0…1, how much of the waiting look the glass shows (eased).
+    var waitingLook: CGFloat {
+        let u = min(max(waitAmount, 0), 1)
+        return u * u * (3 - 2 * u)
+    }
+    /// Current drawn opacity of the whole glass (waiting look × suppression).
+    var drawnAlpha: CGFloat { back.alpha }
     /// Liquid half-width at the current level (for splashes that must stay inside the mouth).
     var surfaceHalfWidth: CGFloat { ScenePaths.halfWidth(profile, at: level) }
     /// True once the glass has stopped sliding (used to place the coaster under the pour spot).
     var isStill: Bool { velocityValid && abs(lastVX) < 4 }
+    /// Half-width of the base in the glass's LOCAL units (multiply by `displayScale` for world).
     var baseOuterHalfWidth: CGFloat { (isStemmed ? footHW : (profile.first?.x ?? 20) + wallW) }
     var velocityX: CGFloat { velocityValid ? lastVX : 0 }
     /// Spilled and still dripping (the wet glass leaving).
     var isWet: Bool { simTime < wetUntil }
-    /// World rect of the glass at rest (walls, foot, mug handle, rim), for UI keep-outs.
+    /// World rect of the glass at rest as drawn (walls, foot, mug handle, rim; the waiting glass's smaller size and
+    /// lower spot included), for UI keep-outs.
     var worldFrame: CGRect {
-        let left = maxHW + (hasHandle ? 30 : 0)
-        let right = max(maxHW, footHW)
-        return CGRect(x: x - max(left, footHW), y: counterY - 6, width: max(left, footHW) + right,
-                      height: base + rimY + 12)
+        let k = displayScale
+        let left = max(maxHW + (hasHandle ? 30 : 0), footHW) * k
+        let right = max(maxHW, footHW) * k
+        return CGRect(x: x - left, y: counterY - dropY - 6, width: left + right,
+                      height: (base + rimY) * k + 12)
     }
+
+    /// How far the glass reaches left of its centre line in LOCAL units (walls, foot, mug handle).
+    var localLeftHalfWidth: CGFloat { max(maxHW + (hasHandle ? 30 : 0), footHW) }
 
     /// 0…1 across the liquid surface if `worldX` is inside the mouth, else nil.
     func surfaceFraction(worldX: CGFloat) -> CGFloat? {
@@ -415,6 +446,35 @@ final class SceneGlass {
         if g.overflowing { markWet(seconds: 1.6) }
         lastOverflowing = g.overflowing
 
+        // Waiting look (REVIEW-3 P1-1): a glass born in the slot starts small and dim; it grows and brightens over
+        // `waitBlendTime` as it slides to the stop.
+        let waitTarget: CGFloat = g.isWaitingInSlot ? 1 : 0
+        let showTarget: CGFloat = f.suppressed ? 0 : 1
+        if !waitKnown {
+            waitKnown = true
+            waitAmount = waitTarget
+            shown = showTarget
+        } else if dt > 0 {
+            let step = dt / SceneGlass.waitBlendTime
+            waitAmount = waitTarget > waitAmount ? min(waitTarget, waitAmount + step) : max(waitTarget, waitAmount - step)
+        }
+        if dt > 0 {
+            let step = dt * 5
+            shown = showTarget > shown ? min(showTarget, shown + step) : max(showTarget, shown - step)
+        } else if !f.advanced {
+            // First draw / a reset frame: no fade in or out.
+            shown = showTarget
+        }
+        let e = waitingLook
+        displayScale = 1 - e * (1 - min(max(f.waitingScale, 0.3), 1))
+        dropY = e * f.waitingDrop
+        let alpha = (1 - e * (1 - min(max(f.waitingAlpha, 0), 1))) * shown
+        back.alpha = alpha
+        front.alpha = alpha
+        let hide = alpha < 0.005
+        back.isHidden = hide
+        front.isHidden = hide
+
         placeRoots(g, f)
         drawLiquid(h: h, foamH: foamH, g: g, dt: dt, time: f.time, reduceMotion: f.reduceMotion)
         drawPlume(h: h, f, thick: SceneStream.isThick(g.liquid.id) || g.liquid.id == .sand)
@@ -440,15 +500,17 @@ final class SceneGlass {
                 celebrateAt = nil
             }
         }
-        let pos = CGPoint(x: g.x, y: f.counterY + base * sy + dy)
+        // The waiting look scales the glass about its base and sets it a little lower (nearer the player).
+        let ks = displayScale
+        let pos = CGPoint(x: g.x, y: f.counterY - dropY + base * sy * ks + dy)
         back.position = pos
         front.position = pos
-        back.xScale = sx
-        back.yScale = sy
-        front.xScale = sx
-        front.yScale = sy
+        back.xScale = sx * ks
+        back.yScale = sy * ks
+        front.xScale = sx * ks
+        front.yScale = sy * ks
         // The ring/shadow stay on the counter while the glass is in the air.
-        shadow.position = CGPoint(x: 0, y: -dy / max(sy, 0.01))
+        shadow.position = CGPoint(x: 0, y: -dy / max(sy * ks, 0.01))
         shadow.alpha = max(0.45, 1 - dy / 26)
     }
 
@@ -607,10 +669,12 @@ final class SceneGlass {
             surfaceFlash.isHidden = true
             return
         }
+        // REVIEW-3 P2-8: inside the glass the bloom stays ≤ 25 % and hugs the surface (it used to fill the headspace
+        // with white, "a glass of milk"); the big glow lives outside, above the rim (SceneFX.perfectBurst).
         let hw = ScenePaths.halfWidth(profile, at: level)
         surfaceFlash.isHidden = false
-        surfaceFlash.alpha = a
-        surfaceFlash.size = CGSize(width: hw * 2.6, height: 34 + 20 * a)
+        surfaceFlash.alpha = a * 0.25
+        surfaceFlash.size = CGSize(width: hw * 1.9, height: 14 + 8 * a)
         surfaceFlash.position = CGPoint(x: 0, y: level)
     }
 

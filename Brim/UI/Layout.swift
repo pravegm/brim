@@ -109,6 +109,9 @@ struct PlayAnchors: Equatable {
     var jug: CGRect
     /// The glass under the spout, if any.
     var glass: GlassAnchor?
+    /// REVIEW-3 P1-1: the next glass waiting on the counter (world, glass and coaster), if any. Callouts and hints
+    /// treat it as occupied. From `GameScene.waitingGlassWorldFrame` when the scene has one, else the snapshot.
+    var waiting: CGRect? = nil
 }
 
 struct GlassAnchor: Equatable {
@@ -164,19 +167,74 @@ enum AnchorMath {
                                 rimY: floor + g.shape.interiorHeight, baseY: layout.counterY,
                                 filling: g.phase == .filling)
         }
-        return PlayAnchors(jug: jug, glass: glass)
+        var waiting: CGRect?
+        if let w = s.glasses.first(where: { $0.isWaitingInSlot }) {
+            waiting = waitingFrame(w, layout: layout)
+        }
+        return PlayAnchors(jug: jug, glass: glass, waiting: waiting)
+    }
+
+    /// The waiting glass's world frame at full size (conservative: the scene may draw it smaller), with its coaster.
+    static func waitingFrame(_ g: GlassState, layout: WorldLayout) -> CGRect {
+        let half = (g.shape.profile.map { $0.x }.max() ?? 40) + g.shape.wall
+        let height = g.shape.baseThickness + g.shape.interiorHeight
+        // The coaster is ~120 pt wide and reaches ~16 pt under the counter line.
+        let width = max(2 * half, 120)
+        return CGRect(x: g.x - width / 2, y: layout.counterY - 16, width: width, height: height + 16)
     }
 
     /// Rounds world values to 2 pt so the HUD only republishes on visible changes.
     static func quantized(_ a: PlayAnchors) -> PlayAnchors {
         func q(_ v: CGFloat) -> CGFloat { (v / 2).rounded() * 2 }
+        func qr(_ r: CGRect) -> CGRect { CGRect(x: q(r.minX), y: q(r.minY), width: q(r.width), height: q(r.height)) }
         var out = a
-        out.jug = CGRect(x: q(a.jug.minX), y: q(a.jug.minY), width: q(a.jug.width), height: q(a.jug.height))
+        out.jug = qr(a.jug)
         if var g = a.glass {
             g.x = q(g.x); g.lineY = q(g.lineY); g.halfWidthAtLine = q(g.halfWidthAtLine); g.rimY = q(g.rimY)
             out.glass = g
         }
+        out.waiting = a.waiting.map { qr($0) }
         return out
+    }
+}
+
+// MARK: - "Fill to here" placement (REVIEW-3 P1-1)
+
+/// Where the "Fill to here" pill goes: beside the glass at its line (right first: on the Duo that's the free counter
+/// to the right of the tab), else above the rim, never over the waiting glass, never off screen, never on the fold.
+/// Pure; tested.
+enum CalloutPlacement {
+    enum Side: Equatable { case right, left, above }
+
+    static let pillSize = CGSize(width: 128, height: 30)
+    /// Clear room past the glass wall on the right, for the scene's fill-line tab.
+    static let tabRoom: CGFloat = 22
+
+    static func place(glass: GlassAnchor, waiting: CGRect?, info: CanvasInfo) -> (center: CGPoint, side: Side) {
+        let m = info.mapper
+        let size = pillSize
+        let minY = info.hasFold ? info.bottomHalfTop + 8 + size.height / 2 : info.hudTop + HUDMetrics.rowHeight + 8
+        let lineY = max(m.y(glass.lineY), minY)
+        let left = m.x(glass.x - glass.halfWidthAtLine)
+        let right = m.x(glass.x + glass.halfWidthAtLine)
+        let blocked = waiting.map { m.rect($0).insetBy(dx: -6, dy: -6) }
+        let minX = info.sidePad, maxX = info.size.width - info.sidePad
+        func fits(_ c: CGPoint) -> Bool {
+            let r = CGRect(x: c.x - size.width / 2, y: c.y - size.height / 2, width: size.width, height: size.height)
+            if r.minX < minX - 0.5 || r.maxX > maxX + 0.5 { return false }
+            if c.y < minY - 0.5 { return false }
+            if let blocked, r.intersects(blocked) { return false }
+            return true
+        }
+        let onRight = CGPoint(x: right + tabRoom + size.width / 2, y: lineY)
+        if fits(onRight) { return (onRight, .right) }
+        let onLeft = CGPoint(x: left - 10 - size.width / 2, y: lineY)
+        if fits(onLeft) { return (onLeft, .left) }
+        // Above the rim, centred on the glass (pulled inside the screen edges).
+        let rimY = m.y(glass.rimY)
+        let x = min(max(m.x(glass.x), minX + size.width / 2), maxX - size.width / 2)
+        let above = CGPoint(x: x, y: max(rimY - 14 - size.height / 2, minY))
+        return (above, .above)
     }
 }
 

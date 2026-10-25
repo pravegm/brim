@@ -112,6 +112,7 @@ final class GameScene: SKScene {
     private var slotX: CGFloat?
     private var slotScale: CGFloat = 1
     private var slotAlpha: CGFloat = 0
+    private var slotDrop: CGFloat = 0
     private var lastPhase: [Int: GlassPhase] = [:]
     private var spillColor: UIColor = SceneColor.coral
     private var lastCounterSplash: Double = -10
@@ -121,6 +122,16 @@ final class GameScene: SKScene {
     private var frozen = false
 
     static let beltPitch: CGFloat = 26
+    /// REVIEW-3 P1-1 / P1-4: the next glass is drawn as *waiting*: smaller (0.82 Duo, 0.75 phones), set this much
+    /// lower on the counter, at this opacity, on a plain coaster. It grows and brightens as it slides to the stop.
+    /// Core places the slot for exactly these scales (`NextGlassSlot`), so they come from `CoreTuning`.
+    static let waitingScaleFold = CGFloat(CoreTuning.nextGlassScaleFold)
+    static let waitingScalePhone = CGFloat(CoreTuning.nextGlassScalePhone)
+    static let waitingDropFold: CGFloat = 10
+    static let waitingDropPhone: CGFloat = 8
+    static let waitingAlpha: CGFloat = 0.6
+    /// The waiting look's scale on this canvas.
+    var waitingScale: CGFloat { layout.hasFold ? GameScene.waitingScaleFold : GameScene.waitingScalePhone }
 
     init(layout: WorldLayout) {
         self.layout = layout
@@ -208,6 +219,8 @@ final class GameScene: SKScene {
             c.position = CGPoint(x: layout.jugPivot.x, y: layout.counterY + 2)
             content.addChild(c)
         }
+        // The next-glass slot's coaster is plain: no inner ring (REVIEW-3 P1-1, "waiting", not "pour here").
+        slotCoasterInner.isHidden = true
 
         // Puddles lie UNDER the coasters (REVIEW-2 P1-4): a spill spreads around the coaster, never over it.
         fx.puddleLayer.zPosition = -25
@@ -267,6 +280,7 @@ final class GameScene: SKScene {
         slotCoaster.alpha = 0
         slotAlpha = 0
         slotX = nil
+        slotDrop = 0
         lastPhase.removeAll()
         activeGlassWorldFrame = nil
         waitingGlassWorldFrame = nil
@@ -290,10 +304,12 @@ final class GameScene: SKScene {
         lastUpdateTime = currentTime
 
         frameCount += 1
+        #if DEBUG
         if frameCount == 120 {
             print("BRIM-T frame 120")
             fflush(stdout)
         }
+        #endif
         if backdropScale == 0 { buildBackdrop(scale: 2) }
 
         var events: [GameEvent] = []
@@ -370,15 +386,27 @@ final class GameScene: SKScene {
             view.back.zPosition = CGFloat(i) * 0.25
             view.front.zPosition = CGFloat(i) * 0.25
             measureBand(g)
-            let gf = GlassFrame(counterY: cy, dt: dt, time: s.time, pouring: pouring, tail: tail, advanced: advanced,
+            // REVIEW-3 P1-4 safety net: a waiting glass PARKED within 4 pt of the crop's edge fades out (Core parks it
+            // ≥ 16 pt clear of the coaster; this only bites on an unexpected canvas or glass). Sliding in from off
+            // screen is not "parked".
+            var suppress = false
+            if g.isWaitingInSlot && view.isStill {
+                let left = g.x - view.localLeftHalfWidth * waitingScale
+                suppress = left < layout.visibleRect.minX + 4
+            }
+            var gf = GlassFrame(counterY: cy, dt: dt, time: s.time, pouring: pouring, tail: tail, advanced: advanced,
                                 reduceMotion: reduceMotion, band: bandEstimate[g.id] ?? baseBand,
                                 projected: g.id == activeID ? s.telemetry.projectedDistanceToLine : nil,
                                 safeX: safeX, keepOutTop: foldKeepOutTop)
+            gf.waitingScale = waitingScale
+            gf.waitingDrop = layout.hasFold ? GameScene.waitingDropFold : GameScene.waitingDropPhone
+            gf.waitingAlpha = GameScene.waitingAlpha
+            gf.suppressed = suppress
             view.update(g, gf)
             if g.id == activeID {
                 activeLineWorld = CGPoint(x: g.x + view.outerRimHalfWidth + 12, y: cy + view.base + g.lineHeight)
                 if view.isStill { activeGlassWorldFrame = view.worldFrame }
-            } else if g.isWaitingInSlot && view.isStill && view.stillFor > 0.1 {
+            } else if g.isWaitingInSlot && !suppress && view.isStill && view.stillFor > 0.1 {
                 waitingID = g.id
                 waitingGlassWorldFrame = view.worldFrame
             }
@@ -450,7 +478,7 @@ final class GameScene: SKScene {
         for g in s.glasses where g.phase == .filling {
             if let v = glasses[g.id], v.isStill {
                 target = g.x
-                targetScale = min(1.7, max(0.8, (v.baseOuterHalfWidth * 2 + 48) / 120))
+                targetScale = min(1.7, max(0.8, (v.baseOuterHalfWidth * 2 + 48) / 120 * v.displayScale))
                 break
             }
         }
@@ -478,9 +506,10 @@ final class GameScene: SKScene {
         }
         slotCoaster.isHidden = false
         if let id = waitingID, let v = glasses[id] {
-            if slotX == nil { slotScale = min(1.5, max(0.75, (v.baseOuterHalfWidth * 2 + 40) / 120)) }
+            let target = slotCoasterScale(for: v)
+            if slotX == nil { slotScale = target }
             slotX = v.x
-            let target = min(1.5, max(0.75, (v.baseOuterHalfWidth * 2 + 40) / 120))
+            slotDrop = v.dropY
             if dt > 0 { slotScale += (target - slotScale) * min(1, dt * 8) }
         }
         guard let sx = slotX else {
@@ -497,22 +526,37 @@ final class GameScene: SKScene {
         } else if waitingID != nil && slotAlpha < 0.01 {
             slotAlpha = 1
         }
-        slotCoaster.alpha = slotAlpha
-        slotCoaster.position = CGPoint(x: sx, y: layout.counterY + 2)
+        slotCoaster.alpha = slotAlpha * GameScene.slotCoasterAlpha
+        slotCoaster.position = CGPoint(x: sx, y: layout.counterY + 2 - slotDrop)
         slotCoaster.setScale(slotScale)
+    }
+
+    /// The waiting glass's plain coaster is about 0.9× the glass's own coaster, scaled with the glass, and never runs
+    /// off the crop's left edge (it shrinks to keep ≥ 6 pt clear, but stays ≥ 6 pt wider than the glass's base).
+    static let slotCoasterAlpha: CGFloat = 0.85
+
+    private func slotCoasterScale(for v: SceneGlass) -> CGFloat {
+        let k = v.displayScale
+        var target = (v.baseOuterHalfWidth * 2 + 36) / 120 * k
+        let room = (v.x - (layout.visibleRect.minX + 6)) / 60
+        let minFit = (v.baseOuterHalfWidth * k + 6) / 60
+        target = min(target, room)
+        target = max(target, minFit)
+        return min(1.4, max(0.5, target))
     }
 
     /// Duo: the raised half casts a soft shadow onto the counter that deepens as the lid lifts (REVIEW-2 P2-3).
     private func updateLiftShadow(_ s: GameSnapshot, dt: CGFloat) {
         guard layout.hasFold else { return }
-        let lift = CGFloat(min(max(s.jug.angle / 90, 0), 1))
-        let target = 0.1 + 0.4 * lift
+        // Round 4 (REVIEW-3 P2-9: "still doesn't react"): a deeper, longer shadow, so the lift reads in a still.
+        let lift = CGFloat(min(max(s.jug.angle / 70, 0), 1))
+        let target = 0.12 + 0.62 * lift
         if dt > 0 {
             liftShadow.alpha += (target - liftShadow.alpha) * min(1, dt * 6)
         } else if liftShadow.alpha <= 0.001 {
             liftShadow.alpha = target
         }
-        liftShadow.yScale = 0.7 + 0.5 * lift
+        liftShadow.yScale = 0.7 + 0.75 * lift
     }
 
     /// Conveyor: the belt slats move with whatever glass is riding it.
@@ -717,7 +761,8 @@ final class GameScene: SKScene {
             tex = t
         } else {
             tex = SceneArt.backdrop(layout: layout, palette: palette, dailyNumber: effectiveDaily, scale: scale)
-            if backdropCache.count >= 3 { backdropCache.removeAll() }
+            // ~23 MB per full-canvas texture at 3×: keep at most two looks (QA-1 P2-13).
+            if backdropCache.count >= 2 { backdropCache.removeAll() }
             backdropCache[key] = tex
         }
         backdropScale = scale

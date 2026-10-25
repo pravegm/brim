@@ -182,11 +182,19 @@ enum CoreTuning {
     static let placementAngleSpan: Double = 45
     /// Round 3: the next glass waits on the counter (phase `.arriving`, `lineOpacity` 0, standing still) at this
     /// world x, then slides into place as the judged one leaves while the one after slides into the slot. Nudged right
-    /// so it is never cropped on narrow phones (outer edge ≥ visibleRect.minX + `nextGlassEdgeMargin`), and left so it
-    /// keeps `nextGlassGap` from the glass at the stop. Not used on conveyors (glasses ride the belt) or in practice.
+    /// so it is never cropped on narrow phones, and left so it keeps `nextGlassGap` from the glass at the stop. Not used
+    /// on conveyors (glasses ride the belt) or in practice.
+    /// Round 4 (REVIEW-3 P1-4): `nextGlassEdgeMargin` is measured from `visibleRect.minX` to the slot's outermost drawn
+    /// edge — its COASTER (or the scaled glass / mug handle if wider) — see `NextGlassSlot`. When it can't be kept
+    /// (narrow phone + wide glasses) there is no waiting glass for that order.
     static let nextGlassX: Double = 165
-    static let nextGlassEdgeMargin: Double = 4
+    static let nextGlassEdgeMargin: Double = 16
     static let nextGlassGap: Double = 8
+    /// Round 4 (REVIEW-3 P1-1 / P1-4): the waiting glass is information, not a target — Scene draws it (and may draw
+    /// its coaster) at this scale, about its base centre: 0.82 on the Duo, 0.75 on phones without a fold. Core places
+    /// the slot for exactly these scales (`NextGlassSlot.scale(hasFold:)`).
+    static let nextGlassScaleFold: Double = 0.82
+    static let nextGlassScalePhone: Double = 0.75
     /// Round 3 (pause / resume): after `requireFlat()`, the glass under the spout is not judged by stopping (no
     /// lock-in, no idle serve) until the player pours again. If they never do, it is served after this long flat.
     static let resumeServeIdle: Double = 4.0

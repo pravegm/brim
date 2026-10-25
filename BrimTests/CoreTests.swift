@@ -507,18 +507,19 @@ struct CoreTests {
                 Issue.record("no waiting or active glass")
                 continue
             }
-            var wWidest: CGFloat = 0
-            for p in w.shape.profile where p.x > wWidest { wWidest = p.x }
-            var aWidest: CGFloat = 0
-            for p in a.shape.profile where p.x > aWidest { aWidest = p.x }
-            let wHalf: CGFloat = wWidest + w.shape.wall
-            let aHalf: CGFloat = aWidest + a.shape.wall
+            // Round 4: the waiting glass is drawn smaller; its coaster keeps 16 pt from the visible edge.
+            let wLeft: Double = NextGlassSlot.leftReach(w.shape, hasFold: layout.hasFold)
+            let wRight: Double = NextGlassSlot.rightReach(w.shape, hasFold: layout.hasFold)
+            let aLeft: Double = NextGlassSlot.bodyHalfWidth(a.shape) + NextGlassSlot.handleReach(a.shape)
             if layout.hasFold {
                 #expect(abs(w.x - CGFloat(CoreTuning.nextGlassX)) < 0.5, "slot at \(w.x)")
             }
-            // Fully on screen (nudged right on narrow phones), clear of the glass at the stop, nothing poured in.
-            #expect(w.x - wHalf >= layout.visibleRect.minX, "slot glass cropped at \(w.x - wHalf)")
-            #expect(w.x + wHalf + CGFloat(CoreTuning.nextGlassGap) <= a.x - aHalf + 0.01, "slot overlaps the stop")
+            // Fully on screen with the margin (nudged right on narrow phones), clear of the glass at the stop, nothing
+            // poured in.
+            let leftEdge: Double = Double(w.x) - wLeft
+            #expect(leftEdge >= Double(layout.visibleRect.minX) + CoreTuning.nextGlassEdgeMargin - 0.01,
+                    "slot cropped at \(leftEdge)")
+            #expect(Double(w.x) + wRight + CoreTuning.nextGlassGap <= Double(a.x) - aLeft + 0.01, "slot overlaps the stop")
             #expect(w.lineOpacity == 0)
             #expect(w.phase == .arriving)
             #expect(!a.isWaitingInSlot)
@@ -563,6 +564,231 @@ struct CoreTests {
                 t += 1.0 / 60.0
             }
             #expect(!sawWaiting, "\(mode) used the slot")
+        }
+    }
+
+    // MARK: Next-glass slot margin (round 4, REVIEW-3 P1-4)
+
+    /// Every canvas the game can be played on: the Duo inner display (fold), the Duo's book-pose touch column and
+    /// cover, and today's iPhones (no fold).
+    private func supportedCanvases() -> [(name: String, layout: WorldLayout)] {
+        return [
+            (name: "duo-inner", layout: WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)),
+            (name: "duo-book-touch", layout: WorldLayout.make(canvas: CGSize(width: 468, height: 669), hasFold: false)),
+            (name: "duo-cover", layout: WorldLayout.make(canvas: CGSize(width: 466, height: 678), hasFold: false)),
+            (name: "iphone-se", layout: WorldLayout.make(canvas: CGSize(width: 375, height: 667), hasFold: false)),
+            (name: "iphone-mini", layout: WorldLayout.make(canvas: CGSize(width: 375, height: 812), hasFold: false)),
+            (name: "iphone-16", layout: WorldLayout.make(canvas: CGSize(width: 393, height: 852), hasFold: false)),
+            (name: "iphone-18-pro", layout: WorldLayout.make(canvas: CGSize(width: 402, height: 874), hasFold: false)),
+            (name: "iphone-air", layout: WorldLayout.make(canvas: CGSize(width: 420, height: 912), hasFold: false)),
+            (name: "iphone-pro-max", layout: WorldLayout.make(canvas: CGSize(width: 440, height: 956), hasFold: false)),
+        ]
+    }
+
+    @Test func nextGlassSlotKeepsSixteenPointsToItsCoasterOnEveryCanvas() {
+        #expect(CoreTuning.nextGlassEdgeMargin >= 16)
+        let margin: Double = CoreTuning.nextGlassEdgeMargin
+        let stopXs: [Double] = [340, 356, 372]
+        let tumbler: GlassShape = GlassCatalog.shape("tumbler")
+        var problems: [String] = []
+        for canvas in supportedCanvases() {
+            let layout: WorldLayout = canvas.layout
+            let fold: Bool = layout.hasFold
+            let minX: Double = Double(layout.visibleRect.minX)
+            let scale: Double = NextGlassSlot.scale(hasFold: fold)
+            for slot in GlassCatalog.all {
+                let coaster: Double = NextGlassSlot.coasterHalfWidth(slot)
+                let glassLeft: Double = (NextGlassSlot.bodyHalfWidth(slot) + NextGlassSlot.handleReach(slot)) * scale
+                for stop in GlassCatalog.all {
+                    for stopX in stopXs {
+                        let placed: Double? = NextGlassSlot.x(for: slot, layout: layout, stop: (x: stopX, shape: stop))
+                        guard let x = placed else {
+                            // The Duo is the product: there the slot always has room.
+                            if fold { problems.append("\(canvas.name): no room for \(slot.id) behind \(stop.id) @\(stopX)") }
+                            continue
+                        }
+                        // Measured to the coaster's edge (and to the scaled glass / mug handle if that reaches further).
+                        let edge: Double = min(x - coaster, x - glassLeft)
+                        if edge < minX + margin - 1e-9 {
+                            problems.append("\(canvas.name): \(slot.id) edge \(edge) < \(minX + margin)")
+                        }
+                        let stopLeft: Double = stopX - NextGlassSlot.bodyHalfWidth(stop) - NextGlassSlot.handleReach(stop)
+                        let slotRight: Double = x + NextGlassSlot.bodyHalfWidth(slot) * scale
+                        if slotRight + CoreTuning.nextGlassGap > stopLeft + 1e-9 {
+                            problems.append("\(canvas.name): \(slot.id) touches \(stop.id) @\(stopX)")
+                        }
+                    }
+                }
+            }
+            // The everyday case has room on every canvas: a tumbler waiting behind a tumbler.
+            for stopX in stopXs {
+                let placed: Double? = NextGlassSlot.x(for: tumbler, layout: layout, stop: (x: stopX, shape: tumbler))
+                if placed == nil { problems.append("\(canvas.name): no tumbler slot @\(stopX)") }
+            }
+        }
+        #expect(problems == [String]())
+    }
+
+    @Test func waitingGlassesInRealRunsKeepTheMargin() {
+        var modes: [GameMode] = [GameMode.rush, GameMode.daily(0), GameMode.daily(123), GameMode.daily(297)]
+        for l in LevelCatalog.levels where l.conveyorSpeed == nil && l.index % 2 == 1 { modes.append(GameMode.shift(l.id)) }
+        let canvases: [WorldLayout] = [
+            duoLayout(),
+            phoneLayout(),
+            WorldLayout.make(canvas: CGSize(width: 375, height: 812), hasFold: false),
+        ]
+        var problems: [String] = []
+        var checked: Int = 0
+        for layout in canvases {
+            let limit: Double = Double(layout.visibleRect.minX) + CoreTuning.nextGlassEdgeMargin - 0.01
+            for mode in modes {
+                let s: GameSession = GameSession(mode: mode, layout: layout, seed: 11)
+                var stopped: Bool = false
+                var glassID: Int = -1
+                var lastX: [Int: CGFloat] = [:]
+                var t: Double = 0
+                while t < 12 && !s.isFinished {
+                    var tilt: Double = 0
+                    if let g = activeGlass(s) {
+                        if g.id != glassID {
+                            glassID = g.id
+                            stopped = false
+                        }
+                        tilt = carefulTilt(s, offset: 15, stopAt: -0.01, stopped: &stopped)
+                    }
+                    s.step(dt: 1.0 / 60.0, tilt: tilt)
+                    for w in s.snapshot.glasses where w.isWaitingInSlot {
+                        if let prev = lastX[w.id], abs(prev - w.x) < 0.001 {
+                            // Standing in the slot.
+                            checked += 1
+                            let edge: Double = Double(w.x) - NextGlassSlot.leftReach(w.shape, hasFold: layout.hasFold)
+                            if edge < limit { problems.append("\(mode) \(w.shape.id): edge \(edge) < \(limit)") }
+                        }
+                        lastX[w.id] = w.x
+                    }
+                    t += 1.0 / 60.0
+                }
+            }
+        }
+        #expect(checked > 200, "slot frames checked \(checked)")
+        #expect(problems.isEmpty, "\(problems.prefix(5))")
+    }
+
+    @Test func upcomingOrderNamesTheNextGlass() {
+        guard let level = LevelCatalog.level("1-2") else {
+            Issue.record("no level 1-2")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift("1-2"), layout: duoLayout(), seed: 3)
+        let expected: GlassOrder? = level.orders[1]
+        let atStart: GlassOrder? = s.upcomingOrder
+        #expect(atStart == expected)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.2, tilt: 0, events: &events)
+        let waiting: [GlassState] = s.snapshot.glasses.filter { (g: GlassState) -> Bool in g.isWaitingInSlot }
+        #expect(waiting.count == 1)
+        let later: GlassOrder? = s.upcomingOrder
+        #expect(later == expected)
+        if let w = waiting.first { #expect(w.shape.id == level.orders[1].glass) }
+    }
+
+    @Test func adoptCanvasKeepsTheRunAndFollowsTheFold() {
+        let s: GameSession = GameSession(mode: .shift("1-1"), layout: duoLayout(), seed: 3)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        let before: Double = s.snapshot.time
+        let firstGlass: Int? = activeGlass(s)?.id
+        // Book pose, touch column: no fold, so no flat gate.
+        s.adoptCanvas(WorldLayout.make(canvas: CGSize(width: 468, height: 669), hasFold: false))
+        #expect(s.layout.hasFold == false)
+        #expect(s.snapshot.time == before)
+        s.requireFlat()
+        #expect(s.snapshot.needsFlat == false)
+        // Back to tabletop: the gate works again on the next resume.
+        s.adoptCanvas(duoLayout())
+        s.requireFlat()
+        #expect(s.snapshot.needsFlat)
+        #expect(s.layout.size == duoLayout().size)
+        let sameGlass: Int? = activeGlass(s)?.id
+        #expect(sameGlass == firstGlass)
+    }
+
+    // MARK: Hot path (round 4, QA P2-8): no allocations, identical numbers
+
+    @Test func allocationFreeAreaAndLevelAreBitForBitTheSame() {
+        let jug: JugShape = JugGeometry.standard
+        var mismatches: [String] = []
+        var scratch: [CGPoint] = []
+        var angle: Double = 0
+        while angle <= 150 {
+            let outline: [CGPoint] = JugGeometry.transform(jug.outline, jug: jug, angle: angle, at: CGPoint(x: 0, y: 0))
+            var lo: CGFloat = outline[0].y
+            var hi: CGFloat = outline[0].y
+            for p in outline {
+                lo = min(lo, p.y)
+                hi = max(hi, p.y)
+            }
+            var k: Int = 0
+            while k <= 40 {
+                let level: CGFloat = lo - 5 + (hi - lo + 10) * CGFloat(k) / 40
+                let fast: CGFloat = CorePolygon.areaBelow(outline, level: level)
+                let slow: CGFloat = CorePolygon.area(CorePolygon.clipBelow(outline, level: level))
+                if fast != slow { mismatches.append("area a=\(angle) level=\(level): \(fast) vs \(slow)") }
+                k += 1
+            }
+            for fill in [0.0, 0.025, 0.3, 0.75, 1.0] {
+                // The round-3 bisection, verbatim, as the reference.
+                let volume: CGFloat = CGFloat(fill) * jug.capacity
+                var rlo: CGFloat = lo
+                var rhi: CGFloat = hi
+                var it: Int = 0
+                while it < 34 {
+                    let mid: CGFloat = (rlo + rhi) * 0.5
+                    if CorePolygon.area(CorePolygon.clipBelow(outline, level: mid)) < volume { rlo = mid } else { rhi = mid }
+                    it += 1
+                }
+                let total: CGFloat = CorePolygon.area(outline)
+                let reference: CGFloat = volume <= 0 ? lo : (volume >= total ? hi : (rlo + rhi) * 0.5)
+                let level: CGFloat = CorePolygon.levelForArea(outline, area: volume)
+                if level != reference { mismatches.append("level a=\(angle) fill=\(fill): \(level) vs \(reference)") }
+                let headA: CGFloat = JugGeometry.head(jug, angle: angle, fill: fill, scratch: &scratch)
+                let headB: CGFloat = JugGeometry.head(jug, angle: angle, fill: fill)
+                if headA != headB { mismatches.append("head a=\(angle) fill=\(fill)") }
+            }
+            angle += 7.5
+        }
+        #expect(mismatches == [String]())
+    }
+
+    @Test func theSameSeedAndInputsGiveTheSameRun() {
+        func play(_ layout: WorldLayout) -> (Int, Double, Int, [Judgement]) {
+            let s: GameSession = GameSession(mode: .rush, layout: layout, seed: 77)
+            var stopped: Bool = false
+            var glassID: Int = -1
+            var t: Double = 0
+            while t < 20 && !s.isFinished {
+                var tilt: Double = 0
+                if let g = activeGlass(s) {
+                    if g.id != glassID {
+                        glassID = g.id
+                        stopped = false
+                    }
+                    tilt = carefulTilt(s, offset: 18, stopAt: -0.01, stopped: &stopped)
+                }
+                s.step(dt: 1.0 / 60.0, tilt: tilt)
+                t += 1.0 / 60.0
+            }
+            let judged: [Judgement] = s.result?.judgements ?? []
+            return (s.snapshot.score, s.snapshot.jug.fill, s.snapshot.ordersDone, judged)
+        }
+        for layout in [duoLayout(), phoneLayout()] {
+            let a = play(layout)
+            let b = play(layout)
+            #expect(a.0 == b.0)
+            #expect(a.1 == b.1)
+            #expect(a.2 == b.2)
+            #expect(a.3 == b.3)
+            #expect(a.2 >= 2, "only \(a.2) glasses in 20 s")
         }
     }
 

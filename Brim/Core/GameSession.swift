@@ -12,10 +12,22 @@ final class GameSession {
     // MARK: - Public surface
 
     let mode: GameMode
-    let layout: WorldLayout
+    /// The world is the same on every canvas; `adoptCanvas(_:)` can update `visibleRect` and `hasFold` mid-run.
+    private(set) var layout: WorldLayout
     private(set) var snapshot: GameSnapshot
     private(set) var result: RunResult?
     var isFinished: Bool { return phase == .finished }
+
+    /// Round 4 (REVIEW-3 P1-4 fallback): the order after the glass at the stop, when it is known without drawing from
+    /// the RNG: the waiting glass's, else a plan already generated, else the next fixed order (shifts, Daily). Lets
+    /// the HUD show a small "next" icon when no waiting glass fits on screen (no `isWaitingInSlot` glass in the
+    /// snapshot). nil after the last order, and in Rush / practice until the next plan exists.
+    var upcomingOrder: GlassOrder? {
+        if let wi = waitingIndex() { return glasses[wi].order }
+        if let p = peekedPlan { return p.order }
+        if fixedOrderCount != nil && nextPlanIndex < plans.count { return plans[nextPlanIndex].order }
+        return nil
+    }
 
     // MARK: - Internal types
 
@@ -110,7 +122,7 @@ final class GameSession {
     private var time: Double = 0
     /// The flat gate (Duo only): no outflow, jug upright, patience paused, until the lid tilt is inside the dead zone.
     private var needsFlat: Bool = false
-    private let usesFlatGate: Bool
+    private var usesFlatGate: Bool
 
     // Jug
     private var jugLiquid: Liquid
@@ -134,6 +146,16 @@ final class GameSession {
     private var exitDY: Double = 0
     /// Seconds since the jug could last deliver (head > 0); the spout rope snaps after `CoreTuning.ropeMaxTime`.
     private var headlessTime: Double = 0
+
+    // Hot-path caches (round 4, QA P2-8; results are identical, only repeated work and allocations are skipped)
+    /// The angle `lipX/lipY/exitDX/exitDY` were last computed for (NaN = never).
+    private var jugFrameAngle: Double = Double.nan
+    /// `JugGeometry.head` is pure in (geometry angle, fill): reused while neither changes (a held or idle jug).
+    private var headCacheAngle: Double = Double.nan
+    private var headCacheFill: Double = Double.nan
+    private var headCacheValue: Double = 0
+    /// Reused buffer for the rotated jug outline inside `JugGeometry.head`.
+    private var jugScratch: [CGPoint] = []
 
     // Stream and splashes
     private var particles: [Particle] = []
@@ -338,6 +360,9 @@ final class GameSession {
     }
 
     private func updateJugFrame(angle: Double) {
+        // Pure in the angle (the jug and the layout never change): skip the work while the angle holds (QA P2-8).
+        if angle == jugFrameAngle { return }
+        jugFrameAngle = angle
         let a: CGPoint = anchor(forAngle: angle)
         let lip: CGPoint = JugGeometry.transform(point: jug.lip, jug: jug, angle: angle, at: a)
         lipX = Double(lip.x)
@@ -355,12 +380,23 @@ final class GameSession {
         return max(0, angle - effective)
     }
 
+    /// Head above the lip for the current angle and fill (cached; see `headCacheAngle`).
+    private func currentHead() -> Double {
+        let ga: Double = geometryAngle(jugAngle)
+        if ga == headCacheAngle && jugFill == headCacheFill { return headCacheValue }
+        let value: Double = Double(JugGeometry.head(jug, angle: ga, fill: jugFill, scratch: &jugScratch))
+        headCacheAngle = ga
+        headCacheFill = jugFill
+        headCacheValue = value
+        return value
+    }
+
     private func updateOutflow(_ h: Double, events: inout [GameEvent]) {
         let canPour: Bool = phase == .playing && swapTimer <= 0 && jugFill > 0 && !needsFlat
         var target: Double = 0
         var deliverable: Bool = false
         if canPour {
-            let head: Double = Double(JugGeometry.head(jug, angle: geometryAngle(jugAngle), fill: jugFill))
+            let head: Double = currentHead()
             if head > 0 {
                 deliverable = true
                 target = min(CoreTuning.flowCap, CoreTuning.flowK * pow(head, 1.5))
@@ -524,9 +560,14 @@ final class GameSession {
         if particles.isEmpty { return }
         let g: Double = CoreTuning.gravity
         let counterY: Double = Double(layout.counterY)
-        var kept: [Particle] = []
-        kept.reserveCapacity(particles.count)
-        for var p in particles {
+        // Compacted in place (round 4, QA P2-8: no new array per sub-step). Nothing below adds or removes particles,
+        // so reading slot `r` and writing slot `w ≤ r` keeps the order and the survivors exactly as before.
+        let n: Int = particles.count
+        var w: Int = 0
+        var r: Int = 0
+        while r < n {
+            var p: Particle = particles[r]
+            r += 1
             let prevX: Double = p.x
             let prevY: Double = p.y
             p.vy -= g * h
@@ -575,9 +616,10 @@ final class GameSession {
             } else if p.x < -80 || p.x > Double(layout.size.width) + 80 {
                 continue
             }
-            kept.append(p)
+            particles[w] = p
+            w += 1
         }
-        particles = kept
+        if w < n { particles.removeLast(n - w) }
     }
 
     private func deposit(_ p: Particle, into gi: Int, surfaceY: Double, events: inout [GameEvent]) {
@@ -635,9 +677,13 @@ final class GameSession {
     private func integrateSprays(_ h: Double) {
         if sprays.isEmpty { return }
         let floorY: Double = Double(layout.counterY)
-        var kept: [Spray] = []
-        kept.reserveCapacity(sprays.count)
-        for var s in sprays {
+        // Compacted in place, like the particles (nothing below adds sprays).
+        let n: Int = sprays.count
+        var w: Int = 0
+        var r: Int = 0
+        while r < n {
+            var s: Spray = sprays[r]
+            r += 1
             s.vy -= CoreTuning.gravity * h
             s.x += s.vx * h
             s.y += s.vy * h
@@ -658,9 +704,10 @@ final class GameSession {
                 let surface: Double = g.floorY + visibleTop(g)
                 if s.vy < 0 && s.y <= surface { continue }
             }
-            kept.append(s)
+            sprays[w] = s
+            w += 1
         }
-        sprays = kept
+        if w < n { sprays.removeLast(n - w) }
     }
 
     // MARK: - Puddles
@@ -1074,13 +1121,6 @@ final class GameSession {
         return nil
     }
 
-    /// Widest outer half-width of a glass (profile + wall).
-    private static func outerHalfWidth(_ shape: GlassShape) -> Double {
-        var w: CGFloat = 0
-        for p in shape.profile where p.x > w { w = p.x }
-        return Double(w + shape.wall)
-    }
-
     /// Sends the next glass to the stop under the spout: the one waiting in the slot if there is one (and refills
     /// the slot), else a fresh one from the left edge.
     private func advanceQueue(events: inout [GameEvent]) {
@@ -1129,14 +1169,15 @@ final class GameSession {
             i += 1
         }
         guard let plan = peekPlan(), plan.belt == nil else { return }
+        // Round 4 (REVIEW-3 P1-4): the slot keeps `nextGlassEdgeMargin` from the visible edge to the COASTER's edge, at
+        // the waiting glass's drawn scale. If it can't (narrow phones, wide glasses) there is no waiting glass: the
+        // plan stays peeked and the glass slides in from the left edge when its turn comes (pre-round-3 behaviour).
+        var stop: (x: Double, shape: GlassShape)? = nil
+        if let si = stopIndex { stop = (x: glasses[si].arriveX, shape: glasses[si].shape) }
+        let shape: GlassShape = GlassCatalog.shape(plan.order.glass)
+        guard let x = NextGlassSlot.x(for: shape, layout: layout, stop: stop) else { return }
         peekedPlan = nil
         var g: Glass = makeGlass(plan)
-        let half: Double = GameSession.outerHalfWidth(g.shape)
-        var x: Double = max(CoreTuning.nextGlassX, Double(layout.visibleRect.minX) + half + CoreTuning.nextGlassEdgeMargin)
-        if let si = stopIndex {
-            let s: Glass = glasses[si]
-            x = min(x, s.arriveX - GameSession.outerHalfWidth(s.shape) - half - CoreTuning.nextGlassGap)
-        }
         g.waiting = true
         g.arriveX = x
         g.lineOpacity = 0
@@ -1386,6 +1427,7 @@ final class GameSession {
 
     private func makeStream() -> [StreamPoint] {
         var pts: [StreamPoint] = []
+        pts.reserveCapacity(particles.count + 1)
         let f: Double = flowNorm
         var prevBorn: Double = time
         if outflow > 0 && f >= CoreTuning.dropFlowThreshold {
@@ -1416,6 +1458,7 @@ final class GameSession {
 
     private func makeDroplets() -> [Droplet] {
         var out: [Droplet] = []
+        out.reserveCapacity(sprays.count + 8)
         for p in particles where p.isDrop {
             let r: Double = CoreMath.clamp((p.volume / Double.pi).squareRoot(), 1.8, 5.0)
             out.append(Droplet(position: CGPoint(x: p.x, y: p.y), velocity: CGVector(dx: p.vx, dy: p.vy),
@@ -1449,6 +1492,7 @@ final class GameSession {
 
     private func makeGlassStates() -> [GlassState] {
         var out: [GlassState] = []
+        out.reserveCapacity(glasses.count)
         for g in glasses {
             let liquidH: Double = Double(GlassMath.height(g.shape, forVolume: CGFloat(g.volume)))
             let top: Double = visibleTop(g)
@@ -1502,6 +1546,26 @@ final class GameSession {
         snapshot.needsFlat = true
     }
 
+    /// Round 4 (QA P1-3): the canvas changed mid-run (Duo tabletop ↔ the book-pose touch column, etc.). Keep the run:
+    /// only what depends on the canvas follows it — `visibleRect` (where the next waiting glass stands) and `hasFold`
+    /// (the flat gate, via `setUsesFlatGate`). The world itself (size, crease, counter, pivot) never changes.
+    func adoptCanvas(_ newLayout: WorldLayout) {
+        layout.visibleRect = newLayout.visibleRect
+        layout.hasFold = newLayout.hasFold
+        setUsesFlatGate(newLayout.hasFold)
+    }
+
+    /// Round 4 (QA P1-3): turn the flat gate on (a fold) or off (touch / no fold) without rebuilding the session.
+    /// Turning it on doesn't close it by itself (the App's resume calls `requireFlat()` as usual); turning it off opens
+    /// it at once. Never on in practice.
+    func setUsesFlatGate(_ on: Bool) {
+        usesFlatGate = on && !isPractice
+        if !usesFlatGate && needsFlat {
+            needsFlat = false
+            snapshot.needsFlat = false
+        }
+    }
+
     /// True while stopping must not judge the glass under the spout (gate closed, or held after a resume).
     private var servingHeld: Bool {
         return needsFlat || resumeHold != nil
@@ -1535,5 +1599,77 @@ extension GlassState {
     /// `lineOpacity` 1) as the judged glass leaves. Encoded as `.arriving` with `lineOpacity` 0.
     var isWaitingInSlot: Bool {
         return phase == .arriving && lineOpacity <= 0
+    }
+}
+
+/// Round 4 (REVIEW-3 P1-1, P1-4): the next-glass slot's geometry, shared by Core (placement) and Scene (drawing) so
+/// the margin holds for what is actually drawn. All in world pt; "full size" = the glass as drawn at the stop.
+///
+/// Contract for Scene: draw the waiting glass at `scale(hasFold:)` (horizontally about its centre x) and its slot
+/// coaster no wider than `coasterHalfWidth(_:)` each side (scaling it down too is fine). Then the slot's outermost
+/// drawn edge is ≥ `CoreTuning.nextGlassEdgeMargin` (16) inside `visibleRect` on every canvas.
+enum NextGlassSlot {
+    /// Coaster outline stroke (Scene: 1.4 pt line) rounded up.
+    static let coasterStroke: Double = 1
+    /// The mug's handle reaches this far left of its wall at full size (Scene draws it on the left).
+    static let mugHandleReach: Double = 30
+
+    /// Drawn scale of the waiting glass.
+    static func scale(hasFold: Bool) -> Double {
+        return hasFold ? CoreTuning.nextGlassScaleFold : CoreTuning.nextGlassScalePhone
+    }
+
+    /// The glass body's outer half-width at full size (widest interior half-width + wall).
+    static func bodyHalfWidth(_ s: GlassShape) -> Double {
+        var w: CGFloat = 0
+        for p in s.profile where p.x > w { w = p.x }
+        return Double(w + max(2, s.wall))
+    }
+
+    /// Extra reach on the left at full size (the mug's handle).
+    static func handleReach(_ s: GlassShape) -> Double {
+        return s.style == .mug ? mugHandleReach : 0
+    }
+
+    /// Outer half-width of what the glass stands on at full size: the foot of a stemmed glass, else floor + wall
+    /// (Scene's `SceneGlass.baseOuterHalfWidth`).
+    static func footHalfWidth(_ s: GlassShape) -> Double {
+        guard let first = s.profile.first, let last = s.profile.last else { return 20 }
+        let f0: Double = Double(first.x + max(2, s.wall))
+        let stemmed: Bool = (s.style == .flute || s.style == .sundae || s.style == .bowl) && s.baseThickness >= 20
+        return stemmed ? max(f0 + 4, Double(last.x) * 0.62) : f0
+    }
+
+    /// The slot coaster's half-width at full size, stroke included (Scene's slot coaster: 120 pt wide ×
+    /// clamp((foot × 2 + 40) / 120, 0.75…1.5)). Core assumes it is NOT scaled down with the glass (the safe side).
+    static func coasterHalfWidth(_ s: GlassShape) -> Double {
+        let k: Double = CoreMath.clamp((footHalfWidth(s) * 2 + 40) / 120, 0.75, 1.5)
+        return 60 * k + coasterStroke
+    }
+
+    /// How far the slot reaches left of its x: the coaster, or the scaled glass with its handle if that is wider.
+    static func leftReach(_ s: GlassShape, hasFold: Bool) -> Double {
+        return max(coasterHalfWidth(s), (bodyHalfWidth(s) + handleReach(s)) * scale(hasFold: hasFold))
+    }
+
+    /// How far the scaled glass reaches right of the slot x (the gap to the glass at the stop is measured from it).
+    static func rightReach(_ s: GlassShape, hasFold: Bool) -> Double {
+        return bodyHalfWidth(s) * scale(hasFold: hasFold)
+    }
+
+    /// The slot x for a glass of `shape`: `CoreTuning.nextGlassX`, nudged right so its left reach keeps
+    /// `nextGlassEdgeMargin` inside `visibleRect`, and left so its right reach keeps `nextGlassGap` from the glass at
+    /// the stop (`stop`: its stop x and shape; full size, mug handle included). nil = it doesn't fit: no waiting glass.
+    static func x(for shape: GlassShape, layout: WorldLayout, stop: (x: Double, shape: GlassShape)?) -> Double? {
+        let fold: Bool = layout.hasFold
+        let lo: Double = Double(layout.visibleRect.minX) + CoreTuning.nextGlassEdgeMargin + leftReach(shape, hasFold: fold)
+        var x: Double = max(CoreTuning.nextGlassX, lo)
+        if let st = stop {
+            let stopLeft: Double = st.x - bodyHalfWidth(st.shape) - handleReach(st.shape)
+            let hi: Double = stopLeft - CoreTuning.nextGlassGap - rightReach(shape, hasFold: fold)
+            if hi < lo { return nil }
+            x = min(x, hi)
+        }
+        return x
     }
 }

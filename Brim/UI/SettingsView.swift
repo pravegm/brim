@@ -96,7 +96,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Stars, unlocked venues, bests, daily results and lifetime stats will be erased. This can't be undone.")
+            Text("Stars, unlocked venues, bests and lifetime stats will be erased. Daily Pour results are kept. This can't be undone.")
         }
     }
 

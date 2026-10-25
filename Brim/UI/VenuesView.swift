@@ -11,27 +11,95 @@ struct VenuesView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            BrimTheme.cream.opacity(0.97)
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
-                    header
-                    ForEach(Array(VenueID.allCases.enumerated()), id: \.element) { index, venue in
-                        VenueCard(venue: venue, store: store, onPick: { level in controller.start(mode: .shift(level.id)) })
-                            .opacity(appeared ? 1 : 0)
-                            .offset(y: appeared ? 0 : 30)
-                            .animation(BrimTheme.pop(reduceMotion).delay(reduceMotion ? 0 : 0.04 * Double(index)),
-                                       value: appeared)
+            BrimTheme.cream
+            if info.hasFold {
+                duoPages
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        header
+                        ForEach(Array(VenueID.allCases.enumerated()), id: \.element) { index, venue in
+                            card(venue, index: index)
+                        }
+                        Spacer(minLength: 24)
                     }
-                    Spacer(minLength: 24)
+                    .padding(.horizontal, 18)
+                    .padding(.top, info.insets.top + 8)
+                    .padding(.bottom, info.insets.bottom + 24)
+                    .frame(maxWidth: 560)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, info.insets.top + 8)
-                .padding(.bottom, info.insets.bottom + 24)
-                .frame(maxWidth: 560)
-                .frame(maxWidth: .infinity)
             }
         }
         .onAppear { appeared = true }
+    }
+
+    private func card(_ venue: VenueID, index: Int) -> some View {
+        VenueCard(venue: venue, store: store, onPick: { level in controller.start(mode: .shift(level.id)) })
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 30)
+            .animation(BrimTheme.pop(reduceMotion).delay(reduceMotion ? 0 : 0.04 * Double(index)), value: appeared)
+    }
+
+    // MARK: Duo (REVIEW-3 P1-3): nothing on the fold
+
+    /// Pure (tested): venues two to a screen, one per half (the first screen's top half also holds the header).
+    static func duoPages(_ venues: [VenueID]) -> [[VenueID]] {
+        var pages: [[VenueID]] = []
+        var i = 0
+        while i < venues.count {
+            pages.append(Array(venues[i..<min(i + 2, venues.count)]))
+            i += 2
+        }
+        return pages
+    }
+
+    /// Pure (tested): the two card slots of one screen (canvas y, from the top): the raised half above the crease and
+    /// the flat half below it, each ≥ 8 pt clear of the band.
+    static func duoSlots(info: CanvasInfo) -> (top: ClosedRange<CGFloat>, bottom: ClosedRange<CGFloat>) {
+        let topStart = info.insets.top + 8
+        let topEnd = max(info.topHalfHeight - 8, topStart)
+        let bottomStart = info.bottomHalfTop + 8
+        let bottomEnd = max(info.size.height - max(info.insets.bottom, 8), bottomStart)
+        return (topStart...topEnd, bottomStart...bottomEnd)
+    }
+
+    /// One screen per two venues, paged: the scroll always comes to rest on a screen boundary, so the crease always
+    /// falls in the gap between the two cards and no shift button ever sits on the fold.
+    private var duoPages: some View {
+        let slots = Self.duoSlots(info: info)
+        let pages = Self.duoPages(VenueID.allCases)
+        return ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, venues in
+                    VStack(spacing: 0) {
+                        VStack(spacing: 14) {
+                            if pageIndex == 0 { header }
+                            if let first = venues.first {
+                                card(first, index: pageIndex * 2)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.top, slots.top.lowerBound)
+                        .frame(height: slots.top.upperBound, alignment: .top)
+                        Color.clear
+                            .frame(height: max(slots.bottom.lowerBound - slots.top.upperBound, 0))
+                        VStack(spacing: 0) {
+                            if venues.count > 1 {
+                                card(venues[1], index: pageIndex * 2 + 1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .frame(height: max(info.size.height - slots.bottom.lowerBound, 0), alignment: .top)
+                    }
+                    .padding(.horizontal, 18)
+                    .frame(maxWidth: 560)
+                    .frame(width: info.size.width, height: info.size.height)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollTargetBehavior(.paging)
     }
 
     private var header: some View {

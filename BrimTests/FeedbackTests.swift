@@ -371,4 +371,28 @@ struct FeedbackTests {
         #expect(again.soundOn == false)
         #expect(again.hapticsOn == false)
     }
+
+    /// Round 4 (QA P2-7): the engines idle on menus and wake for a run. The director never starts its engines here
+    /// (no `start()`), so this checks the state machine only.
+    @MainActor
+    @Test func directorIdlesOnMenusAndWakesForARun() throws {
+        let suite = "brim.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let director = FeedbackDirector(defaults: defaults)
+        #expect(director.isIdle == false)
+        director.setIdle(true)
+        #expect(director.isIdle)
+        director.setIdle(true)
+        #expect(director.isIdle)
+        director.setIdle(false)
+        #expect(director.isIdle == false)
+        // A short pause doesn't idle (the long-pause idle arrives after `pausedIdleDelay` seconds).
+        director.setPaused(true)
+        #expect(director.isIdle == false)
+        director.setPaused(false)
+        #expect(director.isIdle == false)
+        #expect(FeedbackDirector.pausedIdleDelay >= 1)
+        #expect(BrimAudioEngine.napAfter >= 1)
+    }
 }

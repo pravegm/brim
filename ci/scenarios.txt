@@ -2,7 +2,7 @@
 # The autopilot plays for real (a TiltSource that reads the snapshot); freezeOn pauses the game at a moment so the
 # capture is stable: midpour (stream in the air, glass ~60 % of the line), perfect / spill (0.35 s after that
 # judgement), finished (results card).
-01-menu|screen=menu|6
+01-menu|screen=menu;freezeOn=midpour|10
 02-midpour|mode=shift:1-1;autopilot=perfect;freezeOn=midpour|10
 03-perfect|mode=shift:1-2;autopilot=perfect;freezeOn=perfect|14
 04-spill|mode=shift:1-3;autopilot=spill;freezeOn=spill|14

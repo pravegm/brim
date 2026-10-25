@@ -8,7 +8,10 @@ import UIKit
 //
 // Keys
 // - `screen=menu|venues|results|settings|game|standup|cover|icon|badges`
-//     menu      home screen over the attract loop (practice + perfect autopilot behind it).
+//     menu      home screen over the attract loop (practice + perfect autopilot behind it). Round 4 (REVIEW-3 P1-2):
+//               the attract loop is held ONCE, mid-pour, the first time the jug is really flowing (flow > 0.05) and
+//               the glass is ≥ 55 % of its line — so the menu capture shows a real stream, never the drops of a tail.
+//               Logs `BRIM-T freeze midpour …`; add `freezeOn=midpour` to the args to make CI wait for that line.
 //     venues    venue / shift select.
 //     results   the results card for `mode`: a REAL run of it, played headless at launch by the autopilot
 //               (`autopilot=` style; default perfect for shifts, great for rush/daily) and recorded into the demo
@@ -62,6 +65,13 @@ import UIKit
 //                                  one falls between `autopause` and the next `resume needsFlat=1`.
 //   `-brimDemo "mode=shift:1-2;duo;orient=portrait"` plays on the real hinge exactly like a real run (pause, card,
 //   resume, flat gate); only the book-pose hold differs (demo runs hold instead of showing the pause card).
+// - Round 4 (every DEBUG build, GameController):
+//   `BRIM-T canvas swap kept run t=<session s>`   the canvas changed mid-run (book-pose "Use touch", back to
+//                                  tabletop): the scene was swapped and the run kept (QA-1 P1-3).
+//   `BRIM-T daily left day=<n> score=<s> glasses=<g>`   today's scored Daily was left unfinished; the pour so far was
+//                                  filed as the day's score (QA-1 P1-2).
+// - Demo runs keep the scene rendering on every screen (the real app pauses it under Venues, Settings, results and the
+//   pose cards), so `BRIM-T frame 120` always arrives.
 
 enum DemoAutopilot: String, Equatable { case perfect, great, short, spill }
 

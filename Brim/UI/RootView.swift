@@ -56,7 +56,7 @@ struct RootView: View {
                               hasFold: hasFold(canvas))
         ZStack {
             BrimTheme.cream
-            gameLayer(rect)
+            gameLayer(rect, hidden: pose != .play)
             switch pose {
             case .play:
                 screenLayer(info)
@@ -84,6 +84,7 @@ struct RootView: View {
         }
         .onChange(of: canvas) { _, newSize in
             refreshWindowInsets()
+            controller.canvasDidChange(newSize)
             handleCanvas(newSize)
         }
         .onChange(of: pose) { _, _ in handleCanvas(canvas) }
@@ -153,10 +154,21 @@ struct RootView: View {
 
     // MARK: - Layers
 
+    /// QA-1 P2-7 (battery): the scene stops rendering while an opaque screen covers it — Venues, Settings, the results
+    /// card, the book-pose and cover cards. Real runs only: CI's demo launches wait for the scene's `BRIM-T frame 120`.
+    private func sceneIdle(hidden: Bool) -> Bool {
+        guard demo == nil else { return false }
+        if hidden { return true }
+        switch controller.route {
+        case .venues, .settings, .results: return true
+        case .home, .playing: return false
+        }
+    }
+
     @ViewBuilder
-    private func gameLayer(_ rect: CGRect) -> some View {
+    private func gameLayer(_ rect: CGRect, hidden: Bool) -> some View {
         if let scene = controller.scene {
-            SpriteView(scene: scene, preferredFramesPerSecond: 120)
+            SpriteView(scene: scene, isPaused: sceneIdle(hidden: hidden), preferredFramesPerSecond: 120)
                 .id(controller.sceneGeneration)
                 .frame(width: rect.width, height: rect.height)
                 .position(x: rect.midX, y: rect.midY)
@@ -218,7 +230,7 @@ struct RootView: View {
                 .allowsHitTesting(false)
             FlatGateOverlay(hud: controller.hud, info: info)
                 .allowsHitTesting(false)
-            HUDView(hud: controller.hud, mode: controller.mode, title: GameController.chipTitle(for: controller.mode),
+            HUDView(hud: controller.hud, mode: controller.mode, title: controller.hudTitle,
                     info: info, calm: controller.calmMotion, onPause: { controller.pause() })
             if controller.isUserPaused {
                 PauseView(controller: controller, info: info)

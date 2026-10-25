@@ -8,6 +8,20 @@ struct DailyRecord: Codable, Equatable {
     var score: Int
     var judgements: [Judgement]
     var perfects: Int
+
+    init(score: Int, judgements: [Judgement], perfects: Int) {
+        self.score = score
+        self.judgements = judgements
+        self.perfects = perfects
+    }
+
+    // QA-1 P2-15: tolerant, so a field added later never drops the whole Daily history.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        score = (try? c.decodeIfPresent(Int.self, forKey: .score)) ?? 0
+        judgements = (try? c.decodeIfPresent([Judgement].self, forKey: .judgements)) ?? []
+        perfects = (try? c.decodeIfPresent(Int.self, forKey: .perfects)) ?? 0
+    }
 }
 
 /// Lifetime numbers for the home screen's stats line and the litres achievement.
@@ -18,6 +32,24 @@ struct LifetimeStats: Codable, Equatable {
     var bestStreak: Int = 0
     var glasses: Int = 0
     var runs: Int = 0
+
+    init(poured: Double = 0, perfects: Int = 0, bestStreak: Int = 0, glasses: Int = 0, runs: Int = 0) {
+        self.poured = poured
+        self.perfects = perfects
+        self.bestStreak = bestStreak
+        self.glasses = glasses
+        self.runs = runs
+    }
+
+    // QA-1 P2-15: tolerant, so a field added later never wipes the lifetime stats.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        poured = (try? c.decodeIfPresent(Double.self, forKey: .poured)) ?? 0
+        perfects = (try? c.decodeIfPresent(Int.self, forKey: .perfects)) ?? 0
+        bestStreak = (try? c.decodeIfPresent(Int.self, forKey: .bestStreak)) ?? 0
+        glasses = (try? c.decodeIfPresent(Int.self, forKey: .glasses)) ?? 0
+        runs = (try? c.decodeIfPresent(Int.self, forKey: .runs)) ?? 0
+    }
 }
 
 /// What recording a finished run changed, for the results card.
@@ -47,6 +79,10 @@ struct ProgressData: Codable, Equatable {
     var rushBest = 0
     /// Scored Daily Pours by day number (`LevelCatalog.dayNumber(for:)`).
     var daily: [Int: DailyRecord] = [:]
+    /// QA-1 P1-2: the day's scored attempt while it is being played (marked when it starts, updated on every serve).
+    /// Finishing moves it to `daily`; leaving it (Menu, Restart, another mode) or the app dying mid-run files the partial
+    /// pour as the day's score, so the scored attempt can't be retried. An attempt with no glass served is dropped.
+    var dailyStarted: [Int: DailyRecord] = [:]
     var stats = LifetimeStats()
     /// Onboarding hints already learned (`HintKind.rawValue`).
     var hintsSeen: Set<String> = []
@@ -143,10 +179,13 @@ struct ProgressData: Codable, Equatable {
         case let .daily(day):
             if let existing = daily[day] {
                 outcome.dailyOnFile = existing
-            } else if day == today {
+            } else if dailyStarted[day] != nil || day == today {
+                // The marked attempt counts whatever the clock says now (QA-1 P2-1: a run started at 23:59 UTC that
+                // ends after midnight is still that day's pour).
                 daily[day] = DailyRecord(score: result.score, judgements: result.judgements, perfects: result.perfects)
                 outcome.dailyCounted = true
             }
+            dailyStarted[day] = nil
         case .practice:
             break
         }
@@ -159,6 +198,44 @@ struct ProgressData: Codable, Equatable {
 
         outcome.newlyUnlocked = VenueID.allCases.filter { isUnlocked($0) && !unlockedBefore.contains($0) }
         return outcome
+    }
+
+    // MARK: Daily attempt marker (QA-1 P1-2)
+
+    /// A Daily for `day` is starting. True = this run is the day's one scored attempt (marked now); false = practice
+    /// (already on file). A stale marker (an attempt that was never closed) is filed first.
+    mutating func beginDailyAttempt(day: Int) -> Bool {
+        if daily[day] != nil { return false }
+        if dailyStarted[day] != nil {
+            _ = closeDailyAttempt(day: day)
+            if daily[day] != nil { return false }
+        }
+        dailyStarted[day] = DailyRecord(score: 0, judgements: [], perfects: 0)
+        return true
+    }
+
+    /// The scored attempt served a glass: remember where it stands, so leaving or dying files the partial pour.
+    mutating func updateDailyAttempt(day: Int, score: Int, judgements: [Judgement], perfects: Int) {
+        guard dailyStarted[day] != nil, daily[day] == nil else { return }
+        dailyStarted[day] = DailyRecord(score: max(score, 0), judgements: judgements, perfects: max(perfects, 0))
+    }
+
+    /// The scored attempt was left unfinished: its partial pour becomes the day's score (returned). With no glass
+    /// served yet the marker is simply dropped (nothing was learned) and nil is returned.
+    mutating func closeDailyAttempt(day: Int) -> DailyRecord? {
+        guard let partial = dailyStarted[day] else { return nil }
+        dailyStarted[day] = nil
+        guard daily[day] == nil, !partial.judgements.isEmpty else { return nil }
+        daily[day] = partial
+        return partial
+    }
+
+    /// At launch: any attempt still marked belongs to a run whose app died; file it (or drop it if nothing was served).
+    /// Returns true when something changed.
+    mutating func closeAbandonedDailyAttempts() -> Bool {
+        guard !dailyStarted.isEmpty else { return false }
+        for day in Array(dailyStarted.keys) { _ = closeDailyAttempt(day: day) }
+        return true
     }
 
     // MARK: Achievements (Game Center ids)
@@ -198,6 +275,7 @@ extension ProgressData {
         bestScores = (try? c.decodeIfPresent([String: Int].self, forKey: .bestScores)) ?? [:]
         rushBest = (try? c.decodeIfPresent(Int.self, forKey: .rushBest)) ?? 0
         daily = (try? c.decodeIfPresent([Int: DailyRecord].self, forKey: .daily)) ?? [:]
+        dailyStarted = (try? c.decodeIfPresent([Int: DailyRecord].self, forKey: .dailyStarted)) ?? [:]
         stats = (try? c.decodeIfPresent(LifetimeStats.self, forKey: .stats)) ?? LifetimeStats()
         hintsSeen = (try? c.decodeIfPresent(Set<String>.self, forKey: .hintsSeen)) ?? []
     }
@@ -210,6 +288,8 @@ extension ProgressData {
 @MainActor
 final class ProgressStore: ObservableObject {
     static let key = "brim.progress.v1"
+    /// QA-1 P2-14: an undecodable save is copied here before a fresh one replaces it.
+    static let corruptKey = "brim.progress.v1.corrupt"
 
     @Published private(set) var data: ProgressData
     private let defaults: UserDefaults?
@@ -217,12 +297,19 @@ final class ProgressStore: ObservableObject {
     /// Persistent store backed by `defaults`.
     init(defaults: UserDefaults) {
         self.defaults = defaults
-        if let raw = defaults.data(forKey: Self.key),
-           let decoded = try? JSONDecoder().decode(ProgressData.self, from: raw) {
-            data = decoded
-        } else {
-            data = ProgressData()
+        var loaded = ProgressData()
+        if let raw = defaults.data(forKey: Self.key) {
+            if let decoded = try? JSONDecoder().decode(ProgressData.self, from: raw) {
+                loaded = decoded
+            } else {
+                // Keep the bytes: the next save would otherwise overwrite the player's only copy.
+                defaults.set(raw, forKey: Self.corruptKey)
+            }
         }
+        // A Daily attempt still marked at launch belongs to a run whose app died mid-pour (QA-1 P1-2).
+        let closed = loaded.closeAbandonedDailyAttempts()
+        data = loaded
+        if closed { save() }
     }
 
     /// In-memory store (demo mode, previews).
@@ -263,6 +350,35 @@ final class ProgressStore: ObservableObject {
         return outcome
     }
 
+    /// A Daily for `day` is starting: true = the day's scored attempt (marked and saved now), false = practice.
+    func beginDailyAttempt(day: Int) -> Bool {
+        var copy = data
+        let scored = copy.beginDailyAttempt(day: day)
+        data = copy
+        save()
+        return scored
+    }
+
+    /// The scored attempt served a glass (saved, so a crash files the partial pour).
+    func updateDailyAttempt(day: Int, score: Int, judgements: [Judgement], perfects: Int) {
+        guard data.dailyStarted[day] != nil else { return }
+        var copy = data
+        copy.updateDailyAttempt(day: day, score: score, judgements: judgements, perfects: perfects)
+        data = copy
+        save()
+    }
+
+    /// The scored attempt was left unfinished: files the partial pour (returned; nil when nothing was served).
+    @discardableResult
+    func closeDailyAttempt(day: Int) -> DailyRecord? {
+        guard data.dailyStarted[day] != nil else { return nil }
+        var copy = data
+        let filed = copy.closeDailyAttempt(day: day)
+        data = copy
+        save()
+        return filed
+    }
+
     func markHintSeen(_ id: String) {
         guard !data.hintsSeen.contains(id) else { return }
         data.hintsSeen.insert(id)
@@ -275,9 +391,12 @@ final class ProgressStore: ObservableObject {
         save()
     }
 
-    /// Settings › Reset progress.
+    /// Settings › Reset progress. Daily Pour results stay (QA-1 P2-16: a reset must not reopen today's scored pour).
     func resetProgress() {
-        data = ProgressData()
+        var fresh = ProgressData()
+        fresh.daily = data.daily
+        fresh.dailyStarted = data.dailyStarted
+        data = fresh
         save()
     }
 

@@ -174,7 +174,7 @@ fi
 # ---- pass: UI frames ---------------------------------------------------------------------------------------
 if [[ " $PASSES " == *" ui "* ]]; then
   hinge_set 160 || true
-  launch ui-menu "screen=menu;orient=portrait;duo"; shoot duo-ui-menu inner
+  launch ui-menu "screen=menu;orient=portrait;duo;freezeOn=midpour"; sleep 6; shoot duo-ui-menu inner
   launch ui-venues "screen=venues;progress=mid;orient=portrait;duo"; shoot duo-ui-venues inner
   launch ui-results "mode=shift:1-1;screen=results;progress=mid;orient=portrait;duo"; shoot duo-ui-results inner
   # Book pose: no orient request, the sim's own landscape inner canvas → the "stand me up" card.

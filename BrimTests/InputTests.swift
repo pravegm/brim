@@ -645,4 +645,38 @@ struct InputTests {
         #expect(tilts[index] > 20)
         #expect(bar.finals.first?.judgement == .spill)
     }
+
+    // MARK: Touch on a Duo (round 4, QA P2-3)
+
+    @Test func touchOnADuoBetween70And78StillPours() {
+        TiltInputLog.shared.clear()
+        let hinge = HingeTiltSource()
+        let touch = TouchTiltSource(viewHeight: 800)
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift("1-1"), layout: layout, seed: 1)
+        // The lid rests at 75°: below the guard's 78° cut (latched), above the App's 70° autopause.
+        hinge.ingest(angleDegrees: 75, at: 0)
+        #expect(hinge.closingCut(at: 0))
+        var maxFlow = 0.0
+        var frame = 0
+        while frame < 300 {
+            let time = Double(frame) / 60
+            if frame == 60 { touch.began(at: 600) }
+            if frame > 60 { touch.moved(to: 600 - CGFloat(min(frame - 60, 40)) * 5) }
+            // GameController.advance: read the active source (touch), the closing guard's requireFlat, then step.
+            let tilt = touch.tilt(at: time)
+            if hinge.isClosing && !session.snapshot.needsFlat { session.requireFlat() }
+            session.step(dt: 1.0 / 60, tilt: tilt)
+            maxFlow = max(maxFlow, session.snapshot.jug.flow)
+            frame += 1
+        }
+        #expect(hinge.drivesThePour == false)
+        #expect(hinge.isClosing == false)
+        #expect(maxFlow > 0.05, "touch never poured (max flow \(maxFlow))")
+        // With the hinge as the input again, the guard still cuts at 75°.
+        _ = hinge.tilt(at: 5.5)
+        #expect(hinge.drivesThePour)
+        #expect(hinge.isClosing)
+        TiltInputLog.shared.clear()
+    }
 }

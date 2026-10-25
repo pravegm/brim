@@ -108,6 +108,26 @@ final class BrimHaptics {
         }
     }
 
+    /// Round 4 (QA P2-7, battery): menus. While idle there is no looping pour-bed player and the engine may shut the
+    /// hardware down by itself (`isAutoShutdownEnabled`); a cue (a menu tap, the fanfare) still plays — the engine is
+    /// started again for it. Off: the pour bed is rebuilt at once for the game.
+    var idle = false {
+        didSet {
+            guard oldValue != idle else { return }
+            if idle {
+                if let player = flowPlayer {
+                    try? player.stop(atTime: CHHapticTimeImmediate)
+                }
+                flowPlayer = nil
+                lastLevel = 0
+                engine?.isAutoShutdownEnabled = true
+            } else {
+                engine?.isAutoShutdownEnabled = false
+                if engine != nil && (!isRunning || flowPlayer == nil) { restart() }
+            }
+        }
+    }
+
     private let supportsHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
     private var engine: CHHapticEngine?
     private var flowPlayer: CHHapticAdvancedPatternPlayer?
@@ -125,7 +145,7 @@ final class BrimHaptics {
         do {
             let engine = try CHHapticEngine()
             engine.playsHapticsOnly = true
-            engine.isAutoShutdownEnabled = false
+            engine.isAutoShutdownEnabled = idle
             // Both handlers arrive on an engine-internal queue: hop to the main actor with a strong, immutable capture.
             engine.stoppedHandler = { [weak self] _ in
                 guard let self else { return }
@@ -155,14 +175,14 @@ final class BrimHaptics {
         guard supportsHaptics else { return }
         if engine == nil {
             start()
-        } else if !isRunning || flowPlayer == nil {
+        } else if !isRunning || (!idle && flowPlayer == nil) {
             restart()
         }
     }
 
     /// Throttled recovery from the frame loop.
     func heal() {
-        guard engine != nil, !isRunning || flowPlayer == nil else { return }
+        guard engine != nil, !isRunning || (!idle && flowPlayer == nil) else { return }
         guard UIApplication.shared.applicationState != .background else { return }
         restart()
     }
@@ -178,6 +198,8 @@ final class BrimHaptics {
             return
         }
         flowPlayer = nil
+        // Menus have no pour: no looping player to keep the hardware awake.
+        if idle { return }
         do {
             try makeFlowPlayer()
         } catch {

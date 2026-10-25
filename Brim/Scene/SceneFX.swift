@@ -140,6 +140,8 @@ final class SceneFX {
         innerRoot.addChild(inner.root)
         glow = SKSpriteNode(texture: SceneArt.glow)
         glow.blendMode = .add
+        // The Perfect glow blooms ABOVE the rim, not down into the headspace (REVIEW-3 P2-8).
+        glow.anchorPoint = CGPoint(x: 0.5, y: 0.16)
         glow.isHidden = true
         glow.zPosition = -2
         root.addChild(glow)
@@ -273,8 +275,8 @@ final class SceneFX {
         glow.color = SceneColor.perfect
         glow.colorBlendFactor = 0.85
         glow.position = rim
-        glow.size = CGSize(width: rimW * 3, height: rimW * 1.4)
-        glow.alpha = 0.9
+        glow.size = CGSize(width: rimW * 3, height: rimW * 1.3)
+        glow.alpha = 0.8
         glow.run(SKAction.sequence([SKAction.wait(forDuration: 0.12), SKAction.fadeOut(withDuration: 0.4), SKAction.hide()]))
 
         let twinkles = reduceMotion ? 6 : 14
@@ -443,7 +445,14 @@ final class PuddleView {
     private var gloss: [SKNode] = []
     private var radius: CGFloat = 0
 
-    /// Display width ≈ 3 × Core's radius (a spill spreads 2–3× the coaster), reached in 0.4 s.
+    /// Display width for Core's puddle radius `r`. The puddle lies under the coaster (~140–200 pt wide), so it starts
+    /// at about the coaster's width and spreads past it as the spill grows (REVIEW-3: the grown puddle must read in a
+    /// spill frame): r 30 → ~170 pt, r 60 → ~240 pt, r 105 → ~350 pt (≈ 2–2.3× the coaster).
+    static func displayWidth(radius r: CGFloat) -> CGFloat {
+        return 96 + 2.4 * max(0, r)
+    }
+
+    /// Grows to `displayWidth(radius:)` in 0.4 s.
     func setRadius(_ r: CGFloat, reduceMotion: Bool) {
         guard abs(r - radius) > 0.5 else { return }
         if drying && r > radius + 1 {
@@ -457,7 +466,7 @@ final class PuddleView {
             }
         }
         radius = r
-        let target = min(2.0, max(0.18, (r * 3) / PuddleView.width))
+        let target = min(2.2, max(0.18, PuddleView.displayWidth(radius: r) / PuddleView.width))
         node.removeAction(forKey: "grow")
         if reduceMotion {
             node.setScale(target)

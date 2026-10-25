@@ -31,6 +31,25 @@ final class BrimAudioEngine {
         }
     }
 
+    /// Round 4 (QA P2-7, battery): menus. While idle the engine naps (`AVAudioEngine.pause()`, no render callbacks)
+    /// once nothing has played for `napAfter` seconds; a one-shot (a menu tap, the results fanfare) wakes it for that
+    /// sound and the nap timer starts again. Off: awake for the game at once.
+    var idle = false {
+        didSet {
+            guard oldValue != idle else { return }
+            if idle {
+                scheduleNap()
+            } else {
+                napTask?.cancel()
+                napTask = nil
+                wake(reason: "game")
+            }
+        }
+    }
+
+    /// Seconds of quiet on a menu before the engine naps (lets a tap, a whoosh or the results fanfare ring out).
+    static let napAfter: Double = 2.5
+
     var respectSilentSwitch = false {
         didSet {
             guard oldValue != respectSilentSwitch, isStarted else { return }
@@ -51,6 +70,12 @@ final class BrimAudioEngine {
     private var startFailures = 0
     private var lastRebuild: CFTimeInterval = -.infinity
     private var lastBed = PourBed()
+    /// Paused on purpose for the menus (see `idle`): nothing restarts it except a sound or leaving idle.
+    private(set) var isNapping = false
+    private var napTask: Task<Void, Never>?
+    private var lastSoundTime: CFTimeInterval = -.infinity
+    /// An interruption (a call, Siri) is in progress: `heal()` leaves the engine alone until it ends (QA P2-11).
+    private var interrupted = false
 
     init() {}
 
@@ -68,16 +93,23 @@ final class BrimAudioEngine {
         observeSystem()
     }
 
-    /// Queue a one-shot sound (dropped while sound is off or the engine never came up).
+    /// Queue a one-shot sound. Dropped while sound is off, the engine never came up, or it is stopped (an
+    /// interruption): queued sounds would otherwise burst out together when it restarts (QA P2-10). A napping engine
+    /// (menus) wakes for it.
     func play(_ commands: [SynthCommand]) {
-        guard enabled, let synth else { return }
+        guard enabled, isStarted else { return }
+        if isNapping { wake(reason: "menu sound") }
+        guard let synth, engine.isRunning else { return }
+        lastSoundTime = CACurrentMediaTime()
         for command in commands { synth.send(command) }
+        if idle { scheduleNap() }
     }
 
-    /// The continuous pour layers (always forwarded, so a master of 0 reaches the synth). Remembered, so a synth built
-    /// later (lazy start, rebuild after a media-services reset) starts from it instead of a silent master.
+    /// The continuous pour layers (always forwarded while awake, so a master of 0 reaches the synth). Remembered, so a
+    /// synth built later (lazy start, rebuild after a media-services reset) or woken from a nap starts from it.
     func setBed(_ bed: PourBed) {
         lastBed = bed
+        if isNapping { return }
         synth?.send(.bed(bed))
     }
 
@@ -85,18 +117,59 @@ final class BrimAudioEngine {
         synth?.send(.silence)
     }
 
-    /// The app became active again (calls, Siri, background).
+    /// The app became active again (calls, Siri, background). Also ends a tracked interruption (`.ended` isn't
+    /// guaranteed to arrive).
     func resume() {
-        guard isStarted, enabled else { return }
+        interrupted = false
+        guard isStarted, enabled, !isNapping else { return }
         activateSession()
         ensureRunning(reason: "app active again")
     }
 
-    /// Cheap check from the frame loop (the director calls it about once a second).
+    /// Cheap check from the frame loop (the director calls it about once a second). Not during an interruption: it
+    /// would retry `start()` every second and rebuild the engine every 5 s for the whole call (QA P2-11).
     func heal() {
-        guard isStarted, enabled, synth != nil, !engine.isRunning else { return }
+        guard isStarted, enabled, !isNapping, !interrupted, synth != nil, !engine.isRunning else { return }
         guard UIApplication.shared.applicationState != .background else { return }
         ensureRunning(reason: "found stopped")
+    }
+
+    // MARK: - Menu naps (battery)
+
+    private func scheduleNap() {
+        napTask?.cancel()
+        let delay: Double = Self.napAfter
+        napTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            if Task.isCancelled { return }
+            self?.napIfQuiet()
+        }
+    }
+
+    private func napIfQuiet() {
+        napTask = nil
+        guard idle, !isNapping else { return }
+        if CACurrentMediaTime() - lastSoundTime < Self.napAfter - 0.05 {
+            scheduleNap()
+            return
+        }
+        isNapping = true
+        // Nothing may be left ringing (or queued) to burst out on waking.
+        synth?.send(.silence)
+        if engine.isRunning { engine.pause() }
+    }
+
+    private func interruptionBegan() {
+        interrupted = true
+        // Whatever was queued must not burst out when the call ends.
+        synth?.send(.silence)
+    }
+
+    private func wake(reason: String) {
+        guard isNapping else { return }
+        isNapping = false
+        synth?.send(.bed(lastBed))
+        ensureRunning(reason: reason)
     }
 
     // MARK: - Session and graph
@@ -202,7 +275,8 @@ final class BrimAudioEngine {
     }
 
     private func ensureRunning(reason: String) {
-        guard isStarted, enabled else { return }
+        // A napping engine (menus) stays paused through route and configuration changes; a sound wakes it.
+        guard isStarted, enabled, !isNapping else { return }
         if synth == nil {
             rebuild()
             return
@@ -221,7 +295,7 @@ final class BrimAudioEngine {
         configureSession()
         activateSession()
         buildGraph()
-        startEngine(reason: "rebuild")
+        if !isNapping { startEngine(reason: "rebuild") }
     }
 
     private func observeSystem() {
@@ -229,8 +303,11 @@ final class BrimAudioEngine {
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil,
                                             queue: .main) { [weak self] notification in
             let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
-            let ended = raw.flatMap { AVAudioSession.InterruptionType(rawValue: $0) } == .ended
+            let type = raw.flatMap { AVAudioSession.InterruptionType(rawValue: $0) }
+            let ended = type == .ended
+            let began = type == .began
             MainActor.assumeIsolated {
+                if began { self?.interruptionBegan() }
                 if ended { self?.resume() }
             }
         })

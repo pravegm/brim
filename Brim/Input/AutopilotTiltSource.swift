@@ -103,6 +103,7 @@ final class AutopilotTiltSource: TiltSource {
     }
 
     func tilt(at time: TimeInterval) -> Double {
+        TiltInputLog.shared.noteRead(self)
         guard time.isFinite else { return spring.value }
         let dt: Double
         if let last = lastTime {

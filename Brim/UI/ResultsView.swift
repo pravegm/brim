@@ -34,6 +34,8 @@ struct ResultsView: View {
         if let onFile = outcome.dailyOnFile {
             return ShareText.daily(day: day, judgements: onFile.judgements, score: onFile.score)
         }
+        // Only the scored attempt is shared as "Brim Daily #N".
+        guard outcome.dailyCounted else { return nil }
         return ShareText.daily(day: day, judgements: result.judgements, score: result.score)
     }
 
@@ -86,8 +88,10 @@ struct ResultsView: View {
     private var duoLayout: some View {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
+                // Opaque (REVIEW-3 P2-4): no ghost of the tipped jug under the card.
                 LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.95)],
                                startPoint: .top, endPoint: .bottom)
+                    .background(BrimTheme.cream)
                     .frame(height: max(info.topHalfHeight, 0))
                 ResultsCounter()
             }
@@ -172,7 +176,8 @@ struct ResultsView: View {
                 .foregroundStyle(BrimTheme.inkSoft)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            Text(Self.headline(for: result, dailyOnFile: outcome.dailyOnFile != nil))
+            // A Daily that didn't count (already on file, or not the day's marked attempt) is practice.
+            Text(Self.headline(for: result, dailyOnFile: outcome.dailyOnFile != nil || !outcome.dailyCounted))
                 .font(BrimTheme.title(info.isCompact ? 25 : 29))
                 .foregroundStyle(BrimTheme.ink)
             if isShift {
@@ -377,9 +382,15 @@ struct RecapRow: View {
                 VStack(spacing: 4) {
                     MiniGlass(item: item)
                         .frame(width: 30, height: 40)
+                    // Colour plus a glyph, so the verdict reads without colour (REVIEW-3 P2-4).
                     Circle()
                         .fill(BrimTheme.color(for: item.judgement))
-                        .frame(width: 8, height: 8)
+                        .frame(width: 14, height: 14)
+                        .overlay(
+                            Image(systemName: RecapGlyph.symbol(for: item.judgement))
+                                .font(.system(size: 7, weight: .black))
+                                .foregroundStyle(BrimTheme.ink)
+                        )
                 }
             }
         }
@@ -428,8 +439,21 @@ struct ResultsCounter: View {
     }
 }
 
-/// The served glasses standing in a row on the counter, all at one scale (≈ 60 % of the play size, smaller if the
-/// row or the height needs it), each at its served level against its line, on a coaster in its verdict colour.
+/// The verdict glyph on a recap coaster: ✓ for a hit, a drop for a spill, ↓ for a short (REVIEW-3 P2-4: the coaster
+/// colour alone isn't colour-blind safe).
+enum RecapGlyph {
+    static func symbol(for judgement: Judgement) -> String {
+        switch judgement {
+        case .perfect, .great, .good: return "checkmark"
+        case .spill: return "drop.fill"
+        case .short: return "arrow.down"
+        }
+    }
+}
+
+/// The served glasses standing in a row on the counter, all at one scale (≈ 75 % of the play size, ~85 pt for a
+/// tumbler; smaller if the row or the height needs it), each at its served level against its line, on a coaster in its
+/// verdict colour with its verdict glyph.
 struct CounterRecap: View {
     let recap: [GlassRecap]
     /// Slide in (one after another) once the results have appeared.
@@ -439,7 +463,7 @@ struct CounterRecap: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Pure (tested): one scale for the whole row so it fits `size` (glass interiors only; coasters and gaps added).
-    static func rowScale(_ items: [GlassRecap], size: CGSize, spacing: CGFloat, preferred: CGFloat = 0.6) -> CGFloat {
+    static func rowScale(_ items: [GlassRecap], size: CGSize, spacing: CGFloat, preferred: CGFloat = 0.75) -> CGFloat {
         guard !items.isEmpty, size.width > 0, size.height > 0 else { return preferred }
         let widths = items.map { 2 * max($0.shape.profile.map { $0.x }.max() ?? 1, 1) }
         let tallest = items.map { max($0.shape.interiorHeight, 1) }.max() ?? 1
@@ -465,13 +489,20 @@ struct CounterRecap: View {
                         Ellipse()
                             .fill(BrimTheme.color(for: item.judgement))
                             .overlay(Ellipse().stroke(BrimTheme.ink.opacity(0.25), lineWidth: 1))
-                            .frame(width: width + 14, height: 12)
+                            .overlay(
+                                Image(systemName: RecapGlyph.symbol(for: item.judgement))
+                                    .font(.system(size: 9, weight: .black))
+                                    .foregroundStyle(BrimTheme.ink.opacity(0.85))
+                                    .offset(y: 2)
+                            )
+                            .frame(width: width + 14, height: 18)
                             .shadow(color: BrimTheme.ink.opacity(0.18), radius: 3, y: 2)
                     }
                     .offset(y: shown ? 0 : 26)
                     .opacity(shown ? 1 : 0)
+                    // REVIEW-3 P2-4: the whole row is on the counter within ~0.3 s of the card.
                     .animation(reduceMotion ? nil
-                               : BrimTheme.pop(false).delay(0.35 + 0.07 * Double(index)), value: shown)
+                               : BrimTheme.pop(false).delay(0.05 + 0.025 * Double(index)), value: shown)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -519,6 +550,13 @@ struct MiniGlass: View {
                 let foamRect = CGRect(x: 0, y: floorY - foamLevel * scale, width: size.width, height: (foamLevel - level) * scale)
                 clipped.fill(Path(foamRect), with: .color(Self.color(foam)))
             }
+            // A soft highlight down the left wall: glass, not a flat icon (REVIEW-3 P2-4).
+            var gloss = Path()
+            let gx = cx - maxHalf * scale * 0.62
+            gloss.move(to: CGPoint(x: gx, y: floorY - interior * scale * 0.88))
+            gloss.addLine(to: CGPoint(x: gx, y: floorY - interior * scale * 0.18))
+            clipped.stroke(gloss, with: .color(Color.white.opacity(0.55)),
+                           style: StrokeStyle(lineWidth: max(1.5, 4 * scale), lineCap: .round))
             ctx.stroke(outline, with: .color(BrimTheme.ink.opacity(0.75)), lineWidth: 1.4)
             // Spilled: a drip down the outside.
             if item.judgement == .spill {

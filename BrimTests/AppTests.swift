@@ -140,6 +140,49 @@ struct ProgressStoreTests {
         #expect(ProgressStore(defaults: defaults).data == ProgressData())
     }
 
+    @Test func resetKeepsTheDailyPours() throws {
+        // QA-1 P2-16: a reset must not reopen today's scored Daily.
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ProgressStore(defaults: defaults)
+        store.record(RunResult(mode: .daily(50), score: 700, stars: 0, perfects: 1, bestStreak: 1,
+                               judgements: [.perfect, .good], poured: 10, cleared: true), today: 50)
+        store.resetProgress()
+        let reloaded = ProgressStore(defaults: defaults)
+        #expect(reloaded.dailyRecord(day: 50)?.score == Int(700))
+        #expect(reloaded.data.stats == LifetimeStats())
+        #expect(!reloaded.data.isUnlocked(.sandBar))
+    }
+
+    @Test func aCorruptSaveIsKeptAside() throws {
+        // QA-1 P2-14: undecodable bytes are copied before a fresh save can overwrite them.
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let junk = Data("[1, 2, 3]".utf8)
+        defaults.set(junk, forKey: ProgressStore.key)
+        let store = ProgressStore(defaults: defaults)
+        #expect(store.data == ProgressData())
+        #expect(defaults.data(forKey: ProgressStore.corruptKey) == junk)
+    }
+
+    @Test func toleratesNewFieldsInsideStatsAndDailies() throws {
+        // QA-1 P2-15: an unknown or missing field inside stats / a Daily keeps everything else.
+        let json = Data(#"{"stats": {"perfects": 9, "runs": 2, "futureField": true}}"#.utf8)
+        let data = try JSONDecoder().decode(ProgressData.self, from: json)
+        #expect(data.stats.perfects == 9)
+        #expect(data.stats.runs == 2)
+        #expect(data.stats.glasses == 0)
+        let record = try JSONDecoder().decode(DailyRecord.self, from: Data(#"{"score": 1840, "perfects": 2}"#.utf8))
+        #expect(record.score == 1840)
+        #expect(record.judgements.isEmpty)
+        // And the whole save still round-trips with the new attempt marker in it.
+        var full = ProgressData()
+        full.daily[12] = record
+        full.dailyStarted[13] = DailyRecord(score: 5, judgements: [.good], perfects: 0)
+        let back = try JSONDecoder().decode(ProgressData.self, from: JSONEncoder().encode(full))
+        #expect(back == full)
+    }
+
     @Test func toleratesMissingFields() throws {
         let json = Data(#"{"rushBest": 77}"#.utf8)
         let data = try JSONDecoder().decode(ProgressData.self, from: json)
@@ -453,10 +496,11 @@ struct Round3LayoutTests {
                                foamHeight: 0, lineHeight: 105, lineOpacity: 1, inPerfectBand: true, overflowing: false,
                                patienceLeft: nil, patienceTotal: nil, result: .perfect)
         let few = Array(repeating: GlassRecap(glass: glass, judgement: .perfect), count: 4)
-        #expect(abs(CounterRecap.rowScale(few, size: CGSize(width: 629, height: 320), spacing: 18) - 0.6) < 0.0001)
+        // Round 4 (REVIEW-3 P2-4): ~85 pt tumblers, i.e. 0.75 of the play size when the row has room.
+        #expect(abs(CounterRecap.rowScale(few, size: CGSize(width: 629, height: 320), spacing: 18) - 0.75) < 0.0001)
         let many = Array(repeating: GlassRecap(glass: glass, judgement: .great), count: 10)
         let s = CounterRecap.rowScale(many, size: CGSize(width: 629, height: 320), spacing: 10)
-        #expect(s < 0.6)
+        #expect(s < 0.75)
         #expect(10 * 114 * s + 9 * 10 <= 629.5)
         let short = CounterRecap.rowScale(few, size: CGSize(width: 629, height: 80), spacing: 18)
         #expect(150 * short <= 80 - 26 + 0.5)
@@ -504,5 +548,253 @@ struct ShareTextTests {
         #expect(ShareText.grouped(1000) == "1,000")
         #expect(ShareText.grouped(1_234_567) == "1,234,567")
         #expect(ShareText.grouped(-4200) == "-4,200")
+    }
+}
+
+// MARK: - Round 4: QA-1 P1s and REVIEW-3 P1s (App)
+
+struct DailyAttemptTests {
+    private func run(_ day: Int, score: Int, _ judgements: [Judgement]) -> RunResult {
+        RunResult(mode: .daily(day), score: score, stars: 0, perfects: judgements.filter { $0 == .perfect }.count,
+                  bestStreak: 1, judgements: judgements, poured: 100, cleared: true)
+    }
+
+    @Test func leavingTheScoredAttemptFilesThePourSoFar() {
+        // QA-1 P1-2: start, spill twice, leave: that IS the day's score; the next run is practice.
+        var data = ProgressData()
+        #expect(data.beginDailyAttempt(day: 298))
+        data.updateDailyAttempt(day: 298, score: 0, judgements: [.spill, .spill], perfects: 0)
+        let filed = data.closeDailyAttempt(day: 298)
+        #expect(filed?.judgements == [Judgement.spill, .spill])
+        #expect(data.daily[298]?.score == Int(0))
+        #expect(data.dailyStarted.isEmpty)
+        #expect(!data.beginDailyAttempt(day: 298))
+        // The "retry" is practice: it never replaces the filed score.
+        let retry = data.record(run(298, score: 2900, [.perfect, .perfect]), today: 298)
+        #expect(!retry.dailyCounted)
+        #expect(retry.dailyOnFile?.score == Int(0))
+        #expect(data.daily[298]?.score == Int(0))
+    }
+
+    @Test func leavingBeforeTheFirstServeCostsNothing() {
+        var data = ProgressData()
+        #expect(data.beginDailyAttempt(day: 10))
+        #expect(data.closeDailyAttempt(day: 10) == nil)
+        #expect(data.daily[10] == nil)
+        #expect(data.beginDailyAttempt(day: 10))
+    }
+
+    @Test func finishingTheMarkedAttemptCountsEvenAfterMidnight() {
+        // QA-1 P2-1: started on day 100, finished at 00:00:30 on day 101.
+        var data = ProgressData()
+        #expect(data.beginDailyAttempt(day: 100))
+        let outcome = data.record(run(100, score: 1500, [.perfect, .great]), today: 101)
+        #expect(outcome.dailyCounted)
+        #expect(data.daily[100]?.score == Int(1500))
+        #expect(data.dailyStarted[100] == nil)
+    }
+
+    @MainActor
+    @Test func anAttemptLeftByACrashIsFiledAtLaunch() throws {
+        let suite = "brim.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ProgressStore(defaults: defaults)
+        #expect(store.beginDailyAttempt(day: 7))
+        store.updateDailyAttempt(day: 7, score: 450, judgements: [.good, .short], perfects: 0)
+        // The app dies here. Next launch:
+        let relaunched = ProgressStore(defaults: defaults)
+        #expect(relaunched.dailyRecord(day: 7)?.score == Int(450))
+        #expect(relaunched.data.dailyStarted.isEmpty)
+        #expect(!relaunched.beginDailyAttempt(day: 7))
+    }
+
+    @MainActor
+    @Test func theControllerMarksTheAttemptAndPracticeIsLabelled() {
+        let store = ProgressStore(inMemory: ProgressData())
+        let c = GameController(store: store, settings: SettingsStore(defaults: nil),
+                               demo: DemoConfig.parse("mode=daily:33", today: 33))
+        c.updateCanvas(CGSize(width: 402, height: 874), hasFold: false)
+        c.start(mode: .daily(33))
+        #expect(c.isScoredDaily)
+        #expect(!c.isPracticeDaily)
+        #expect(store.data.dailyStarted[33] != nil)
+        #expect(c.hudTitle == "Daily #33")
+        // Nothing served: leaving costs nothing, and the next start is the scored attempt again.
+        c.quitToMenu()
+        #expect(store.dailyRecord(day: 33) == nil)
+        #expect(store.data.dailyStarted[33] == nil)
+        // Once on file, a Daily is practice and says so.
+        store.record(run(33, score: 900, [.good]), today: 33)
+        c.start(mode: .daily(33))
+        #expect(!c.isScoredDaily)
+        #expect(c.isPracticeDaily)
+        #expect(c.hudTitle == "Daily #33 · Practice")
+    }
+}
+
+@MainActor
+struct LifecycleTests {
+    private func makeController(_ args: String, canvas: CGSize = CGSize(width: 669, height: 951),
+                                fold: Bool = true) -> GameController {
+        let c = GameController(store: ProgressStore(inMemory: ProgressData()), settings: SettingsStore(defaults: nil),
+                               demo: DemoConfig.parse(args, today: 1))
+        c.updateCanvas(canvas, hasFold: fold)
+        return c
+    }
+
+    @Test func aStoredHingeFlagIsOnlyBelievedOnADuoShapedScreen() {
+        // QA-1 P1-1: a Duo backup restored onto an iPhone 18 Pro or an SE must not lock it into Duo mode.
+        #expect(OrientationLock.trustsStoredHinge(true, screen: CGSize(width: 669, height: 951)))
+        #expect(OrientationLock.trustsStoredHinge(true, screen: CGSize(width: 466, height: 678)))
+        #expect(OrientationLock.trustsStoredHinge(true, screen: CGSize(width: 951, height: 669)))
+        #expect(!OrientationLock.trustsStoredHinge(true, screen: CGSize(width: 402, height: 874)))
+        #expect(!OrientationLock.trustsStoredHinge(true, screen: CGSize(width: 375, height: 667)))
+        #expect(!OrientationLock.trustsStoredHinge(false, screen: CGSize(width: 669, height: 951)))
+        #expect(!OrientationLock.trustsStoredHinge(true, screen: .zero))
+    }
+
+    @Test func changingTheCanvasKeepsTheRun() {
+        // QA-1 P1-3: tabletop, then book pose "Use touch" (a 468 x 669 column, no fold) mid-shift keeps the session.
+        let c = makeController("mode=shift:1-1;duo")
+        c.start(mode: .shift("1-1"))
+        var now = 100.0
+        var before = 0.0
+        for _ in 0..<40 {
+            now += 1.0 / 60.0
+            before = c.advance(dt: 1.0 / 60.0, now: now)?.0.time ?? 0
+        }
+        #expect(before > 0.3)
+        let generation = c.sceneGeneration
+        c.updateCanvas(CGSize(width: 468, height: 669), hasFold: false)
+        #expect(c.sceneGeneration == generation + 1)
+        let after = c.advance(dt: 0, now: now + 0.01)?.0.time ?? 0
+        #expect(after >= before - 0.0001)
+        #expect(c.mode == GameMode.shift("1-1"))
+        #expect(c.route == .playing)
+        // And back to tabletop: still the same run.
+        c.updateCanvas(CGSize(width: 669, height: 951), hasFold: true)
+        let back = c.advance(dt: 0, now: now + 0.02)?.0.time ?? 0
+        #expect(back >= before - 0.0001)
+    }
+
+    @Test func theAttractLoopIsRebuiltOnACanvasChange() {
+        let c = makeController("screen=menu")
+        c.updateCanvas(CGSize(width: 402, height: 874), hasFold: false)
+        #expect(c.isAttract)
+        #expect(c.route == .home)
+    }
+
+    @Test func theScreenStaysAwakeOnlyDuringALiveRun() {
+        // QA-1 P1-4: hinge-only play never touches the screen.
+        let c = makeController("mode=shift:1-1;duo")
+        #expect(!c.keepsScreenAwake)                 // home
+        c.start(mode: .shift("1-1"))
+        #expect(c.keepsScreenAwake)
+        c.pause()
+        #expect(!c.keepsScreenAwake)
+        c.resume()
+        #expect(c.keepsScreenAwake)
+        c.quitToMenu()
+        #expect(!c.keepsScreenAwake)
+    }
+
+    @Test func closedCardNamesTheRun() {
+        #expect(GameController.runNoun(for: .shift("1-1")) == "shift")
+        #expect(GameController.runNoun(for: .rush) == "Rush run")
+        #expect(GameController.runNoun(for: .daily(3)) == "Daily Pour")
+    }
+}
+
+@MainActor
+struct Round4LayoutTests {
+    private let duo = CanvasInfo(size: CGSize(width: 669, height: 951), insets: EdgeInsets(), hasFold: true)
+    private let phone = CanvasInfo(size: CGSize(width: 402, height: 874),
+                                   insets: EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0), hasFold: false)
+
+    private func glass(x: CGFloat) -> GlassAnchor {
+        GlassAnchor(id: 1, x: x, lineY: 190, halfWidthAtLine: 58, rimY: 264, baseY: WorldLayout.counter, filling: false)
+    }
+
+    private func rect(_ center: CGPoint) -> CGRect {
+        let s = CalloutPlacement.pillSize
+        return CGRect(x: center.x - s.width / 2, y: center.y - s.height / 2, width: s.width, height: s.height)
+    }
+
+    @Test func fillToHereGoesRightOfTheTabOnTheDuo() {
+        // REVIEW-3 P1-1: active glass at the centre stop, the waiting glass on the left.
+        let waiting = CGRect(x: 105, y: 88, width: 120, height: 170)
+        let p = CalloutPlacement.place(glass: glass(x: 366), waiting: waiting, info: duo)
+        #expect(p.side == CalloutPlacement.Side.right)
+        let r = rect(p.center)
+        #expect(!r.intersects(duo.mapper.rect(waiting)))
+        #expect(r.minY >= duo.bottomHalfTop + 8 - 0.5)
+        #expect(r.maxX <= 669 - duo.sidePad + 0.5)
+    }
+
+    @Test func fillToHereNeverSitsOnTheWaitingGlassOnAPhone() {
+        let waiting = CGRect(x: 105, y: 88, width: 120, height: 170)
+        let p = CalloutPlacement.place(glass: glass(x: 366), waiting: waiting, info: phone)
+        let r = rect(p.center)
+        #expect(!r.intersects(phone.mapper.rect(waiting)))
+        #expect(r.minX >= phone.sidePad - 0.5 && r.maxX <= 402 - phone.sidePad + 0.5)
+        // Without a waiting glass the pill stays on screen too.
+        let free = CalloutPlacement.place(glass: glass(x: 366), waiting: nil, info: phone)
+        #expect(rect(free.center).minX >= phone.sidePad - 0.5)
+    }
+
+    @Test func duoVenuesNeverPutACardOnTheFold() {
+        // REVIEW-3 P1-3: two venues a screen, one per half, paged.
+        let pages = VenuesView.duoPages(VenueID.allCases)
+        #expect(pages.count == 3)
+        #expect(pages.allSatisfy { !$0.isEmpty && $0.count <= 2 })
+        #expect(pages.flatMap { $0 } == VenueID.allCases)
+        let slots = VenuesView.duoSlots(info: duo)
+        #expect(slots.top.upperBound <= duo.topHalfHeight - 8 + 0.01)
+        #expect(slots.bottom.lowerBound >= duo.bottomHalfTop + 8 - 0.01)
+        #expect(slots.bottom.upperBound <= 951)
+        // A venue card (two rows of shift bubbles, ~260 pt) fits each slot; the first also holds the header.
+        #expect(slots.top.upperBound - slots.top.lowerBound >= 260 + 60)
+        #expect(slots.bottom.upperBound - slots.bottom.lowerBound >= 260)
+    }
+
+    @Test func duoHomeRowClearsTheCoasters() {
+        // REVIEW-3 P2-5: at least 12 pt between the lowest coaster (the waiting glass sits 10 pt low) and the buttons.
+        let row = HomeView.rowFrame(info: duo, roomy: true, lowestGlassWorldY: HomeView.lowestGlassWorldY)
+        let coasterBottom = duo.mapper.y(HomeView.lowestGlassWorldY - HomeView.coasterDepth)
+        #expect(row.minY >= coasterBottom + 12 - 0.5)
+        #expect(row.maxY <= 951)
+        #expect(row.height >= 52)
+    }
+
+    @Test func recapGlyphsAreNotColourOnly() {
+        #expect(RecapGlyph.symbol(for: .perfect) == "checkmark")
+        #expect(RecapGlyph.symbol(for: .spill) == "drop.fill")
+        #expect(RecapGlyph.symbol(for: .short) == "arrow.down")
+    }
+}
+
+@MainActor
+struct GameCenterQueueTests {
+    @Test func entriesRoundTripAndOldOnesStillParse() {
+        let entry = GameCenterManager.encode(leaderboard: "brim.daily.score", score: 1840, day: 298, token: "abc")
+        let parsed = GameCenterManager.parse(entry)
+        #expect(parsed?.leaderboard == "brim.daily.score")
+        #expect(parsed?.score == Int(1840))
+        #expect(parsed?.day == Int(298))
+        #expect(parsed?.token == "abc")
+        let old = GameCenterManager.parse("brim.rush.best|2140")
+        #expect(old?.score == Int(2140))
+        #expect(old?.day == nil)
+        #expect(GameCenterManager.parse("garbage") == nil)
+    }
+
+    @Test func dailyScoresGoStaleAfterTheirDay() {
+        // QA-1 P2-17: never submitted onto the next day's recurring leaderboard.
+        let daily = GameCenterManager.QueuedScore(leaderboard: "brim.daily.score", score: 10, day: 298, token: "t")
+        #expect(!GameCenterManager.isStale(daily, today: 298))
+        #expect(GameCenterManager.isStale(daily, today: 299))
+        let rush = GameCenterManager.QueuedScore(leaderboard: "brim.rush.best", score: 10, day: nil, token: "t")
+        #expect(!GameCenterManager.isStale(rush, today: 400))
     }
 }

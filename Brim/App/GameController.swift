@@ -38,6 +38,9 @@ final class HUDState: ObservableObject {
     @Published var gateAfterPause = false
     /// Where the jug and the glass under the spout are (world), for hints and the "Fill to here" callout.
     @Published var anchors: PlayAnchors?
+    /// REVIEW-3 P1-4 fallback (phones): the next order's drink colour when no waiting glass fits on screen; the HUD
+    /// shows it as a small glass beside the progress dots. nil = nothing to show.
+    @Published var upcoming: RGBA?
 
     func apply(score: Int, streak: Int, multiplier: Int, strikes: Int, maxStrikes: Int, ordersDone: Int,
                ordersTotal: Int?, perfects: Int) {
@@ -96,6 +99,10 @@ final class GameController: ObservableObject, SceneDriver {
     @Published private(set) var usesTouch = true
     /// Book pose: the player chose "Play with touch instead"; the game runs in a portrait column.
     @Published private(set) var bookTouchOverride = false
+    /// QA-1 P1-2: this run is today's one scored Daily attempt (the pause card has no Restart).
+    @Published private(set) var isScoredDaily = false
+    /// QA-1 P2-25: a Daily whose scored attempt is already on file: practice ("Daily #297 · Practice" in the HUD).
+    @Published private(set) var isPracticeDaily = false
 
     let hud: HUDState
     let store: ProgressStore
@@ -134,6 +141,16 @@ final class GameController: ObservableObject, SceneDriver {
     private var hintTask: Task<Void, Never>?
     private var resultsTask: Task<Void, Never>?
 
+    /// The day of the scored Daily attempt being played (nil otherwise), and the run's judgements so far.
+    private var scoredDailyDay: Int?
+    private var runJudgements: [Judgement] = []
+    /// The screen is being kept awake (`UIApplication.isIdleTimerDisabled`, QA-1 P1-4).
+    private var screenKeptAwake = false
+    /// Demo `screen=menu`: the attract loop has been held mid-pour once (REVIEW-3 P1-2).
+    private var attractFrozeOnce = false
+    /// What we last told `FeedbackDirector.setIdle` (nil = never).
+    private var feedbackIdle: Bool?
+
     init(store: ProgressStore, settings: SettingsStore, demo: DemoConfig?) {
         self.store = store
         self.settings = settings
@@ -143,7 +160,12 @@ final class GameController: ObservableObject, SceneDriver {
         self.hinge = HingeTiltSource()
         self.touch = TouchTiltSource(viewHeight: 844)
         self.feedback = FeedbackDirector.shared
-        self.hingeSeen = (demo?.duo ?? false) || UserDefaults.standard.bool(forKey: OrientationLock.hingeKey)
+        // QA-1 P1-1: `brim.hasHinge` comes back with a backup restored onto another iPhone. Believe it only on a screen
+        // shaped like a Duo's; otherwise forget it (a real hinge report sets it again).
+        let stored = UserDefaults.standard.bool(forKey: OrientationLock.hingeKey)
+        let trusted = OrientationLock.trustsStoredHinge(stored, screen: UIScreen.main.bounds.size)
+        if stored && !trusted { UserDefaults.standard.removeObject(forKey: OrientationLock.hingeKey) }
+        self.hingeSeen = (demo?.duo ?? false) || trusted
         refreshInputMode()
     }
 
@@ -172,6 +194,22 @@ final class GameController: ObservableObject, SceneDriver {
         case .rush: return "Rush"
         case let .daily(day): return "Daily Pour #\(day)"
         case .practice: return "Practice"
+        }
+    }
+
+    /// The HUD's chip for the current run: `chipTitle`, plus "· Practice" on a Daily already poured today.
+    var hudTitle: String {
+        let base = Self.chipTitle(for: mode)
+        return isPracticeDaily ? "\(base) · Practice" : base
+    }
+
+    /// What the closed-pause card calls the run (QA-1 P2-21): "Your shift is paused", "Your Rush run is paused"…
+    static func runNoun(for mode: GameMode) -> String {
+        switch mode {
+        case .shift: return "shift"
+        case .rush: return "Rush run"
+        case .daily: return "Daily Pour"
+        case .practice: return "pour"
         }
     }
 
@@ -232,9 +270,32 @@ final class GameController: ObservableObject, SceneDriver {
         guard newLayout != layout else { return }
         layout = newLayout
         makeScene(newLayout)
-        if session != nil || route == .playing || isAttract {
+        if !isAttract, let session {
+            // QA-1 P1-3: the world is the same on every canvas (only the visible rect and the fold differ), so a run —
+            // live, paused, or finished behind its results card — is kept; the session adopts the canvas (visible
+            // rect, flat gate on with a fold, off without) and only the scene is swapped.
+            let hadFold = session.layout.hasFold
+            session.adoptCanvas(newLayout)
+            if newLayout.hasFold && !hadFold && isLiveRun && !usesTouch {
+                // Back on the fold (book-pose touch column → tabletop): the hinge may be anywhere, so the gate closes
+                // until the phone lies flat (the pose's resume ran before the gate existed again).
+                session.requireFlat()
+                hinge.reset()
+                flatSince = nil
+                if hud.gateAfterPause != session.snapshot.needsFlat { hud.gateAfterPause = session.snapshot.needsFlat }
+            }
+            scene?.reset(for: session.snapshot)
+            publishHUD(session.snapshot, now: CACurrentMediaTime(), force: true)
+            trace(String(format: "BRIM-T canvas swap kept run t=%.2f", session.snapshot.time))
+        } else if session != nil || route == .playing || isAttract {
             buildSession()
         }
+    }
+
+    /// The canvas changed size (RootView). QA-1 P2-4: the inner display coming back means the lid is open, even if no
+    /// hinge sample has said so yet (a still hinge may not report), so "shut" is released.
+    func canvasDidChange(_ canvas: CGSize) {
+        if isShut && max(canvas.width, canvas.height) >= PoseRule.coverMaxSide { isShut = false }
     }
 
     func setAppActive(_ active: Bool) {
@@ -370,13 +431,41 @@ final class GameController: ObservableObject, SceneDriver {
 
     func start(mode: GameMode) {
         resultsTask?.cancel()
+        closeOutDailyAttempt()
         isAttract = false
         self.mode = mode
         summary = nil
+        // QA-1 P1-2: a Daily marks its scored attempt the moment it starts; a Daily already on file is practice.
+        if case let .daily(day) = mode {
+            let scored = store.beginDailyAttempt(day: day)
+            scoredDailyDay = scored ? day : nil
+            isScoredDaily = scored
+            isPracticeDaily = !scored
+        } else {
+            scoredDailyDay = nil
+            if isScoredDaily { isScoredDaily = false }
+            if isPracticeDaily { isPracticeDaily = false }
+        }
         clearRunPauses()
         setRoute(.playing)
         configureSources()
         buildSession()
+        syncIdleTimer()
+    }
+
+    /// Leaving today's scored Daily before it finished (Menu, Restart, another mode) files the pour so far as the day's
+    /// score (QA-1 P1-2: no free retries). Nothing served yet = nothing filed.
+    private func closeOutDailyAttempt() {
+        guard let day = scoredDailyDay else { return }
+        scoredDailyDay = nil
+        if isScoredDaily { isScoredDaily = false }
+        guard !recordedFinish, let filed = store.closeDailyAttempt(day: day) else { return }
+        let result = RunResult(mode: .daily(day), score: filed.score, stars: 0, perfects: filed.perfects, bestStreak: 0,
+                               judgements: filed.judgements, poured: 0, cleared: false)
+        var outcome = RecordOutcome()
+        outcome.dailyCounted = true
+        GameCenterManager.shared.report(result: result, outcome: outcome, progress: store.data)
+        trace("BRIM-T daily left day=\(day) score=\(filed.score) glasses=\(filed.judgements.count)")
     }
 
     func restart() {
@@ -435,7 +524,9 @@ final class GameController: ObservableObject, SceneDriver {
         let tilt = activeSource.tilt(at: now)
         // ROUND-3 decision 1: a slow close between the input guard's cut (78°) and the autopause (70°) must not get the
         // glass judged as a Short; lock it behind the flat gate the moment the hinge reads as closing.
-        if closingGuardActive && isLiveRun && hinge.isClosing && !session.snapshot.needsFlat {
+        // QA-1 P2-3: not while pouring by touch (the hinge isn't the input, and its guard latch would re-close the gate
+        // every frame between 70° and 78°).
+        if closingGuardActive && !usesTouch && isLiveRun && hinge.isClosing && !session.snapshot.needsFlat {
             session.requireFlat()
         }
         let events = session.step(dt: step, tilt: tilt)
@@ -460,9 +551,36 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     private func setRoute(_ newRoute: AppRoute) {
-        guard route != newRoute else { return }
-        route = newRoute
-        if demo != nil { print("BRIM-T screen \(newRoute.rawValue)") }
+        if route != newRoute {
+            route = newRoute
+            if demo != nil { print("BRIM-T screen \(newRoute.rawValue)") }
+        }
+        syncIdleTimer()
+        syncFeedbackIdle()
+    }
+
+    /// QA-1 P2-7 (battery): the sound and haptic engines idle on every screen without a pour (Home and its silent
+    /// attract loop, Venues, Settings, results) and wake when a run starts. Menu taps still sound (Feel wakes them).
+    private func syncFeedbackIdle() {
+        let idle = route != .playing || isAttract
+        if feedbackIdle != idle {
+            feedbackIdle = idle
+            feedback.setIdle(idle)
+        }
+    }
+
+    /// QA-1 P1-4: on a Duo a whole shift can pass without a touch (the hinge is the input), so Auto-Lock must not dim
+    /// and lock the screen mid-pour. Kept awake only during a live, unpaused run; menus, results, pause and the
+    /// background let the screen sleep as usual.
+    var keepsScreenAwake: Bool {
+        route == .playing && !isAttract && !isPaused && summary == nil
+    }
+
+    private func syncIdleTimer() {
+        let awake = keepsScreenAwake
+        guard awake != screenKeptAwake else { return }
+        screenKeptAwake = awake
+        UIApplication.shared.isIdleTimerDisabled = awake
     }
 
     private func setUserPaused(_ paused: Bool) {
@@ -475,6 +593,7 @@ final class GameController: ObservableObject, SceneDriver {
         let wasPaused = isPaused
         if on { pauseReasons.insert(reason) } else { pauseReasons.remove(reason) }
         syncFeedbackPause()
+        syncIdleTimer()
         if wasPaused && !isPaused { resumeHook() }
     }
 
@@ -518,6 +637,8 @@ final class GameController: ObservableObject, SceneDriver {
 
     private func startAttract() {
         resultsTask?.cancel()
+        closeOutDailyAttempt()
+        if isPracticeDaily { isPracticeDaily = false }
         isAttract = true
         mode = .practice
         summary = nil
@@ -585,6 +706,7 @@ final class GameController: ObservableObject, SceneDriver {
         lastHUDPublish = -1
         flatSince = nil
         recap = []
+        runJudgements = []
         hintTask?.cancel()
         activeHint = nil
         hud.lastJudgement = nil
@@ -593,6 +715,7 @@ final class GameController: ObservableObject, SceneDriver {
         if demo != nil && streakSeed > 0 && !isAttract {
             let progress = DemoRunner.playUpToStreak(newSession, streak: streakSeed)
             recap = progress.recap
+            runJudgements = progress.recap.map { $0.judgement }
             servedCount = progress.served
             if let last = progress.recap.last { hud.lastJudgement = last.judgement }
         }
@@ -635,6 +758,12 @@ final class GameController: ObservableObject, SceneDriver {
                 hud.serveTick &+= 1
                 if let item = GlassRecap.from(snapshot, glassID: glassID, judgement: judgement) {
                     recap.append(item)
+                }
+                runJudgements.append(judgement)
+                // QA-1 P1-2: the scored Daily's pour so far is saved on every serve (leaving or a crash files it).
+                if let day = scoredDailyDay {
+                    store.updateDailyAttempt(day: day, score: snapshot.score, judgements: runJudgements,
+                                             perfects: snapshot.perfects)
                 }
                 if activeHint == .stop {
                     store.markHintSeen(HintKind.stop.rawValue)
@@ -687,11 +816,21 @@ final class GameController: ObservableObject, SceneDriver {
             flatSince = nil
         }
         if hud.showFlatGate != gate { hud.showFlatGate = gate }
+        var upcoming: RGBA?
+        if !isAttract, s.phase != .finished, !(layout?.hasFold ?? false),
+           !s.glasses.contains(where: { $0.isWaitingInSlot }), let order = session?.upcomingOrder {
+            upcoming = LiquidCatalog.liquid(order.liquid).top
+        }
+        if hud.upcoming != upcoming { hud.upcoming = upcoming }
         if let layout {
             var anchors = AnchorMath.anchors(s, layout: layout)
             // The scene knows the jug's drawn bounds (walls, handle, lid); prefer them to the interior outline.
             if let drawn = scene?.jugWorldBounds, !drawn.isNull, !drawn.isEmpty {
                 anchors.jug = drawn.insetBy(dx: -6, dy: -6)
+            }
+            // REVIEW-3 P1-1: the waiting glass as drawn (smaller, lower) when the scene has it; with its coaster.
+            if let waiting = scene?.waitingGlassWorldFrame, !waiting.isNull, !waiting.isEmpty {
+                anchors.waiting = waiting.insetBy(dx: -8, dy: -8)
             }
             anchors = AnchorMath.quantized(anchors)
             if hud.anchors != anchors { hud.anchors = anchors }
@@ -708,6 +847,8 @@ final class GameController: ObservableObject, SceneDriver {
         activeHint = nil
         let today = LevelCatalog.dayNumber(for: Date())
         let outcome = store.record(result, today: today)
+        // The scored Daily is on file now (recorded above); nothing is left to close out.
+        scoredDailyDay = nil
         GameCenterManager.shared.report(result: result, outcome: outcome, progress: store.data)
         let summary = makeSummary(result, outcome: outcome, recap: recap)
         let immediate = demo?.freezeOn == .finished
@@ -746,7 +887,18 @@ final class GameController: ObservableObject, SceneDriver {
     // MARK: Demo freeze
 
     private func checkFreeze(_ s: GameSnapshot, events: [GameEvent], now: TimeInterval) {
-        guard let target = demo?.freezeOn, !frozen, !isAttract else { return }
+        guard let demo, !frozen else { return }
+        let target: DemoConfig.Freeze
+        if isAttract {
+            // REVIEW-3 P1-2: the menu capture (`screen=menu`, with or without `freezeOn=midpour`) holds the attract
+            // loop once, mid-pour with the jug really flowing, so the home frame shows a stream, never a tail of drops.
+            guard demo.effectiveScreen == .menu, !attractFrozeOnce, route == .home else { return }
+            guard s.jug.flow > 0.05 else { return }
+            target = .midpour
+        } else {
+            guard let wanted = demo.freezeOn else { return }
+            target = wanted
+        }
         if let at = freezeAt {
             if simTime >= at { freeze(target.rawValue, snapshot: s, now: now) }
             return
@@ -789,6 +941,7 @@ final class GameController: ObservableObject, SceneDriver {
 
     private func freeze(_ reason: String, snapshot: GameSnapshot, now: TimeInterval) {
         frozen = true
+        if isAttract { attractFrozeOnce = true }
         hintTask?.cancel()
         if demo?.hints != .fresh { activeHint = nil }
         syncFeedbackPause()

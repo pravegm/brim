@@ -122,10 +122,12 @@ enum ScenePaths {
     }
 
     /// Lateral wobble of a ribbon's centre line: a travelling sine along the arc length, zero at the spout and
-    /// growing over the first ~120 pt, amplitude `amplitude × width`.
-    static func wobble(_ p: inout [CGPoint], widths w: [CGFloat], amplitude: CGFloat, time: CGFloat) {
+    /// growing over the first ~120 pt, amplitude `amplitude × width`, never more than `maxOffset` pt sideways
+    /// (thick drinks fall as a straight rope, REVIEW-3 P2-1).
+    static func wobble(_ p: inout [CGPoint], widths w: [CGFloat], amplitude: CGFloat, time: CGFloat,
+                       maxOffset: CGFloat = CGFloat.greatestFiniteMagnitude) {
         let n = min(p.count, w.count)
-        guard n >= 3, amplitude > 0 else { return }
+        guard n >= 3, amplitude > 0, maxOffset > 0 else { return }
         let src = p
         var s: CGFloat = 0
         for i in 0..<n {
@@ -136,7 +138,8 @@ enum ScenePaths {
             if len < 0.0001 { continue }
             let nx = -dy / len, ny = dx / len
             let ramp = min(1, s / 120)
-            let off = amplitude * w[i] * ramp * sin(time * 5.5 - s * 0.05)
+            let amp = min(amplitude * w[i], maxOffset)
+            let off = amp * ramp * sin(time * 5.5 - s * 0.05)
             p[i] = CGPoint(x: src[i].x + nx * off, y: src[i].y + ny * off)
         }
     }

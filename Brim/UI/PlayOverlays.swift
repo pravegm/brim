@@ -37,6 +37,17 @@ struct HUDView: View {
                     .accessibilityLabel(title)
                 HStack(spacing: 8) {
                     orders
+                    if let next = hud.upcoming, !isPractice {
+                        // REVIEW-3 P1-4 fallback: the next glass, when it doesn't fit on the counter.
+                        TumblerShape()
+                            .fill(Color(.sRGB, red: next.r, green: next.g, blue: next.b, opacity: 1))
+                            .overlay(TumblerShape().stroke(BrimTheme.ink.opacity(0.55), lineWidth: 1.4))
+                            .frame(width: 11, height: 14)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(BrimTheme.card.opacity(0.75)))
+                            .accessibilityLabel("Next glass")
+                    }
                     if hud.maxStrikes > 0 && !isPractice {
                         strikes
                     }
@@ -122,7 +133,8 @@ struct HUDView: View {
         .padding(.vertical, 3)
         .background(Capsule().fill(BrimTheme.card.opacity(0.75)))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(hud.strikes) of \(hud.maxStrikes) spills")
+        // QA-1 P2-22: Shorts strike too in shifts and the Daily, so these are strikes, not spills.
+        .accessibilityLabel("\(hud.strikes) of \(hud.maxStrikes) strikes")
     }
 
     @ViewBuilder private var orders: some View {
@@ -201,8 +213,10 @@ struct HintsOverlay: View {
     var body: some View {
         ZStack {
             if let hint, !hud.showFlatGate {
-                if hint == .lift || hint == .stop, let glass = hud.anchors?.glass, glass.filling || hint == .lift {
-                    FillToHereCallout(glass: glass, info: info, bob: bob)
+                // Goal first, before the first pour only (REVIEW-3 P2-2: no faded pill lingering mid-pour; the lift
+                // hint ends when the pour starts).
+                if hint == .lift, let glass = hud.anchors?.glass {
+                    FillToHereCallout(glass: glass, waiting: hud.anchors?.waiting, info: info, bob: bob)
                         .transition(.opacity)
                 }
                 hintCard(hint)
@@ -288,6 +302,24 @@ struct HintSpot: Equatable {
         if let p = CardPlacement.beside(jug, size: size, in: topHalf) {
             return HintSpot(center: p, width: size.width, compact: false)
         }
+        // REVIEW-3 P2-2 (Duo): a tipped jug leaves less room beside it. Try a narrower (taller) card beside it, then the
+        // raised half's free top corners, before the counter band (where the card would sit on the coasters).
+        if info.hasFold {
+            let narrow = CGSize(width: min(size.width, 176), height: size.height + 40)
+            if let p = CardPlacement.beside(jug, size: narrow, in: topHalf) {
+                return HintSpot(center: p, width: narrow.width, compact: false)
+            }
+            let keepOut = jug.insetBy(dx: -10, dy: -10)
+            let corners = [CGPoint(x: topHalf.maxX - narrow.width / 2, y: topHalf.minY + narrow.height / 2),
+                           CGPoint(x: topHalf.minX + narrow.width / 2, y: topHalf.minY + narrow.height / 2)]
+            for c in corners {
+                let r = CGRect(x: c.x - narrow.width / 2, y: c.y - narrow.height / 2, width: narrow.width,
+                               height: narrow.height)
+                if topHalf.contains(r) && !r.intersects(keepOut) {
+                    return HintSpot(center: c, width: narrow.width, compact: false)
+                }
+            }
+        }
         // Narrow phone: the counter band under the glasses (the front of the counter), full width.
         let bandTop = info.counterY + 6
         let bandBottom = info.size.height - max(info.insets.bottom - 6, 8)
@@ -300,41 +332,46 @@ struct HintSpot: Equatable {
     }
 }
 
-/// "Fill to here": a pill with an arrow pointing at the glass's line, beside the glass on the side with more room.
+/// "Fill to here": a pill with an arrow pointing at the glass's line. REVIEW-3 P1-1: it never sits on the waiting glass
+/// (`PlayAnchors.waiting`): on the Duo it goes to the right of the tab, on a narrow phone above the rim if neither side
+/// is free (`CalloutPlacement`).
 struct FillToHereCallout: View {
     let glass: GlassAnchor
+    let waiting: CGRect?
     let info: CanvasInfo
     let bob: Bool
 
     var body: some View {
-        let m = info.mapper
-        // Never on the crease (ROUND-3 decision 3): the pill's top stays ≥ 8 pt below the fold.
-        let lineY = info.hasFold ? max(m.y(glass.lineY), info.bottomHalfTop + 8 + 15) : m.y(glass.lineY)
-        let left = m.x(glass.x - glass.halfWidthAtLine)
-        let right = m.x(glass.x + glass.halfWidthAtLine)
-        let pillWidth: CGFloat = 128
-        let roomRight = info.size.width - info.sidePad - right
-        let onRight = roomRight >= pillWidth + 12 && roomRight >= left - info.sidePad
-        let x = onRight ? right + 10 + pillWidth / 2 : left - 10 - pillWidth / 2
+        let spot = CalloutPlacement.place(glass: glass, waiting: waiting, info: info)
         let nudge: CGFloat = bob ? 4 : 0
+        let offset: CGSize
+        switch spot.side {
+        case .right: offset = CGSize(width: nudge, height: 0)
+        case .left: offset = CGSize(width: -nudge, height: 0)
+        case .above: offset = CGSize(width: 0, height: -nudge)
+        }
         return HStack(spacing: 5) {
-            if onRight {
+            if spot.side == .right {
                 Image(systemName: "arrowtriangle.left.fill").font(.system(size: 11, weight: .black))
             }
             Text("Fill to here")
                 .font(BrimTheme.text(14, .heavy))
                 .lineLimit(1)
-            if !onRight {
+                .minimumScaleFactor(0.8)
+            if spot.side == .left {
                 Image(systemName: "arrowtriangle.right.fill").font(.system(size: 11, weight: .black))
+            }
+            if spot.side == .above {
+                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 11, weight: .black))
             }
         }
         .foregroundStyle(BrimTheme.ink)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Capsule().fill(BrimTheme.gold).shadow(color: BrimTheme.ink.opacity(0.18), radius: 5, y: 2))
-        .frame(width: pillWidth)
-        .position(x: x + (onRight ? nudge : -nudge), y: lineY)
-        .animation(.easeOut(duration: 0.25), value: lineY)
+        .frame(width: CalloutPlacement.pillSize.width)
+        .position(x: spot.center.x + offset.width, y: spot.center.y + offset.height)
+        .animation(.easeOut(duration: 0.25), value: spot.center)
         .accessibilityLabel("Fill to the line")
     }
 }
@@ -446,7 +483,7 @@ struct ClosedPauseView: View {
                             .foregroundStyle(BrimTheme.ink)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Your shift is paused. It carries on once the phone lies flat.")
+                        Text("Your \(GameController.runNoun(for: controller.mode)) is paused. It carries on once the phone lies flat.")
                             .font(BrimTheme.text(14, .bold))
                             .foregroundStyle(BrimTheme.inkSoft)
                             .multilineTextAlignment(.center)
@@ -525,12 +562,22 @@ struct PauseView: View {
                         Label("Resume", systemImage: "play.fill")
                     }
                     HStack(spacing: 12) {
-                        TapButton(kind: .secondary, action: { controller.restart() }) {
-                            Label("Restart", systemImage: "arrow.counterclockwise")
+                        // QA-1 P1-2: today's scored Daily has no Restart (it would be a free retry).
+                        if !controller.isScoredDaily {
+                            TapButton(kind: .secondary, action: { controller.restart() }) {
+                                Label("Restart", systemImage: "arrow.counterclockwise")
+                            }
                         }
                         TapButton(kind: .quiet, action: { controller.quitToMenu() }) {
                             Label("Menu", systemImage: "house.fill")
                         }
+                    }
+                    if controller.isScoredDaily {
+                        Text("Today's scored pour: leave now and the glasses so far are your score.")
+                            .font(BrimTheme.text(13, .bold))
+                            .foregroundStyle(BrimTheme.cream.opacity(0.85))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }

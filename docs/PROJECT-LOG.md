@@ -57,3 +57,30 @@
   - the jug lid is drawn as an open white oval;
   - the Duo Home right-column buttons overlap the glass;
   - the glass sits right of centre.
+
+## Round 3 (25 Oct, evening)
+- **REVIEW-2: 7.5/10, "close".** New P0 from the Duo frames: closing the phone mid-pour read as a full tip and cost a
+  strike.
+- The fix is three layers:
+  - an input guard that stops pouring below 78° or when the phone is closing fast;
+  - an autopause below 70°;
+  - a flat re-arm on every resume, plus `requireFlat` the moment the hinge reads as closing.
+- CI proof on the Duo simulator: `CLOSE-GUARD autopause@31 resume@55 judged-between=0 PASS`.
+- Other changes:
+  - the pour is centred and the next glass waits in a slot;
+  - signature vessels per venue: soda dispenser, steel shake tin, potion flask, sand scoop;
+  - a fat, opaque stream, and puddles that dry;
+  - nothing sits on the fold.
+- 128/128 tests pass. The store pipeline's first run gave 10 captioned frames, all at slot size, 0 flagged.
+- **REVIEW-3: 8.4/10. Launch call "yes"** on three conditions: fix its 4 P1s and re-shoot, pass a real-Duo TestFlight
+  session, and build the store kit from the new frames. The critic calls it "a strong candidate for an Apple Duo
+  feature".
+- **QA-1** (code audit) found no P0 and 4 P1s:
+  - the persisted hinge flag on a non-Duo;
+  - the Daily retry loophole;
+  - a canvas change restarts the run;
+  - the idle timer can lock the screen.
+- Achievement badge art: 10 badges at 1024 px, rendered by CI.
+
+## Round 4 (final polish): in progress
+- The REVIEW-3 and QA-1 P1s are mandatory (`design/ROUND-4.md`).

@@ -413,7 +413,10 @@ enum SceneArt {
     }
 
     static func streak(_ n: Int) -> SceneSprite {
-        label("×\(n) STREAK", pointSize: 30, fill: SceneColor.gold, outline: SceneColor.ink.withAlphaComponent(0.88),
+        // Streaks climb one at a time: drop the label a few steps back so a long Rush streak doesn't keep one
+        // texture per value forever (QA-1 P2-12). A sprite still on screen keeps its own texture reference.
+        if n > 4 { labels["streak2-\(n - 4)"] = nil }
+        return label("×\(n) STREAK", pointSize: 30, fill: SceneColor.gold, outline: SceneColor.ink.withAlphaComponent(0.88),
               key: "streak2-\(n)")
     }
 
@@ -695,20 +698,28 @@ private struct SceneBackdropPainter {
     }
 
     private func paintMarble(top: CGFloat) {
+        // REVIEW-3 P2-7: fewer, softer, lower-contrast veins that drift gently sideways (no zig-zags that read as
+        // cracks), and none behind the glasses: they live in the far band toward the fold (above the tallest rim,
+        // world y ≥ 350) and in the near band in front of the coasters (y ≤ 78).
         var rng = SceneRNG(seed: 88)
-        for i in 0..<14 {
+        let bands: [(CGFloat, CGFloat)] = [(352, top - 10), (352, top - 10), (352, top - 10), (352, top - 10),
+                                           (20, 76), (20, 76), (20, 76)]
+        for (i, b) in bands.enumerated() {
+            guard b.1 > b.0 else { continue }
             let v = UIBezierPath()
-            var x = rng.range(-80, W)
-            var y = rng.range(0, top)
+            var x = rng.range(-120, W - 80)
+            var y = rng.range(b.0, b.1)
             v.move(to: pt(x, y))
             for _ in 0..<4 {
-                let nx = x + rng.range(40, 140), ny = y + rng.range(-40, 40)
-                v.addQuadCurve(to: pt(nx, ny), controlPoint: pt((x + nx) * 0.5 + rng.range(-20, 20), (y + ny) * 0.5 + rng.range(-25, 25)))
+                let nx = x + rng.range(70, 160)
+                let ny = min(max(y + rng.range(-9, 9), b.0), b.1)
+                v.addQuadCurve(to: pt(nx, ny), controlPoint: pt((x + nx) * 0.5 + rng.range(-12, 12), (y + ny) * 0.5 + rng.range(-6, 6)))
                 x = nx
                 y = ny
             }
-            v.lineWidth = rng.range(0.6, i % 4 == 0 ? 2.2 : 1.2)
-            (i % 3 == 0 ? UIColor(white: 1, alpha: 0.7) : SceneColor.hex(0x8A8FA0, rng.range(0.12, 0.24))).setStroke()
+            v.lineWidth = rng.range(0.6, i % 3 == 0 ? 1.5 : 1.0)
+            v.lineCapStyle = .round
+            (i % 3 == 0 ? UIColor(white: 1, alpha: 0.5) : SceneColor.hex(0x8A8FA0, rng.range(0.06, 0.11))).setStroke()
             v.stroke()
         }
         // Polished reflection band.

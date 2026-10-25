@@ -21,6 +21,9 @@ struct StandUpCard: View {
 
     var body: some View {
         ZStack {
+            // Opaque (REVIEW-3 P2-3): the paused scene never shows through the card.
+            BrimTheme.cream
+                .ignoresSafeArea()
             LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.7)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
             GeometryReader { geo in
@@ -37,22 +40,32 @@ struct StandUpCard: View {
 
     /// Book pose on a Duo (REVIEW-2 P2-7): the drawing on the left page, the words and buttons on the right page,
     /// nothing within 24 pt of the vertical fold.
+    /// REVIEW-3 P2-6: each column is centred in its page with ≥ 32 pt margins (the text no longer runs to the edge).
+    static let pageMargin: CGFloat = 32
+
     private func bookPages(_ size: CGSize) -> some View {
         let page = max(size.width / 2 - Self.creaseHalf - Self.creaseClear, 0)
+        let leftInner = max(page - Self.pageMargin - insets.leading - Self.pageMargin, 0)
+        let rightInner = max(page - Self.pageMargin - insets.trailing - Self.pageMargin, 0)
+        let drawing = min(240, leftInner, max(size.height - 80, 120))
         return HStack(spacing: 0) {
             TurnPhoneDrawing()
-                .frame(width: 220, height: 220)
-                .frame(width: page, height: size.height)
+                .frame(width: drawing, height: drawing)
+                .frame(width: leftInner, height: size.height)
+                .padding(.leading, Self.pageMargin + insets.leading)
+                .padding(.trailing, Self.pageMargin)
             Color.clear
                 .frame(width: 2 * (Self.creaseHalf + Self.creaseClear), height: size.height)
             ScrollView(showsIndicators: false) {
                 copy
-                    .padding(.trailing, 20 + insets.trailing)
+                    .frame(maxWidth: min(rightInner, 400), alignment: .leading)
                     .padding(.vertical, 24)
-                    .frame(width: page, alignment: .leading)
+                    .frame(width: rightInner)
                     .frame(minHeight: max(size.height - insets.top - insets.bottom, 0))
             }
-            .frame(width: page, height: max(size.height - insets.top - insets.bottom, 0))
+            .frame(width: rightInner, height: max(size.height - insets.top - insets.bottom, 0))
+            .padding(.leading, Self.pageMargin)
+            .padding(.trailing, Self.pageMargin + insets.trailing)
             .padding(.top, insets.top)
             .padding(.bottom, insets.bottom)
         }
@@ -134,9 +147,14 @@ struct StandUpCard: View {
 struct TurnPhoneDrawing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Demo captures hold the clearest moment (turned, top half lifted: the tabletop pose) instead of a random
+    /// mid-turn frame (REVIEW-3 P2-6).
+    private var still: Bool { DemoConfig.current != nil }
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
-            let t = reduceMotion ? 1.6 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4.4)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || still)) { context in
+            let t = reduceMotion ? 1.6
+                : (still ? 3.0 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4.4))
             let turn = Self.ease(min(max((t - 0.3) / 0.9, 0), 1))                 // 0 = book, 1 = fold across
             let liftIn = Self.ease(min(max((t - 1.8) / 0.8, 0), 1))
             let liftOut = Self.ease(min(max((t - 3.4) / 0.7, 0), 1))
@@ -231,6 +249,10 @@ struct CoverView: View {
 
     var body: some View {
         ZStack {
+            // Opaque (REVIEW-3 P2-3): a ghost of the live scene (a tipped jug) behind "Open me to pour" read as "it's
+            // pouring while shut".
+            BrimTheme.cream
+                .ignoresSafeArea()
             LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.75)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
             VStack(spacing: 18) {

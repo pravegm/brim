@@ -19,8 +19,8 @@ enum OrientationLock {
     private(set) static var hingeSeen = false
 
     static func mask(screen: CGSize) -> UIInterfaceOrientationMask {
-        allowsLandscape(hasHinge: UserDefaults.standard.bool(forKey: hingeKey) || hingeSeen, screen: screen)
-            ? .allButUpsideDown : .portrait
+        let stored = trustsStoredHinge(UserDefaults.standard.bool(forKey: hingeKey), screen: screen)
+        return allowsLandscape(hasHinge: stored || hingeSeen, screen: screen) ? .allButUpsideDown : .portrait
     }
 
     /// Pure rule (tested): landscape only on a device with a hinge, or one whose screen looks like a Duo's.
@@ -28,6 +28,13 @@ enum OrientationLock {
         if hasHinge { return true }
         guard screen.width > 0, screen.height > 0 else { return false }
         return min(screen.width, screen.height) / max(screen.width, screen.height) > 0.6
+    }
+
+    /// QA-1 P1-1 (pure, tested): `brim.hasHinge` travels in backups and Quick Start transfers, so a saved "this device
+    /// has a hinge" is only believed on a screen shaped like a Duo's (both Duo displays are ~0.7 wide-to-tall, every
+    /// other iPhone ~0.46). Restored onto any other iPhone, the flag is ignored and the phone plays with touch.
+    nonisolated static func trustsStoredHinge(_ stored: Bool, screen: CGSize) -> Bool {
+        stored && allowsLandscape(hasHinge: false, screen: screen)
     }
 
     /// A hinge just reported: let the windows rotate if they were held in portrait.

@@ -84,6 +84,7 @@ final class TouchTiltSource: TiltSource {
     }
 
     func tilt(at time: TimeInterval) -> Double {
+        TiltInputLog.shared.noteRead(self)
         guard time.isFinite else { return spring.value }
         let dt: Double
         if let last = lastTime {
@@ -139,7 +140,8 @@ final class DemoTiltSource: TiltSource {
     }
 
     func tilt(at time: TimeInterval) -> Double {
-        Self.value(of: keyframes, at: time - start)
+        TiltInputLog.shared.noteRead(self)
+        return Self.value(of: keyframes, at: time - start)
     }
 
     /// Piecewise-linear interpolation, clamped to 0…90.

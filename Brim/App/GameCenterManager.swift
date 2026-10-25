@@ -51,13 +51,44 @@ final class GameCenterManager {
         guard !disabled else { return }
         switch result.mode {
         case .rush:
-            if result.score > 0 { queueScore(result.score, leaderboard: Leaderboard.rush) }
-        case .daily:
-            if outcome.dailyCounted { queueScore(result.score, leaderboard: Leaderboard.daily) }
+            if result.score > 0 { queueScore(result.score, leaderboard: Leaderboard.rush, day: nil) }
+        case let .daily(day):
+            if outcome.dailyCounted { queueScore(result.score, leaderboard: Leaderboard.daily, day: day) }
         default:
             break
         }
         unlock(progress.earnedAchievements)
+    }
+
+    // MARK: - Queue entries (pure; tested)
+
+    /// One queued score: `leaderboard|score|day|token` (day -1 = not a Daily). Round-3 entries were `leaderboard|score`.
+    struct QueuedScore: Equatable {
+        var leaderboard: String
+        var score: Int
+        var day: Int?
+        var token: String
+    }
+
+    nonisolated static func encode(leaderboard: String, score: Int, day: Int?, token: String) -> String {
+        "\(leaderboard)|\(score)|\(day ?? -1)|\(token)"
+    }
+
+    nonisolated static func parse(_ entry: String) -> QueuedScore? {
+        let parts = entry.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 2, !parts[0].isEmpty, let value = Int(parts[1]) else { return nil }
+        var day: Int?
+        if parts.count >= 3, let d = Int(parts[2]), d >= 0 { day = d }
+        let token = parts.count >= 4 ? parts[3] : entry
+        return QueuedScore(leaderboard: parts[0], score: value, day: day, token: token)
+    }
+
+    /// QA-1 P2-17: a Daily score flushed after its day has ended would land on the next day's recurring leaderboard,
+    /// so it is dropped instead. Rush scores never go stale.
+    nonisolated static func isStale(_ score: QueuedScore, today: Int) -> Bool {
+        guard score.leaderboard == Leaderboard.daily else { return false }
+        guard let day = score.day else { return true }
+        return day != today
     }
 
     func unlock(_ ids: Set<String>) {
@@ -76,24 +107,37 @@ final class GameCenterManager {
         flush()
     }
 
-    private func queueScore(_ score: Int, leaderboard: String) {
+    private func queueScore(_ score: Int, leaderboard: String, day: Int?) {
         var queue = UserDefaults.standard.stringArray(forKey: pendingScoresKey) ?? []
-        queue.append("\(leaderboard)|\(score)")
+        queue.append(Self.encode(leaderboard: leaderboard, score: score, day: day, token: UUID().uuidString))
         UserDefaults.standard.set(Array(queue.suffix(20)), forKey: pendingScoresKey)
         flush()
     }
 
+    /// Scores submitted and not yet confirmed (by entry), so a second flush doesn't send them twice.
+    private var inFlight: Set<String> = []
+
     private func flush() {
         guard isAuthenticated, !disabled else { return }
 
-        let scores = UserDefaults.standard.stringArray(forKey: pendingScoresKey) ?? []
-        if !scores.isEmpty {
-            UserDefaults.standard.set([String](), forKey: pendingScoresKey)
-            for entry in scores {
-                let parts = entry.split(separator: "|").map(String.init)
-                guard parts.count == 2, let value = Int(parts[1]) else { continue }
-                GKLeaderboard.submitScore(value, context: 0, player: GKLocalPlayer.local,
-                                          leaderboardIDs: [parts[0]]) { _ in }
+        // QA-1 P2-17: entries leave the queue only when Game Center confirms them (an offline submit stays queued);
+        // stale Daily entries and unreadable ones are dropped first.
+        let today = LevelCatalog.dayNumber(for: Date())
+        let queued = UserDefaults.standard.stringArray(forKey: pendingScoresKey) ?? []
+        let kept = queued.filter { entry in
+            guard let parsed = Self.parse(entry) else { return false }
+            return !Self.isStale(parsed, today: today)
+        }
+        if kept.count != queued.count { UserDefaults.standard.set(kept, forKey: pendingScoresKey) }
+        for entry in kept where !inFlight.contains(entry) {
+            guard let parsed = Self.parse(entry) else { continue }
+            inFlight.insert(entry)
+            GKLeaderboard.submitScore(parsed.score, context: 0, player: GKLocalPlayer.local,
+                                      leaderboardIDs: [parsed.leaderboard]) { error in
+                let ok = error == nil
+                Task { @MainActor in
+                    GameCenterManager.shared.didSubmit(entry, ok: ok)
+                }
             }
         }
 
@@ -111,6 +155,13 @@ final class GameCenterManager {
                 GameCenterManager.shared.didReport(ids, ok: ok)
             }
         }
+    }
+
+    private func didSubmit(_ entry: String, ok: Bool) {
+        inFlight.remove(entry)
+        guard ok else { return }
+        let queue = (UserDefaults.standard.stringArray(forKey: pendingScoresKey) ?? []).filter { $0 != entry }
+        UserDefaults.standard.set(queue, forKey: pendingScoresKey)
     }
 
     private func didReport(_ ids: [String], ok: Bool) {

@@ -112,13 +112,13 @@ GitHub builds Brim for you on Apple's latest Xcode (your Mac can't run it). It n
 
 | Minute | Try this | Notice |
 |---|---|---|
-| 0–1 | Open Brim for the first time. Follow the hint "Lift the top half to pour" | Did you get it without thinking? How far did you lift before anything poured? |
+| 0–1 | Open Brim for the first time. Follow the hints "Lay it flat to start", then "lift the top half to pour" | Did you get it without thinking? How far did you lift before anything poured? |
 | 1–3 | Pour five glasses at the Lemonade Stand | Does the pour start when you expect and stop when you lower the lid? Could you get a Perfect within 5 tries? Did it feel fair when you missed? |
 | 3–4 | Keep going until the jug is nearly empty | Did you need to lift further as it emptied, and did that feel natural? |
 | 4–5 | Pour with your eyes half closed, listening | Can you hear the pitch rise as the glass fills? Do you feel the glugs in your hand? |
 | 5–7 | Play one **Rush** run | Did you want "one more go" at the end? Anything annoying? |
 | 7–8 | Play the **Daily Pour**, then tap **Share** and send it to yourself | Does the result row look right? |
-| 8–9 | Lay the phone flat and leave it. Then turn it to book pose (fold top to bottom). Then close it and look at the outer screen. Then reopen | No dribble when flat? The "Stand me up" card in book pose? The status card when closed? Does play pick up again? |
+| 8–9 | Lay the phone flat and leave it. Then turn it to book pose (fold top to bottom). Then, **in the middle of a pour, close the phone quickly**, look at the outer screen, and reopen. Do the quick close 10 times across the session | No dribble when flat? The "Turn me so the fold runs side to side" card in book pose? Closing mid-pour should never cost you a glass or a strike, and reopening asks you to lay it flat before play carries on. Count any strikes it cost you |
 | 9–10 | Flip the silent switch on, then open Settings | Is there still sound? Do the sound, haptics and "Respect silent mode" switches work? |
 
 **Comfort check (important):** at any point did you have to lift past upright, move fast, or worry about the hinge? Did your hand get tired?
@@ -128,6 +128,8 @@ GitHub builds Brim for you on Apple's latest Xcode (your Mac can't run it). It n
 Brim build [number from TestFlight], iPhone Duo, iOS [version]
 Scores 1-5: pour starts when expected [ ] / stopping is controllable [ ] / Perfect feels earned [ ] / sound [ ] / haptics [ ] / comfort [ ] / want one more go [ ]
 Lift before the first drop: [tiny / about right / too much]
+Quick closes mid-pour that cost a strike: [ ] out of 10
+Did the screen ever dim or lock while you were pouring? [yes/no]
 Best moment:
 Worst moment:
 Bugs (what you did, what happened):

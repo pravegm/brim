@@ -1,6 +1,6 @@
 # Brim: App Review notes (v1.0)
 
-*Written 25 Oct 2026 from `design/GAME-DESIGN.md` and `design/ARCHITECTURE.md`. The block between the markers is what you paste. Apple limits the field to 4,000 bytes; the block is **3,609 bytes**, plain ASCII (no smart quotes or symbols) so bytes = characters. Before submission, tick the "Check against the build" table at the end; if a line is false, change the block, never the other way round.*
+*Written 25 Oct 2026 from `design/GAME-DESIGN.md` and `design/ARCHITECTURE.md`. The block between the markers is what you paste. Apple limits the field to 4,000 bytes; the block is **3,967 bytes** (round 4, matched to the build), plain ASCII (no smart quotes or symbols) so bytes = characters. Before submission, tick the "Check against the build" table at the end; if a line is false, change the block, never the other way round.*
 
 ## Where this goes
 
@@ -16,17 +16,19 @@ Thanks for reviewing Brim: a paid game with no ads, no in-app purchases, no acco
 
 1. TESTING WITHOUT AN iPHONE DUO (start here)
 You don't need a Duo. Every mode, venue, unlock and achievement works on any iPhone and in the Simulator.
-- Tap Play. A jug sits at the top of the screen and a glass on the counter below, with a dashed fill line.
+- Tap Play. A jug sits at the top of the screen and a glass on the counter below, with a fill line.
 - Put a finger anywhere and drag UP: the jug tips and pours. Let go and the jug eases back upright and the pour stops.
 - The stream takes a moment to fall, so stop just before the line. The glass is judged Perfect / Great / Good / Short / Spill once the pour has landed.
+- On iPhone Duo: Settings > "Touch controls on iPhone Duo" turns on the same drag control.
 
 2. HOW THE HINGE IS USED (iPhone Duo)
 Brim reads the hinge angle only through the public iOS 27.1 API (SwiftUI onHingeChange), behind an availability check. No private API is used.
-a) Open the Duo fully and lay it on a table, inner screen up, fold running left to right. The jug is drawn on the far half, the glass on the near half.
+a) Open the Duo fully and lay it on a table, inner screen up, fold running left to right. The jug is drawn on the far half, the glass on the near half. Each run starts with "Lay it flat to start".
 b) Raise the far half off the table, like lifting a laptop lid. The jug tips with it and pours across the fold into the glass. Nothing pours until the lid is about 6 degrees up, so a phone lying flat never dribbles.
-c) Lower the lid back toward flat to stop. Play happens between about 175 and 95 degrees (never past upright), mostly with slow, held angles. A full jug pours with a small lift; an emptier jug needs a bigger one.
-d) Book pose (fold running top to bottom): the game pauses and shows "Stand me up like a little laptop".
-e) Closed: the outer display shows a calm status card (today's Daily Pour, best Rush score, "Open me to pour"). Nothing happens while closed.
+c) Lower the lid back toward flat to stop. Play happens between about 174 and 90 degrees (never past upright), mostly with slow, held angles. A full jug pours with a small lift; an emptier jug needs a bigger one.
+d) Book pose (fold running top to bottom): the game pauses and shows "Turn me so the fold runs side to side, then lay me flat." with a "Use touch" button.
+e) Closing: below about 70 degrees a run pauses itself and nothing is judged; it carries on once the phone is open and flat again.
+f) Closed: the outer display shows a calm status card (today's Daily Pour, best Rush score, "Open me to pour"). Nothing happens while closed.
 
 3. KIND TO THE DEVICE (Guidelines 2.4.2 and 1.4.5)
 - Brim never asks the user to close the phone, fold quickly or fold repeatedly. The hinge is used like a slow dial in the middle of its range.
@@ -38,7 +40,7 @@ e) Closed: the outer display shows a calm status card (today's Daily Pour, best 
 - Shifts: five venues (Lemonade Stand, Soda Fountain, Milkshake Diner, The Conveyor, Potion Shop). Stars earned in one venue open the next.
 - A sixth, secret venue (Sand Bar) opens after earning 3 stars on every shift. There is no code, shortcut or purchase for it.
 - Rush: endless; ends after 3 spills or when the jug runs dry.
-- Daily Pour: 10 glasses, the same for everyone that day, one scored attempt; practice afterwards is unscored. The result can be shared as text through the system share sheet.
+- Daily Pour: 10 glasses, the same for everyone that day, one scored attempt (leaving part-way keeps the score so far); practice afterwards is unscored. The result can be shared as text through the system share sheet.
 
 5. CONTENT
 Every drink is non-alcoholic: water, lemonade, juice, sodas (cola, root beer, cream soda), milkshakes, honey, syrup and fictional coloured potions. No characters are harmed; a spill makes a puddle.
@@ -53,7 +55,7 @@ Optional. 2 leaderboards (Rush best, Daily Pour) and 10 achievements (700 points
 - No notifications are requested.
 - Sound plays when the silent switch is on (playback audio, mixing with other audio); Settings > "Respect silent mode" turns that off.
 - All sound is synthesized in the app; there are no recorded or licensed assets.
-- Release builds contain no debug or demo modes.
+- Debug and demo modes are disabled in Release builds.
 ```
 <!-- REVIEW-NOTES:END -->
 
@@ -61,21 +63,27 @@ Optional. 2 leaderboards (Rush best, Daily Pour) and 10 achievements (700 points
 
 | Claim in the block | Source today | Check |
 |---|---|---|
-| Drag **up** anywhere tips; release eases upright | `TouchTiltSource` (ARCHITECTURE: "drag up = tip; eases back to 0 on release") | [ ] |
-| "Tap Play" is the real first button label | App UI (not built yet) | [ ] change the word if the button says something else |
-| Public `onHingeChange` only, behind `#available(iOS 27.1, *)` | `HingeReader` (ARCHITECTURE), CLAUDE.md | [ ] |
-| Dead zone 6° (≈175°), play to about 95° | `Rules.deadZone`, bible §4 | [ ] update the numbers if tuning moves them |
-| Book-pose card text "Stand me up like a little laptop" | Bible §3 | [ ] exact wording |
-| Cover card content | Bible §3 | [ ] |
-| Never uses `status == .closed` in play | CLAUDE.md, bible §4 | [ ] grep |
-| Unlock rule for Sand Bar = 3 stars on every shift | Bible §6 | [ ] |
-| Daily: one scored attempt, then unscored practice | Bible §6 | [ ] |
-| Setting name "Respect silent mode", default off | Bible §7 | [ ] exact label |
-| No notifications, no rating prompt claims | — | [ ] if a rating prompt (`requestReview`) is added, add a line: "A one-time rating prompt may appear after a finished run, never mid-pour." |
-| Demo mode compiled out of Release | ARCHITECTURE ("Demo mode (DEBUG and CI)") | [ ] |
-| 2 leaderboards, 10 achievements, 700 points, 1 hidden | `achievements.md` | [ ] |
+Round 4 (App engineer) checked each line against the code; "Source today" names where it lives.
 
-**One line to add only if it ships:** if engineering adds a Duo setting to pour by dragging (requested in `DECISIONS.md` §3), add to §1 of the block: `- On iPhone Duo: Settings > "Pour by dragging" turns on the same drag control.`
+| Claim in the block | Source today | Check |
+|---|---|---|
+| Drag **up** anywhere tips; release eases upright | `Input/TouchTiltSource.swift`, `UI/RootView.swift` (drag layer) | [x] |
+| "Tap Play" is the real first button label | `UI/HomeView.swift` (`Play` + the shift) | [x] |
+| Duo setting "Touch controls on iPhone Duo" | `UI/SettingsView.swift` | [x] exact label |
+| Public `onHingeChange` only, behind `#available(iOS 27.1, *)` | `Input/HingeReader.swift` | [x] |
+| "Lay it flat to start" before each Duo run | `UI/PlayOverlays.swift` (`FlatGateOverlay`) | [x] |
+| Dead zone 6° (≈174°), play to about 90° (lid tilt = 180 − hinge, capped at 90) | `Core/Rules.swift` `deadZone`, `Input/TiltFilters.swift` | [x] update if tuning moves them |
+| Book-pose card "Turn me so the fold runs side to side, then lay me flat." + "Use touch" | `UI/PoseCards.swift` (`StandUpCard`) | [x] exact wording |
+| Closing below ~70° pauses, nothing judged, resumes behind the flat gate | `App/GameController.swift` (`autopauseBelow`, `resumeHook`), CI `CLOSE-GUARD` | [x] |
+| Cover card: Rush best, Daily Pour #N, "Open me to pour" | `UI/PoseCards.swift` (`CoverView`) | [x] |
+| Never uses `status == .closed` in play | `Input/HingeReader.swift` (angle only) | [x] grep |
+| Rush ends after 3 spills or a dry jug | `Core/GameSession.swift` | [x] |
+| Unlock rule for Sand Bar = 3 stars on every shift | `Persistence/ProgressStore.swift` (`hasAllStars`) | [x] |
+| Daily: one scored attempt (marked at start; leaving files the score so far), then unscored practice | `Persistence/ProgressStore.swift` (`dailyStarted`), `App/GameController.swift` | [x] |
+| Setting name "Respect silent mode", default off | `UI/SettingsView.swift`, `Feedback/FeedbackDirector.swift` | [x] exact label |
+| No notifications, no rating prompt | no `UNUserNotificationCenter` / `requestReview` in `Brim/` | [x] if a rating prompt is added, add a line: "A one-time rating prompt may appear after a finished run, never mid-pour." |
+| Debug and demo modes disabled in Release | `App/DemoMode.swift` (`DemoConfig.current` is nil outside `#if DEBUG`; every `BRIM-T` trace is DEBUG-only) | [x] |
+| 2 leaderboards, 10 achievements, 700 points, 1 hidden | `App/GameCenterManager.swift`, `achievements.md` | [x] |
 
 ## If rejected under 2.4.2 (hardware) or 1.4.5 (physical harm)
 

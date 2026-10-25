@@ -35,10 +35,21 @@ final class HingeTiltSource: TiltSource {
 
     /// True while the closing guard cuts the pour (below 78° until back above 88°, or within 0.35 s of a fast close),
     /// as of the latest frame or sample. Use `closingCut(at:)` for a specific time.
+    ///
+    /// Round 4 (QA P2-3): only while the hinge is the pour input (`drivesThePour`). With touch on a Duo (the setting,
+    /// or touch chosen in book pose) at 70°–78°, the App's per-frame `requireFlat()` on `isClosing` re-closed the flat
+    /// gate every frame and nothing could pour; the hinge doesn't pour then, so there is nothing to cut.
     var isClosing: Bool {
-        guard hasHinge else { return false }
+        guard hasHinge, drivesThePour else { return false }
         let latest = max(lastQuery ?? -Double.infinity, lastSampleTime ?? -Double.infinity)
         return closingGuard.isCut(at: latest)
+    }
+
+    /// True while the hinge is the tilt source being read: no other tilt source (touch, autopilot, demo keyframes) has
+    /// been read since this one (`TiltInputLog`). True before any source has been read.
+    var drivesThePour: Bool {
+        guard let last = TiltInputLog.shared.lastRead else { return true }
+        return last === self
     }
 
     /// `isClosing` at a given time (the fast-close hold expires with time even when no frame or report arrives).
@@ -65,6 +76,7 @@ final class HingeTiltSource: TiltSource {
     }
 
     func tilt(at time: TimeInterval) -> Double {
+        TiltInputLog.shared.noteRead(self)
         guard hasHinge, time.isFinite else { return 0 }
         // Asked twice for the same frame (or an older one): same answer, and the filters don't advance.
         if let previous = lastQuery, time <= previous { return lastTilt }
@@ -104,5 +116,26 @@ final class HingeTiltSource: TiltSource {
     /// Hinge angle for a lid tilt (HUD/debug): 180 − tilt.
     nonisolated static func hingeAngle(forLidTilt tilt: Double) -> Double {
         TiltMath.hingeAngle(forLidTilt: tilt)
+    }
+}
+
+/// Which tilt source was read last (round 4, QA P2-3). The App reads exactly one source per frame (the active one) and
+/// then asks the hinge `isClosing`; every source notes itself here when read, so the hinge can tell whether it is the
+/// pour input without the App passing its input mode around. Weak: a released source never counts.
+@MainActor
+final class TiltInputLog {
+    static let shared = TiltInputLog()
+
+    private(set) weak var lastRead: AnyObject?
+
+    init() {}
+
+    func noteRead(_ source: AnyObject) {
+        if lastRead !== source { lastRead = source }
+    }
+
+    /// Forget (tests).
+    func clear() {
+        lastRead = nil
     }
 }
