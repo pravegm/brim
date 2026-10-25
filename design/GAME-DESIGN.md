@@ -48,7 +48,7 @@ Paid, one time (£1.99 / $1.99 tier), no ads, no in-app purchases, no data colle
 - **Judging** (when the glass is served): `err = (top − line) / capacity`.
   - **Perfect** |err| ≤ 2.5% → ting, sparkle ring, streak +1.
   - **Great** ≤ 6%; **Good** ≤ 12% (under or over but below the brim).
-  - **Short** (under by more) — sad "hmm" from the customer, streak resets.
+  - **Short** (under by more) — sad "hmm" from the customer, streak resets, and in shifts and the Daily it is a strike (the customer got short-changed); in Rush only spills are strikes. (Founder decision, round 1; confirmed after REVIEW-3.)
   - **Spill** (any liquid over the brim) — overflow drips down the glass, puddle on the counter, a strike.
 - **Serving:** a glass is served when the jug has been upright (no flow) and the stream has fully landed for 0.6 s **after** some liquid went in, or when its patience timer runs out. In conveyor levels it's served when it leaves the spout zone.
 

@@ -226,6 +226,18 @@ while IFS='|' read -r -u 3 name args wait _caption _expect; do
     data=$(to 30 xcrun simctl get_app_container "$UDID" "$BUNDLE" data 2>/dev/null || true)
     [[ -n "$data" && -f "$data/Documents/AppIcon-1024.png" ]] && cp "$data/Documents/AppIcon-1024.png" "$OUT_ABS/AppIcon-1024.png"
   fi
+  # The app writes Documents/badges/<id>.png for the `badges` scenario (Game Center achievement images, rendered from
+  # SwiftUI, Brim/UI/AchievementArt.swift). They land in $OUT/badges/ (the `screenshots` artifact's badges/ folder).
+  if [[ "$args" == *badges* ]]; then
+    data=$(to 30 xcrun simctl get_app_container "$UDID" "$BUNDLE" data 2>/dev/null || true)
+    if [[ -n "$data" && -d "$data/Documents/badges" ]]; then
+      mkdir -p "$OUT_ABS/badges"
+      cp "$data/Documents/badges/"*.png "$OUT_ABS/badges/" 2>/dev/null || echo "warning: $name: no PNGs in Documents/badges"
+      echo "badges: $(ls "$OUT_ABS/badges" | wc -l | tr -d ' ') PNGs"
+    else
+      echo "warning: $name: no Documents/badges folder"
+    fi
+  fi
   grep -E "BRIM-" "$applog" | tail -5 || true
 done 3< "$SCENARIOS"
 

@@ -16,3 +16,4 @@
 12-first-run|mode=shift:1-1;hints=fresh|6
 13-daily|mode=daily;autopilot=perfect;freezeOn=midpour|10
 14-icon|screen=icon|6
+15-badges|screen=badges|8

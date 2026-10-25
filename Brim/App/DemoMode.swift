@@ -7,7 +7,7 @@ import UIKit
 // Unknown keys are ignored. Every line CI greps starts with `BRIM-` (CLAUDE.md: never rename them).
 //
 // Keys
-// - `screen=menu|venues|results|settings|game|standup|cover|icon`
+// - `screen=menu|venues|results|settings|game|standup|cover|icon|badges`
 //     menu      home screen over the attract loop (practice + perfect autopilot behind it).
 //     venues    venue / shift select.
 //     results   the results card for `mode`: a REAL run of it, played headless at launch by the autopilot
@@ -20,6 +20,9 @@ import UIKit
 //     cover     force the cover-display card ("Open me to pour").
 //     icon      render AppIconArt with ImageRenderer to Documents/AppIcon-1024.png (logs `BRIM-T icon ok|failed`)
 //               and show it full width on black.
+//     badges    render every Game Center achievement badge (UI/AchievementArt.swift, GameCenterManager.achievementIDs)
+//               with ImageRenderer, 1024 × 1024 px opaque, to Documents/badges/<id>.png (logs `BRIM-T badges done <n>`).
+//               Not a Screen case (only sets `badges`), so the app itself opens on the menu.
 // - `mode=shift:<id>|rush|daily|practice`   e.g. `mode=shift:1-2`. `daily` = today's Daily Pour.
 // - `autopilot=perfect|great|short|spill`   AutopilotTiltSource plays the run.
 // - `freezeOn=midpour|perfect|spill|finished`
@@ -46,6 +49,7 @@ import UIKit
 // - `BRIM-T demo '<args>' starts` at launch (stdout is line-buffered in demo runs).
 // - `BRIM-T frame 120` after the 120th scene frame (ci/duo.sh waits on it).
 // - `BRIM-T freeze <reason> t=<session s>`, `BRIM-T orient portrait ok|failed|lost`, `BRIM-T icon ok|failed`,
+//   `BRIM-T badges done <n>` (`BRIM-T badges failed <id>: …` per failure),
 //   `BRIM-T screen <route>` when the app's screen changes, `BRIM-T flat armed t=` when the Duo flat gate opens.
 // - `BRIM-T canvas <w>x<h> hasFold=<bool> pose=play|book|cover` whenever the canvas, fold or pose changes (every DEBUG
 //   build, demo or not).
@@ -78,6 +82,7 @@ struct DemoConfig: Equatable {
     var orientPortrait = false
     var duo = false
     var seed: UInt64?
+    var badges = false
 
     /// The screen the app opens on.
     var effectiveScreen: Screen {
@@ -93,7 +98,9 @@ struct DemoConfig: Equatable {
             guard let key = pieces.first, !key.isEmpty else { continue }
             let value = pieces.count > 1 ? pieces[1] : ""
             switch key {
-            case "screen": config.screen = Screen(rawValue: value)
+            case "screen":
+                config.screen = Screen(rawValue: value)
+                config.badges = value == "badges"
             case "mode": config.mode = parseMode(value, today: today)
             case "autopilot": config.autopilot = DemoAutopilot(rawValue: value)
             case "freezeOn": config.freezeOn = Freeze(rawValue: value)
@@ -127,7 +134,14 @@ struct DemoConfig: Equatable {
         guard let raw = UserDefaults.standard.string(forKey: "brimDemo") else { return nil }
         // CI redirects stdout to a file (fully buffered); line-buffer it so the scripts see BRIM- lines on time.
         setvbuf(stdout, nil, _IOLBF, 0)
-        return DemoConfig.parse(raw, today: LevelCatalog.dayNumber(for: Date()))
+        let config = DemoConfig.parse(raw, today: LevelCatalog.dayNumber(for: Date()))
+        if config.badges {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                BadgeExport.renderAll()
+            }
+        }
+        return config
         #else
         return nil
         #endif
@@ -264,5 +278,51 @@ enum IconExport {
         } catch {
             print("BRIM-T icon failed: \(error.localizedDescription)")
         }
+    }
+}
+
+// MARK: - Achievement badges render (`screen=badges`)
+
+@MainActor
+enum BadgeExport {
+    static let side: CGFloat = 1024
+
+    /// Renders every AchievementBadge at 1024 × 1024 px, opaque, to Documents/badges/<id>.png.
+    static func renderAll() {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("BRIM-T badges done 0 (no Documents directory)")
+            return
+        }
+        let directory = documents.appendingPathComponent("badges", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var written = 0
+        for id in GameCenterManager.achievementIDs {
+            let renderer = ImageRenderer(content: AchievementBadge(id: id).frame(width: side, height: side))
+            renderer.proposedSize = ProposedViewSize(width: side, height: side)
+            renderer.scale = 1
+            renderer.isOpaque = true
+            guard let cgImage = renderer.cgImage else {
+                print("BRIM-T badges failed \(id): renderer returned no image")
+                continue
+            }
+            // Redraw into an opaque 1× context so the PNG carries no alpha channel (App Store requirement).
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+                UIImage(cgImage: cgImage).draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+            }
+            guard let data = image.pngData() else {
+                print("BRIM-T badges failed \(id): no PNG data")
+                continue
+            }
+            do {
+                try data.write(to: directory.appendingPathComponent("\(id).png"))
+                written += 1
+            } catch {
+                print("BRIM-T badges failed \(id): \(error.localizedDescription)")
+            }
+        }
+        print("BRIM-T badges done \(written)")
     }
 }

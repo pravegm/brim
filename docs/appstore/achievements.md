@@ -62,7 +62,9 @@ Points: 25 + 50 + 100 + 75 + 50 + 50 + 75 + 75 + 100 + 100 = **700**. **300 poin
 - en-US differs only in the litres line (#4). Everything else is identical: enter it once per locale.
 
 ## Images (needed before you can save each achievement)
-Ten 1024 × 1024 images, one per achievement, no transparency: a glass on a coaster in the venue's colours with a small stamp (PERFECT, ×10, ×25, 10 L, a foam head, a shake, a conveyor arrow, a potion vial, three stars, an hourglass). **Not built yet:** engineering request in `DECISIONS.md` §3 (render them from the app's own art, as Squish's `badges.swift` does).
+Ten 1024 × 1024 PNGs, one per achievement, opaque (no alpha channel), in the app icon's style: a cream → peach background with the fold seam, a medallion whose ring shows the tier (teal for 25–50 points, deep teal with gold studs for 75, gold for 100) and one motif: a glass filled to a glowing line (First Perfect), a flame with 10 / 25 (streaks), a drop with 10 L (litres), a soda dispenser, a shake tin, conveyor rollers, a potion flask, three stars (All Stars), an hourglass (Sand Bar). No words, only short numerals.
+
+**Where they come from:** the app draws them itself (`Brim/UI/AchievementArt.swift`, `AchievementBadge(id:)`). Every CI run (`.github/workflows/ci.yml`) plays the scenario `15-badges` (`ci/scenarios.txt`, demo key `screen=badges` in `Brim/App/DemoMode.swift`), which renders all ten into the app's Documents/badges/; `ci/screenshots.sh` copies them into the **`screenshots` artifact, folder `screenshots/badges/`**, one file per achievement named by its ID (e.g. `brim.first.perfect.png`). Download that artifact from the latest green run and upload each file to its achievement in App Store Connect. The app log line `BRIM-T badges done 10` (`logs/15-badges.txt` in the same artifact) confirms all ten were written.
 
 ## Implementation checklist (App engineer)
 - [ ] IDs in code match this table exactly (one constant per ID).
