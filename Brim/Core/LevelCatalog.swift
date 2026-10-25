@@ -99,9 +99,13 @@ enum LevelCatalog {
             if chosen.lagTau >= 0.3 { viscous += 1 }
             if chosen.foamPerVolume > 0.3 { foamy += 1 }
             let progress: Double = Double(i) / 9.0
-            var line: Double = i < 2 ? rng.range(0.55, 0.75) : rng.range(0.42, 0.88)
-            line = (line * 100).rounded() / 100
-            let patience: Double = (CoreMath.lerp(14, 9, progress) * 2).rounded() / 2
+            // Round 5 balance pass (design/BALANCE.md): one scored attempt a day should be cleared by most casual
+            // players (~70 %). Lines 0.45–0.85 (the extremes were over-pour and spill magnets), foamy drinks capped
+            // below their head's comfort zone (root beer 0.68, other heads 0.8), patience 15 → 10 s.
+            var line: Double = i < 2 ? rng.range(0.55, 0.75) : rng.range(0.45, 0.85)
+            let headCap: Double = chosen.foamPerVolume > 1.0 ? 0.68 : (chosen.foamPerVolume > 0.3 ? 0.8 : 0.95)
+            line = (min(line, headCap) * 100).rounded() / 100
+            let patience: Double = (CoreMath.lerp(15, 10, progress) * 2).rounded() / 2
             var fade: Double? = nil
             var prefill: Double = 0
             if i >= 6 && rng.chance(0.3) { fade = 1.5 }
@@ -186,26 +190,34 @@ enum LevelCatalog {
     //
     // 1-1 is the first minute of the game: a generous band (±4.5 %), the friendliest glass (wide tumbler, mid lines,
     // still drinks), a full jug that pours at a slight tip, no timers. A first Perfect lands within ~10 s.
+    //
+    // Round 5 balance pass (design/BALANCE.md): the simulated novice cleared 1-1 only ~75 % of the time. Lines sit at
+    // 0.66–0.72 (a longer pour gives a first-timer time to see the level coming; lower lines ended too fast to judge)
+    // and the first two glasses are both water (no jug swap before the second pour). Novice clear ≈ 0.9. (The first
+    // line stays ≤ 0.66: CoreTests' "over, not spill" check overfills 1-1's first glass by 20 % and needs the headroom.)
+    // 1-3 (first patience ring) waits 16 s, 1-4's lowest lines rise a little (0.35/0.38 were over-pour magnets),
+    // 1-7's tallest flute lines drop to 0.75–0.8 and 1-8 waits 12 s with a 0.82 top line, so the novice's first wall
+    // is venue 2–3, not shift 1-7.
     private static func lemonadeStand() -> [Level] {
         let v: VenueID = .lemonadeStand
         return [
             lv(v, 1, "Grand Opening", jug: 0.9, band: 0.045, [
-                o("tumbler", .water, 0.6), o("tumbler", .lemonade, 0.65), o("tumbler", .water, 0.7),
-                o("tumbler", .lemonade, 0.6), o("tumbler", .water, 0.68),
+                o("tumbler", .water, 0.66), o("tumbler", .water, 0.7), o("tumbler", .lemonade, 0.72),
+                o("tumbler", .lemonade, 0.68), o("tumbler", .water, 0.72),
             ]),
             lv(v, 2, "Squeeze the Day", jug: 0.9, band: 0.038, [
                 o("tumbler", .lemonade, 0.7), o("highball", .lemonade, 0.6), o("tumbler", .lemonade, 0.55),
                 o("highball", .lemonade, 0.75), o("tumbler", .lemonade, 0.8), o("highball", .lemonade, 0.65),
             ]),
             lv(v, 3, "Fresh Squeezed", jug: 0.9, band: 0.034, [
-                o("tumbler", .orangeJuice, 0.65, p: 14), o("highball", .orangeJuice, 0.7, p: 14),
-                o("jar", .orangeJuice, 0.6, p: 14), o("tumbler", .orangeJuice, 0.8, p: 14),
-                o("highball", .orangeJuice, 0.55, p: 14), o("jar", .orangeJuice, 0.75, p: 14),
+                o("tumbler", .orangeJuice, 0.65, p: 16), o("highball", .orangeJuice, 0.7, p: 16),
+                o("jar", .orangeJuice, 0.6, p: 16), o("tumbler", .orangeJuice, 0.75, p: 16),
+                o("highball", .orangeJuice, 0.6, p: 16), o("jar", .orangeJuice, 0.7, p: 16),
             ]),
             lv(v, 4, "Half Full", jug: 0.85, band: 0.032, [
-                o("mug", .water, 0.5, p: 13), o("jar", .lemonade, 0.4, p: 13), o("tumbler", .orangeJuice, 0.7, p: 13),
-                o("pint", .water, 0.38, p: 13), o("mug", .lemonade, 0.42, p: 13), o("jar", .orangeJuice, 0.35, p: 13),
-                o("tumbler", .lemonade, 0.75, p: 13),
+                o("mug", .water, 0.5, p: 14), o("jar", .lemonade, 0.42, p: 14), o("tumbler", .orangeJuice, 0.7, p: 14),
+                o("pint", .water, 0.42, p: 14), o("mug", .lemonade, 0.45, p: 14), o("jar", .orangeJuice, 0.4, p: 14),
+                o("tumbler", .lemonade, 0.72, p: 14),
             ]),
             lv(v, 5, "Tall Order", jug: 0.8, band: 0.03, [
                 o("highball", .lemonade, 0.85, p: 13), o("pint", .water, 0.8, p: 13),
@@ -219,29 +231,35 @@ enum LevelCatalog {
                 o("highball", .lemonade, 0.7, p: 12, pre: 0.25),
             ]),
             lv(v, 7, "First Flute", jug: 0.7, band: 0.028, [
-                o("flute", .lemonade, 0.7, p: 13), o("flute", .water, 0.8, p: 13), o("tumbler", .lemonade, 0.6, p: 13),
-                o("flute", .orangeJuice, 0.75, p: 13), o("highball", .lemonade, 0.7, p: 13),
-                o("flute", .lemonade, 0.85, p: 13),
+                o("flute", .lemonade, 0.7, p: 14), o("flute", .water, 0.75, p: 14), o("tumbler", .lemonade, 0.6, p: 14),
+                o("flute", .orangeJuice, 0.72, p: 14), o("highball", .lemonade, 0.7, p: 14),
+                o("flute", .lemonade, 0.8, p: 14),
             ]),
             lv(v, 8, "Last Drops", jug: 0.5, band: 0.026, [
-                o("tumbler", .lemonade, 0.7, p: 11), o("flute", .water, 0.8, p: 11), o("pint", .orangeJuice, 0.75, p: 11),
-                o("jar", .lemonade, 0.5, p: 11), o("highball", .water, 0.9, p: 11), o("flute", .orangeJuice, 0.65, p: 11),
-                o("mug", .lemonade, 0.6, p: 11, pre: 0.3), o("tumbler", .water, 0.45, p: 11),
+                o("tumbler", .lemonade, 0.7, p: 12), o("flute", .water, 0.75, p: 12), o("pint", .orangeJuice, 0.72, p: 12),
+                o("jar", .lemonade, 0.5, p: 12), o("highball", .water, 0.82, p: 12), o("flute", .orangeJuice, 0.65, p: 12),
+                o("mug", .lemonade, 0.6, p: 12, pre: 0.3), o("tumbler", .water, 0.5, p: 12),
             ]),
         ]
     }
 
     // Venue 2 — foam: cola, root beer, cream soda. "Pour slow, then top up."
+    //
+    // Round 5 balance pass (design/BALANCE.md): the head is what overflows. A pour at flow f settles toward a head of
+    // ≈ foamPerVolume × clamp(f / 0.35, 0.2, 2.5) × f × 10,000 × foamSettle pt². For root beer (1.3, 2 s) at a calm
+    // f ≈ 0.3 that is ~6,700 pt² — a third of a mug — so root beer lines stay ≤ ~0.68 (≤ 0.75 in the tall soda glass);
+    // the old 0.85–0.9 lines of 2-7 needed f ≲ 0.13 (10 s a glass) and no simulated player cleared it. Cola gets
+    // ~16 % headroom at the same flow, so its lines stay ≤ ~0.8. Patience in 2-4/2-6/2-8 gives a slow pour time.
     private static func sodaFountain() -> [Level] {
         let v: VenueID = .sodaFountain
         return [
             lv(v, 1, "Fizz Ed", jug: 1.0, band: 0.035, [
-                o("highball", .cola, 0.6), o("tumbler", .cola, 0.55), o("highball", .cola, 0.7),
-                o("tumbler", .cola, 0.65), o("highball", .cola, 0.5),
+                o("highball", .cola, 0.6), o("tumbler", .cola, 0.55), o("highball", .cola, 0.65),
+                o("tumbler", .cola, 0.6), o("highball", .cola, 0.5),
             ]),
             lv(v, 2, "Head Start", jug: 1.0, band: 0.032, [
-                o("mug", .rootBeer, 0.6), o("mug", .rootBeer, 0.7), o("pint", .rootBeer, 0.6),
-                o("mug", .rootBeer, 0.65), o("pint", .rootBeer, 0.55), o("mug", .rootBeer, 0.75),
+                o("mug", .rootBeer, 0.55), o("mug", .rootBeer, 0.6), o("pint", .rootBeer, 0.6),
+                o("mug", .rootBeer, 0.58), o("pint", .rootBeer, 0.55), o("mug", .rootBeer, 0.62),
             ]),
             lv(v, 3, "Cream of the Crop", jug: 0.9, band: 0.03, [
                 o("tumbler", .creamSoda, 0.7, p: 14), o("highball", .creamSoda, 0.75, p: 14),
@@ -249,28 +267,29 @@ enum LevelCatalog {
                 o("tumbler", .creamSoda, 0.8, p: 14), o("highball", .creamSoda, 0.6, p: 14),
             ]),
             lv(v, 4, "Pop Quiz", jug: 0.9, band: 0.03, [
-                o("highball", .cola, 0.7, p: 12), o("mug", .rootBeer, 0.65, p: 12), o("pint", .creamSoda, 0.7, p: 12),
-                o("tumbler", .cola, 0.75, p: 12), o("pint", .rootBeer, 0.6, p: 12),
-                o("highball", .creamSoda, 0.8, p: 12), o("mug", .cola, 0.6, p: 12),
+                o("highball", .cola, 0.7, p: 13), o("mug", .rootBeer, 0.6, p: 13), o("pint", .creamSoda, 0.7, p: 13),
+                o("tumbler", .cola, 0.72, p: 13), o("pint", .rootBeer, 0.58, p: 13),
+                o("highball", .creamSoda, 0.78, p: 13), o("mug", .cola, 0.6, p: 13),
             ]),
             lv(v, 5, "Fizzy Lifting", jug: 0.85, band: 0.028, [
                 o("flute", .cola, 0.7, p: 14), o("flute", .creamSoda, 0.75, p: 14), o("flute", .rootBeer, 0.6, p: 14),
-                o("flute", .cola, 0.8, p: 14), o("tumbler", .creamSoda, 0.7, p: 14), o("flute", .rootBeer, 0.7, p: 14),
+                o("flute", .cola, 0.72, p: 14), o("tumbler", .creamSoda, 0.7, p: 14), o("flute", .rootBeer, 0.6, p: 14),
             ]),
             lv(v, 6, "Soda Jerk", jug: 0.8, band: 0.028, [
-                o("highball", .cola, 0.75, p: 11, pre: 0.3), o("mug", .rootBeer, 0.7, p: 11, pre: 0.25),
-                o("pint", .creamSoda, 0.8, p: 11, pre: 0.35), o("tumbler", .lemonade, 0.7, p: 11, pre: 0.2),
-                o("pint", .cola, 0.7, p: 11), o("mug", .rootBeer, 0.8, p: 11, pre: 0.3),
-                o("highball", .cola, 0.65, p: 11, pre: 0.2),
+                o("highball", .cola, 0.72, p: 12, pre: 0.3), o("mug", .rootBeer, 0.62, p: 12, pre: 0.25),
+                o("pint", .creamSoda, 0.75, p: 12, pre: 0.35), o("tumbler", .lemonade, 0.7, p: 12, pre: 0.2),
+                o("pint", .cola, 0.7, p: 12), o("mug", .rootBeer, 0.66, p: 12, pre: 0.3),
+                o("highball", .cola, 0.65, p: 12, pre: 0.2),
             ]),
-            lv(v, 7, "Root of the Problem", jug: 0.8, band: 0.026, [
-                o("pint", .rootBeer, 0.85, p: 13), o("mug", .rootBeer, 0.88, p: 13), o("highball", .rootBeer, 0.85, p: 13),
-                o("pint", .rootBeer, 0.9, p: 13), o("jar", .rootBeer, 0.8, p: 13), o("mug", .rootBeer, 0.85, p: 13),
+            // The slow-pour exam: every glass root beer, lines just under the head's comfort zone, time to pour slowly.
+            lv(v, 7, "Root of the Problem", jug: 1.0, band: 0.026, [
+                o("pint", .rootBeer, 0.72, p: 15), o("mug", .rootBeer, 0.65, p: 15), o("highball", .rootBeer, 0.65, p: 15),
+                o("pint", .rootBeer, 0.75, p: 15), o("jar", .rootBeer, 0.62, p: 15), o("mug", .rootBeer, 0.68, p: 15),
             ]),
-            lv(v, 8, "Fizz Finale", jug: 0.7, band: 0.025, [
-                o("flute", .cola, 0.75, p: 10), o("mug", .rootBeer, 0.7, p: 10), o("pint", .creamSoda, 0.8, p: 10),
-                o("highball", .lemonade, 0.6, p: 10), o("tumbler", .cola, 0.85, p: 10), o("jar", .rootBeer, 0.6, p: 10),
-                o("flute", .creamSoda, 0.7, p: 10), o("pint", .cola, 0.75, p: 10),
+            lv(v, 8, "Fizz Finale", jug: 0.8, band: 0.025, [
+                o("flute", .cola, 0.72, p: 11), o("mug", .rootBeer, 0.62, p: 11), o("pint", .creamSoda, 0.78, p: 11),
+                o("highball", .lemonade, 0.6, p: 11), o("tumbler", .cola, 0.78, p: 11), o("jar", .rootBeer, 0.58, p: 11),
+                o("flute", .creamSoda, 0.7, p: 11), o("pint", .cola, 0.75, p: 11),
             ]),
         ]
     }
@@ -320,7 +339,7 @@ enum LevelCatalog {
     }
 
     // Venue 4 — moving glasses: they slide under the spout and keep going; fill inside the window.
-    // Window ≈ 2 × rim half-width / belt speed: ~4 s at the start, ~1.3 s at the end.
+    // Window ≈ 2 × rim half-width / (belt × CoreTuning.beltScale): ~4 s at the start, ~1.4 s at the end.
     private static func conveyorBelt() -> [Level] {
         let v: VenueID = .conveyor
         return [
@@ -340,21 +359,24 @@ enum LevelCatalog {
                 o("mug", .cola, 0.45), o("bowl", .creamSoda, 0.5), o("mug", .rootBeer, 0.4),
                 o("tumbler", .cola, 0.5), o("shot", .creamSoda, 0.55), o("bowl", .rootBeer, 0.45),
             ]),
-            lv(v, 5, "Assembly Line", jug: 1.0, band: 0.028, belt: 26, [
+            // Round 5 balance pass: 4-5 was the hardest belt of the venue for simulated casual players (shorts), harder
+            // than 4-6/4-7; belt 26 → 23 and its last tiny cup 0.7 → 0.6. 4-7 30 → 27, 4-8 36 → 33 keep the finale the
+            // peak without making it a wall.
+            lv(v, 5, "Assembly Line", jug: 1.0, band: 0.028, belt: 23, [
                 o("bowl", .water, 0.6), o("shot", .lemonade, 0.6), o("mug", .orangeJuice, 0.5),
-                o("tumbler", .water, 0.55), o("sundae", .lemonade, 0.5), o("shot", .orangeJuice, 0.7),
+                o("tumbler", .water, 0.55), o("sundae", .lemonade, 0.5), o("shot", .orangeJuice, 0.6),
                 o("mug", .water, 0.55),
             ]),
             lv(v, 6, "Slow Pour, Fast Belt", jug: 1.0, band: 0.028, belt: 20, [
                 o("mug", .milkshake, 0.45), o("bowl", .honey, 0.4), o("sundae", .milkshake, 0.5),
                 o("shot", .mapleSyrup, 0.5), o("mug", .berrySmoothie, 0.45), o("shot", .honey, 0.45),
             ]),
-            lv(v, 7, "Rush Hour", jug: 1.0, band: 0.026, belt: 30, [
+            lv(v, 7, "Rush Hour", jug: 1.0, band: 0.026, belt: 27, [
                 o("bowl", .cola, 0.5), o("mug", .lemonade, 0.45), o("shot", .orangeJuice, 0.55),
                 o("sundae", .water, 0.55), o("mug", .rootBeer, 0.4), o("bowl", .lemonade, 0.6),
                 o("shot", .water, 0.65),
             ]),
-            lv(v, 8, "Full Speed Ahead", jug: 1.0, band: 0.025, belt: 36, [
+            lv(v, 8, "Full Speed Ahead", jug: 1.0, band: 0.025, belt: 33, [
                 o("bowl", .water, 0.55), o("sundae", .lemonade, 0.55), o("mug", .orangeJuice, 0.45),
                 o("bowl", .cola, 0.5), o("shot", .water, 0.5), o("mug", .lemonade, 0.5),
                 o("bowl", .creamSoda, 0.45), o("sundae", .orangeJuice, 0.6),
