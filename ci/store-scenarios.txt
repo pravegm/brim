@@ -25,7 +25,7 @@ R2-shake|mode=shift:3-1;autopilot=perfect;freezeOn=midpour|10|Thick shakes *keep
 R3-spill|mode=shift:1-3;autopilot=spill;freezeOn=spill|14|Too far? *Splash.* / Spills cost a strike.|
 
 # ---- iPhone Duo inner display (2007 x 2853): six frames ---------------------------------------------------------------
-D1-hero-pour|mode=shift:1-2;autopilot=perfect;freezeOn=midpour|6|Lift the lid. *Pour.* / The fold is the jug.|
+D1-hero-pour|mode=shift:1-2;autopilot=perfect;freezeOn=midpour|6|Lift the top half. *Pour.* / The fold is the jug.|
 D2-perfect-streak|mode=shift:1-4;autopilot=perfect;freezeOn=perfect;streak=4|10|Stop *right* on the line. / Perfect: a ting, a sparkle, a streak.|
 D3-rush|mode=rush;autopilot=perfect;freezeOn=midpour;streak=9|8|Rush: keep the *streak* alive. / Perfects refill the jug. Up to ×5.|
 D4-soda-foam|mode=shift:2-2;autopilot=perfect;freezeOn=midpour|6|Soda *foams*. Pour slowly. / Then top it up.|

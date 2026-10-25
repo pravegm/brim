@@ -109,7 +109,7 @@ Apple's rules: 15–30 s; captures of the app only (**no hands, no people, no de
 
 | Time | Picture (app capture, Duo inner display, tabletop) | Caption (top band) |
 |---|---|---|
-| 00.0–03.0 | Cold open mid-pour: the stream already crossing the fold, the level rising (= screenshot D1). **Poster frame 00:02.0** | **Lift the lid. *Pour.*** |
+| 00.0–03.0 | Cold open mid-pour: the stream already crossing the fold, the level rising (= screenshot D1). **Poster frame 00:02.0** | **Lift the top half. *Pour.*** |
 | 03.0–06.0 | The pour cuts off early, the tail lands, the level settles on the line: PERFECT, sparkle | **Stop *right* on the line.** |
 | 06.0–09.5 | Next glass: a flute, narrow at the top; the level speeds up near the rim; a Great | **Every glass *fills* differently.** |
 | 09.5–12.5 | Soda Fountain: foam climbs above the cola, settles, a gentle top-up | **Soda *foams*.** |

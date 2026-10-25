@@ -967,7 +967,7 @@ final class SceneGlass {
     /// Where the streak pop goes (glass-local) and how far it may rise: above the stamp if it fits under the crease
     /// keep-out (rising less if it must), else beside the stamp on the flat half, else just under it.
     private func streakPlacement(size: CGSize, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat)
-        -> (position: CGPoint, rise: CGFloat) {
+        -> (position: CGPoint, rise: CGFloat)? {
         // Local limit at rest; allow for the Perfect hop (≤ 13 pt) and its ~2 % stretch while it is running.
         let hop: CGFloat = celebrateAt != nil ? 22 : 2
         let limit = keepOutTop - (counterY + base) - hop
@@ -997,9 +997,10 @@ final class SceneGlass {
         if leftCentre - halfW >= safeX.lowerBound {
             return (CGPoint(x: leftCentre - x, y: sideY), min(12, max(0, limit - popTop - sideY)))
         }
-        // C. Just under the stamp, over the glass.
-        let belowY = sc.y - (hasStamp ? stamp.size.height * SceneGlass.labelTopFrac : 0) - 4
-            - size.height * SceneGlass.labelTopFrac
+        // C. No clean spot: with a stamp showing, skip the pop. Under the stamp it overprinted PERFECT (final Duo store
+        // frame D2); the HUD's streak pill and the climbing ting already carry the streak.
+        if hasStamp { return nil }
+        let belowY = sc.y - 4 - size.height * SceneGlass.labelTopFrac
         return (CGPoint(x: clampX(sc.x), y: min(belowY, limit - popTop)), 0)
     }
 
@@ -1010,9 +1011,12 @@ final class SceneGlass {
             return
         }
         let art = SceneArt.streak(n)
+        guard let place = streakPlacement(size: art.size, safeX: safeX, keepOutTop: keepOutTop) else {
+            lastStreakReachWorld = nil
+            return
+        }
         let node = SKSpriteNode(texture: art.texture, size: art.size)
         node.zPosition = 41
-        let place = streakPlacement(size: art.size, safeX: safeX, keepOutTop: keepOutTop)
         node.position = place.position
         lastStreakReachWorld = counterY + base + place.position.y + place.rise
             + art.size.height * SceneGlass.labelTopFrac * 1.3

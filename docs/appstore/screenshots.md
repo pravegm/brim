@@ -40,7 +40,7 @@ Captioned frames: `duo-screens/store/<name>.png` in the `store-duo` artifact; ra
 
 | # | In-game moment | Caption: headline / sub-line | Scenario (`ci/store-scenarios.txt`) |
 |---|---|---|---|
-| **D1** | Lemonade Stand, shift 1-2: the jug tipped on the top half, the stream **crossing the fold**, glass ~60% to the line. The magic frame | **Lift the lid. *Pour.*** / *The fold is the jug.* | `D1-hero-pour` (`mode=shift:1-2;autopilot=perfect;freezeOn=midpour`) |
+| **D1** | Lemonade Stand, shift 1-2: the jug tipped on the top half, the stream **crossing the fold**, glass ~60% to the line. The magic frame | **Lift the top half. *Pour.*** / *The fold is the jug.* | `D1-hero-pour` (`mode=shift:1-2;autopilot=perfect;freezeOn=midpour`) |
 | **D2** | The glass judged Perfect: sparkle ring, PERFECT stamp, streak 4+ | **Stop *right* on the line.** / *Perfect: a ting, a sparkle, a streak.* | `D2-perfect-streak` (`mode=shift:1-4;…;freezeOn=perfect;streak=4`) |
 | **D3** | Rush mid-pour, streak 9, multiplier showing | **Rush: keep the *streak* alive.** / *Perfects refill the jug. Up to ×5.* | `D3-rush` (`mode=rush;…;streak=9`) |
 | **D4** | Soda Fountain: cola with a foam head climbing above the liquid | **Soda *foams*. Pour slowly.** / *Then top it up.* | `D4-soda-foam` (`mode=shift:2-2;…;freezeOn=midpour`) |

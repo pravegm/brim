@@ -46,6 +46,13 @@ App ↔ CI talk through stdout lines starting with `BRIM-` (`BRIM-T` timing/demo
 4. `research/00–03`: market, hinge tech facts, concepts.
 5. `docs/LAUNCH-RUNBOOK.md`: what only the founder can do (Apple login steps).
 
+## Status (25 Oct 2026, end of round 4)
+- REVIEW-3: 8.4/10, launch "yes" with conditions. Round 4 fixed every REVIEW-3 and QA-1 P1. 156 tests pass.
+- Still needed: a real-Duo TestFlight session (blocked on the founder adding the 4 ASC secrets; see
+  `docs/LAUNCH-RUNBOOK.md` §2), founder decisions on hosting and the support email, and the store upload.
+- How the loop runs: write `design/ROUND-N.md`, have engineers own disjoint folders, push and let CI compile, then
+  `duo.yml` frames, then a critic writes `REVIEW-N.md`.
+
 ## Hinge facts that bite (from Squish's real-Duo log)
 - Use the **angle**, never `status == .closed` (it turns on at ~85° on hardware).
 - Samples arrive at 25–30 Hz while moving and not at all while still, so predict between samples and smooth with One-Euro.
