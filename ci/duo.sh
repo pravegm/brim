@@ -102,6 +102,27 @@ if [[ " $PASSES " == *" hinge "* ]]; then
   hinge_sweep 170 2.5; sleep 3; shoot duo-06-reopened inner
   grep -E "BRIM-H" "$OUT_ABS/logs/hinge-1-1.txt" | head -3 >>"$RUNLOG"
   log "hinge lines in app log: $(grep -c 'BRIM-H' "$OUT_ABS/logs/hinge-1-1.txt")"
+
+  # ROUND-3 decision 1 proof: close the phone FAST in the middle of a pour, reopen, and check that no glass was
+  # judged between the autopause and the resume, and that the resume re-armed the flat gate.
+  hinge_set 179
+  launch close-mid-pour "mode=shift:1-2;duo;orient=portrait"
+  hinge_sweep 140 1.0; sleep 0.6; shoot duo-07-before-close inner
+  hinge_sweep 10 0.5; hinge_set 0; sleep 3; shoot duo-08-closed-mid-pour cover
+  hinge_sweep 150 2.0; sleep 3; shoot duo-09-reopened-gate inner
+  CL="$OUT_ABS/logs/close-mid-pour.txt"
+  {
+    echo "== close-mid-pour check"
+    grep -nE "BRIM-T (autopause|resume|served|judg)" "$CL" || echo "(no autopause/resume/served lines)"
+  } >>"$RUNLOG"
+  ap=$(grep -n "BRIM-T autopause" "$CL" | head -1 | cut -d: -f1)
+  rs=$(grep -n "BRIM-T resume needsFlat=1" "$CL" | head -1 | cut -d: -f1)
+  if [[ -n "$ap" && -n "$rs" ]]; then
+    judged=$(sed -n "${ap},${rs}p" "$CL" | grep -cE "BRIM-T (served|judg)")
+    log "CLOSE-GUARD autopause@$ap resume@$rs judged-between=$judged $([[ $judged == 0 ]] && echo PASS || echo FAIL)"
+  else
+    log "CLOSE-GUARD FAIL: autopause=${ap:-none} resume=${rs:-none}"
+  fi
 fi
 
 # ---- pass: autopilot frames on the Duo canvas (store set) --------------------------------------------------
