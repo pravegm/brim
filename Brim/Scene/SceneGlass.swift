@@ -907,6 +907,7 @@ final class SceneGlass {
                 let art = SceneArt.stamp(j)
                 stamp.texture = art.texture
                 stamp.size = art.size
+                stampFullSize = art.size
                 stamp.zRotation = j == .perfect ? -0.05 : 0.05
                 stamp.isHidden = false
                 if f.reduceMotion {
@@ -933,9 +934,10 @@ final class SceneGlass {
             // get the stamp over their upper body instead of on the fold. Computed from the live root (Perfect hop).
             let sy = max(front.yScale, 0.01)
             let limit = (f.keepOutTop - front.position.y) / sy
-            let top = stamp.size.height * SceneGlass.labelTopFrac * 1.2          // 1.2: the pop overshoot
-            let desired = rimY + 12 + stamp.size.height * 0.5
-            stamp.position = CGPoint(x: clampedLocalX(halfWidth: stamp.size.width * 0.5, f),
+            let full = stampFullSize == .zero ? stamp.size : stampFullSize       // settled size, not the pop-in scale
+            let top = full.height * SceneGlass.labelTopFrac * 1.2                // 1.2: the pop overshoot
+            let desired = rimY + 12 + full.height * 0.5
+            stamp.position = CGPoint(x: clampedLocalX(halfWidth: full.width * 0.5, f),
                                      y: min(desired, limit - top))
             // The `.streak` event arrives in the same step as `.served`, before the snapshot carrying the result is
             // drawn, so a pop placed then didn't know where the stamp would go and landed on it (round-3 Duo frame
@@ -948,11 +950,15 @@ final class SceneGlass {
     }
 
     private var pendingStreak: (n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat)?
+    /// The stamp's settled size. `SKSpriteNode.size` includes the node's scale, and the streak is placed while the
+    /// stamp is still popping in at 0.3×: measured that way it looked tiny and the pop landed where the full stamp
+    /// later covered it (final Duo frame D2).
+    private var stampFullSize: CGSize = .zero
 
     /// Highest world y the stamp's ink reaches (with its pop overshoot); nil when no stamp shows. For tests and UI.
     var stampReachWorld: CGFloat? {
         if stamp.isHidden { return nil }
-        let top = stamp.position.y + stamp.size.height * SceneGlass.labelTopFrac * 1.2
+        let top = stamp.position.y + (stampFullSize == .zero ? stamp.size : stampFullSize).height * SceneGlass.labelTopFrac * 1.2
         return front.position.y + front.yScale * top
     }
 
@@ -975,8 +981,9 @@ final class SceneGlass {
         let halfW = size.width * SceneGlass.labelSideFrac
         let hasStamp = !stamp.isHidden
         let sc = hasStamp ? stamp.position : CGPoint(x: 0, y: rimY + 4)
-        let sTop = hasStamp ? stamp.size.height * SceneGlass.labelTopFrac : 0
-        let sHalfW = hasStamp ? stamp.size.width * SceneGlass.labelSideFrac : 0
+        // 1.2: the stamp's pop overshoot.
+        let sTop = hasStamp ? stampFullSize.height * SceneGlass.labelTopFrac * 1.2 : 0
+        let sHalfW = hasStamp ? stampFullSize.width * SceneGlass.labelSideFrac * 1.2 : 0
         func clampX(_ lx: CGFloat) -> CGFloat {
             let lo = safeX.lowerBound + halfW - x, hi = safeX.upperBound - halfW - x
             return lo <= hi ? min(max(lx, lo), hi) : lx
