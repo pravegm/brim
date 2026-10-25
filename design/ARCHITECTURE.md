@@ -124,6 +124,12 @@ final class GameSession {
     init(keyframes: [(t: Double, tilt: Double)], start: TimeInterval)
 }
 struct HingeReader: ViewModifier                          // wraps onHingeChange; (angle°, time) callback + onUnavailable
+// usage: view.modifier(HingeReader(onUpdate: { angle, time in … }, onUnavailable: { … }))
+enum AutopilotStyle: String { case perfect, great, short, spill }
+@MainActor final class AutopilotTiltSource: TiltSource { // plays the game (CI frames, menu attract loop)
+    init(style: AutopilotStyle, snapshot: @escaping () -> GameSnapshot?)
+}
+/// Lid tilt → hinge angle helpers for HUD/debug: hingeAngle = 180 − tilt.
 ```
 
 ## Feedback API (Feel engineer)
