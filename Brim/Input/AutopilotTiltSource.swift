@@ -98,6 +98,8 @@ final class AutopilotTiltSource: TiltSource {
     private var liquidLag = 0.0
     /// Stops measured so far (the lead is a guess until the first one).
     private var learnedStops = 0
+    /// The jug ran dry: laid back, waiting for the fresh one (round 5).
+    private var waitingForJug = false
 
     /// Seconds of the current approach rate still to come after the decision to stop (lay-back pour + anything the
     /// projection misses). Learned from every stop; starts at a calm human's guess.
@@ -115,6 +117,8 @@ final class AutopilotTiltSource: TiltSource {
     /// Spill style: keep pouring this long after the overflow so the spill is a real, visible disaster (the CI frame is
     /// ~0.3 s after it). Short of Core's resultHold + most of the changeover, so the tail doesn't land in the next glass.
     static let spillLinger = 0.38
+    /// Jug fill (0…1) that counts as dry (Core shows exactly 0 once a shift jug runs dry mid-glass).
+    static let dryJugFill = 0.002
 
     init(style: AutopilotStyle, snapshot: @escaping () -> GameSnapshot?) {
         self.style = style
@@ -137,12 +141,6 @@ final class AutopilotTiltSource: TiltSource {
             rest()
             spring = FeelSpring()
             return 0
-        }
-        // ROUND-5 decision 3: a jug that ran dry mid-glass only swaps for a fresh one once the hand tips back, and a
-        // fresh jug that lands while still tipped holds just short of pouring. Ease back, as a player would.
-        if let snap, snap.jug.fill <= 0.001, snap.jug.flow < 0.01 {
-            rest()
-            return output(dt: dt)
         }
         decide(snap, time: time, dt: dt)
         return output(dt: dt)
@@ -212,6 +210,25 @@ final class AutopilotTiltSource: TiltSource {
             } else {
                 fillPerFlow = sample
             }
+        }
+
+        // Round 5 (decision 3): a shift jug that runs dry mid-glass shows fill 0 and the stream stops; the fresh jug
+        // only comes once the glass is served or the jug has been tipped back for 0.4 s (and a refill that lands while
+        // still tipped won't pour until tipped back). So lay the jug back at once and wait for the fresh one.
+        let jugFill = snap.jug.fill.isFinite ? snap.jug.fill : 1
+        if jugFill <= Self.dryJugFill && flow < 0.02 {
+            if !waitingForJug {
+                waitingForJug = true
+                if stage != .stopped { enter(.resting, at: time) }
+                searching = false
+            }
+            command = 0
+            return
+        }
+        if waitingForJug {
+            // A fresh jug: react like a person, then pour (or top up) again.
+            waitingForJug = false
+            if stage == .resting { enter(.reacting, at: time) }
         }
 
         switch stage {
@@ -342,6 +359,7 @@ final class AutopilotTiltSource: TiltSource {
         stage = .waiting
         command = 0
         searching = false
+        waitingForJug = false
         lastProjected = nil
         projectedRate = 0
         flowOnset = nil
