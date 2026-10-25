@@ -72,13 +72,13 @@ FIVE VENUES, ONE SHIFT AT A TIME
 Earn up to three stars a shift to open the next venue. Three-star everything to find out what's behind the counter.
 
 RUSH
-One big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the shift is over. Chase your best on the Game Center leaderboard.
+One big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the run is over. Chase your best on the Game Center leaderboard.
 
 DAILY POUR
 Ten glasses, the same for everyone today, and one scored try. Then share your row of results without giving the glasses away.
 
 CALLED TO THE DROP
-Every glass gets a word: Perfect, Great, Good, Short or Spill. Protect your Perfect streak, collect stars and watch your lifetime stats grow: litres poured, Perfects, best streak.
+Every glass gets a word: Perfect, Great, Good, Short, Over or Spill. Protect your Perfect streak, collect stars and watch your lifetime stats grow: litres poured, Perfects, best streak.
 
 GAME CENTER
 Leaderboards for Rush and the Daily Pour, and ten achievements. It's optional: Brim works fully without signing in.
@@ -122,13 +122,13 @@ FIVE VENUES, ONE SHIFT AT A TIME
 Earn up to three stars a shift to open the next venue. Three-star everything to find out what's behind the counter.
 
 RUSH
-One big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the shift is over. Chase your best on the Game Center leaderboard.
+One big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the run is over. Chase your best on the Game Center leaderboard.
 
 DAILY POUR
 Ten glasses, the same for everyone today, and one scored try. Then share your row of results without giving the glasses away.
 
 CALLED TO THE DROP
-Every glass gets a word: Perfect, Great, Good, Short or Spill. Protect your Perfect streak, collect stars and watch your lifetime stats grow: liters poured, Perfects, best streak.
+Every glass gets a word: Perfect, Great, Good, Short, Over or Spill. Protect your Perfect streak, collect stars and watch your lifetime stats grow: liters poured, Perfects, best streak.
 
 GAME CENTER
 Leaderboards for Rush and the Daily Pour, and ten achievements. It's optional: Brim works fully without signing in.
@@ -262,7 +262,7 @@ The build didn't exist when this was written. Before submission, Claude (or whoe
 | Potion Shop has millilitre marks and lines that fade | Bible §6 | [ ] |
 | Rush: Perfect tops up the jug; multiplier to ×5; ends on 3 spills or empty jug | Bible §6, `Rules.multiplier` | [ ] |
 | Daily Pour: 10 glasses, one scored try, share sheet result | Bible §6 | [ ] |
-| Judgement words Perfect / Great / Good / Short / Spill shown as text | Bible §5, `Judgement` | [ ] |
+| Judgement words Perfect / Great / Good / Short / Over / Spill shown as text (Over = too full, nothing spilled; round 5) | Bible §5, `Judgement` | [ ] |
 | Lifetime stats screen shows litres poured, Perfects, best streak | Bible §9 | [ ] |
 | Sound and haptics each have an off switch in Settings | `FeedbackDirector.soundOn/hapticsOn` | [ ] |
 | Reduce Motion: no screen shake, fewer particles | Bible §8, `GameScene.reduceMotion` | [ ] |

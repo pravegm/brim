@@ -8,8 +8,11 @@ import Foundation
 /// The dead zone is the session's business (`Rules.deadZone`).
 ///
 /// Closing never pours (ROUND-3 decision 1): `ClosingGuard` watches the raw reports. Below 78° (until back above 88°),
-/// or while the hinge closes faster than 160°/s (+0.35 s), the output is `ClosingGuard.closedTilt`: the jug upright,
-/// no outflow, and never read as "flat" by the flat gate. Between 90° and 78° the tilt is clamped to 90.
+/// or while the hinge closes faster than 160°/s below 120° (+0.35 s), the output is `ClosingGuard.closedTilt`: the jug
+/// upright, no outflow, and never read as "flat" by the flat gate. Between 90° and 78° the tilt is clamped
+/// to 90. Lifting is not closing (ROUND-5 decision 2): only the below-78° latch reports `isClosing` (the App re-locks
+/// the flat gate on it); a fast tip above 120° pours, and a fast close below 120° that stops short pours again after
+/// the brief cut, with the gate still open.
 @MainActor
 final class HingeTiltSource: TiltSource {
     private var predictor = HingePredictor()
@@ -33,13 +36,25 @@ final class HingeTiltSource: TiltSource {
         self.stabilise = stabilise
     }
 
-    /// True while the closing guard cuts the pour (below 78° until back above 88°, or within 0.35 s of a fast close),
-    /// as of the latest frame or sample. Use `closingCut(at:)` for a specific time.
+    /// True while the phone is being shut: the guard's below-78° latch (until back above 88°). The App calls
+    /// `requireFlat()` on it, so this is what re-locks the flat gate.
+    ///
+    /// Round 5 (decision 2, QA-2 P1-1): the fast-close cut no longer counts here. It still cuts the pour (`tilt(at:)`
+    /// returns `closedTilt`, see `isCutting`), but a brisk tip, or tipping on after a hold, must never re-lock the gate
+    /// mid-glass and show "Lay it flat to start".
     ///
     /// Round 4 (QA P2-3): only while the hinge is the pour input (`drivesThePour`). With touch on a Duo (the setting,
     /// or touch chosen in book pose) at 70°–78°, the App's per-frame `requireFlat()` on `isClosing` re-closed the flat
     /// gate every frame and nothing could pour; the hinge doesn't pour then, so there is nothing to cut.
     var isClosing: Bool {
+        guard hasHinge, drivesThePour else { return false }
+        return closingGuard.belowLatch
+    }
+
+    /// True while the closing guard cuts the pour for either reason (the below-78° latch, or within 0.35 s of a fast
+    /// close below 120°), as of the latest frame or sample, while the hinge is the pour input. Diagnostics and tests;
+    /// use `closingCut(at:)` for a specific time.
+    var isCutting: Bool {
         guard hasHinge, drivesThePour else { return false }
         let latest = max(lastQuery ?? -Double.infinity, lastSampleTime ?? -Double.infinity)
         return closingGuard.isCut(at: latest)
@@ -52,7 +67,8 @@ final class HingeTiltSource: TiltSource {
         return last === self
     }
 
-    /// `isClosing` at a given time (the fast-close hold expires with time even when no frame or report arrives).
+    /// The pour cut (either reason) at a given time (the fast-close hold expires with time even when no frame or report
+    /// arrives), whichever source drives the pour.
     func closingCut(at time: TimeInterval) -> Bool {
         hasHinge && closingGuard.isCut(at: time)
     }

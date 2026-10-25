@@ -270,8 +270,13 @@ struct CoreTests {
         #expect(Rules.judge(top: 120, line: line, interior: interior, overflowed: false, perfectBand: 0.025) == .good)
         #expect(Rules.judge(top: 80, line: line, interior: interior, overflowed: false, perfectBand: 0.025) == .good)
         #expect(Rules.judge(top: 70, line: line, interior: interior, overflowed: false, perfectBand: 0.025) == .short)
-        #expect(Rules.judge(top: 130, line: line, interior: interior, overflowed: false, perfectBand: 0.025) == .spill)
+        // Round 5 (QA-2 P1-3): past the Good band with nothing over the rim is `over`; `spill` only when it overflowed.
+        #expect(Rules.judge(top: 130, line: line, interior: interior, overflowed: false, perfectBand: 0.025) == .over)
+        #expect(Rules.judge(top: 199, line: line, interior: interior, overflowed: false, perfectBand: 0.025) == .over)
         #expect(Rules.judge(top: 100, line: line, interior: interior, overflowed: true, perfectBand: 0.025) == .spill)
+        #expect(Rules.judge(top: 200, line: line, interior: interior, overflowed: true, perfectBand: 0.025) == .spill)
+        #expect(!Judgement.over.isHit)
+        #expect(Rules.points(for: .over, multiplier: 5) == 0)
     }
 
     @Test func multiplierTiersAndPoints() {
@@ -1077,6 +1082,7 @@ struct CoreTests {
         let judged: [Judgement] = servedJudgements(events)
         let first: Judgement? = judged.first
         #expect(first == Judgement.spill)
+        #expect(!judged.contains(Judgement.over))
         #expect(s.snapshot.strikes == 1)
         // The glass is still on the counter (catching the last of the stream): its puddle is wide.
         let stillThere: Bool = s.snapshot.glasses.contains(where: { (g: GlassState) -> Bool in
@@ -1122,6 +1128,373 @@ struct CoreTests {
         #expect(atLeave >= 6, "puddle when the glass left: \(atLeave)")
         #expect(midway >= 1 && midway < atLeave, "drying puddle \(midway) of \(atLeave)")
         #expect(s.snapshot.puddles.isEmpty, "puddle still there: \(s.snapshot.puddles.count) points")
+    }
+
+    // MARK: Round 5 (QA-2): the flat gate at 12°, dry jugs, `over`, settled foam, P2s
+
+    private func swaps(_ events: [GameEvent]) -> Int {
+        return count(events) { (e: GameEvent) -> Bool in
+            if case .jugSwapped = e { return true }
+            return false
+        }
+    }
+
+    private func pourStarts(_ events: [GameEvent]) -> Int {
+        return count(events) { (e: GameEvent) -> Bool in
+            if case .pourStarted = e { return true }
+            return false
+        }
+    }
+
+    private func flatArms(_ events: [GameEvent]) -> Int {
+        return count(events) { (e: GameEvent) -> Bool in
+            if case .flatArmed = e { return true }
+            return false
+        }
+    }
+
+    private func overflows(_ events: [GameEvent]) -> Int {
+        return count(events) { (e: GameEvent) -> Bool in
+            if case .overflowStarted = e { return true }
+            return false
+        }
+    }
+
+    private func dryOuts(_ events: [GameEvent]) -> Int {
+        return count(events) { (e: GameEvent) -> Bool in
+            if case .jugEmpty = e { return true }
+            return false
+        }
+    }
+
+    @Test func flatGateOpensWithinTwelveDegreesOfFlat() {
+        #expect(Rules.flatGateTilt == 12)
+        #expect(Rules.deadZone == 6)
+        #expect(Rules.readsFlat(lidTilt: 0))
+        #expect(Rules.readsFlat(lidTilt: 11))
+        #expect(Rules.readsFlat(lidTilt: 12))
+        #expect(!Rules.readsFlat(lidTilt: 13))
+        #expect(!Rules.readsFlat(lidTilt: Rules.closedTilt))
+        #expect(Rules.jugAngle(forLidTilt: Rules.closedTilt) == 0)
+        // Anywhere inside the gate the jug is still too upright to pour, even when full.
+        let fullPour: Double = JugGeometry.pourThreshold(JugGeometry.standard, fill: 1.0)
+        #expect(Rules.jugAngle(forLidTilt: Rules.flatGateTilt) < fullPour)
+
+        let s: GameSession = GameSession(mode: .shift("1-1"), layout: duoLayout(), seed: 2)
+        var events: [GameEvent] = []
+        // Lid 13° (hinge 167°): still shut.
+        run(s, seconds: 2.0, tilt: 13, events: &events)
+        #expect(s.snapshot.needsFlat)
+        // An input's "closed" tilt (the hinge's closing guard) never opens it either.
+        run(s, seconds: 0.5, tilt: Rules.closedTilt, events: &events)
+        #expect(s.snapshot.needsFlat)
+        #expect(flatArms(events) == 0)
+        // Lid 11° (hinge 169°): open, and nothing pours.
+        run(s, seconds: 0.3, tilt: 11, events: &events)
+        #expect(!s.snapshot.needsFlat)
+        #expect(flatArms(events) == 1)
+        #expect(s.snapshot.jug.flow == 0)
+        #expect(pourStarts(events) == 0)
+    }
+
+    @Test func aDryJugMidGlassStopsTheStreamAndRefillsOnlyAfterATipBack() {
+        let s: GameSession = GameSession(mode: .shift("1-1"), layout: duoLayout(), seed: 13)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        guard let glass = activeGlass(s) else {
+            Issue.record("no glass")
+            return
+        }
+        // Nearly empty, tipped hard: it runs dry into the glass.
+        s.debugSetJugFill(0.05)
+        var t: Double = 0
+        var dry: Bool = false
+        while t < 8 && !dry {
+            events.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: 88))
+            if s.snapshot.jug.fill == 0 { dry = true }
+            t += 1.0 / 60.0
+        }
+        // Snapshot-visible (Feedback's glug-out, Scene's empty jug): fill 0, no outflow. `.jugEmpty` stays Rush's.
+        #expect(dry)
+        #expect(s.snapshot.jug.flow == 0)
+        #expect(dryOuts(events) == 0)
+        // Still held tipped: the jug stays empty, no stream, no swap, no verdict.
+        var held: [GameEvent] = []
+        run(s, seconds: 2.0, tilt: 88, events: &held)
+        #expect(swaps(held) == 0)
+        #expect(servedJudgements(held).isEmpty)
+        #expect(s.snapshot.jug.fill == 0)
+        #expect(s.snapshot.jug.flow == 0)
+        #expect(s.snapshot.stream.isEmpty)
+        let heldID: Int? = activeGlass(s)?.id
+        #expect(heldID == glass.id)
+        // Tipped back: not yet at 0.3 s, swapped by 0.55 s.
+        var back: [GameEvent] = []
+        run(s, seconds: 0.3, tilt: 0, events: &back)
+        #expect(swaps(back) == 0)
+        run(s, seconds: 0.25, tilt: 0, events: &back)
+        #expect(swaps(back) == 1)
+        // The glass waits for the player to pour again; the fresh jug arrives full.
+        run(s, seconds: CoreTuning.jugSwapPause + 0.2, tilt: 0, events: &back)
+        #expect(servedJudgements(back).isEmpty)
+        #expect(s.snapshot.jug.fill >= 0.5)
+        // And pours into the same glass.
+        let tilt: Double = pourLid(fill: s.snapshot.jug.fill) + 12
+        run(s, seconds: 0.8, tilt: tilt, events: &back)
+        #expect(s.snapshot.jug.flow > 0.05)
+        let sameID: Int? = activeGlass(s)?.id
+        #expect(sameID == glass.id)
+    }
+
+    @Test func aDryJugIsSwappedBetweenGlassesAndNeverGushesWhileHeldTipped() {
+        // A shift whose first glass has a timer and whose second is the same still drink.
+        let pick: Level? = LevelCatalog.levels.first(where: { (l: Level) -> Bool in
+            if l.conveyorSpeed != nil || l.venue == .sandBar || l.orders.count < 2 { return false }
+            let a: GlassOrder = l.orders[0]
+            return a.patience != nil && a.liquid == l.orders[1].liquid && LiquidCatalog.liquid(a.liquid).foamPerVolume == 0
+        })
+        guard let level = pick else {
+            Issue.record("no shift with a timed first glass")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: duoLayout(), seed: 14)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        s.debugSetJugFill(0.05)
+        // Held tipped all the way: dry, then the customer's timer runs out.
+        var t: Double = 0
+        var servedAt: Double? = nil
+        var ranDry: Bool = false
+        while t < 40 && servedAt == nil {
+            let step: [GameEvent] = s.step(dt: 1.0 / 60.0, tilt: 88)
+            events.append(contentsOf: step)
+            if s.snapshot.jug.fill == 0 { ranDry = true }
+            if !servedJudgements(step).isEmpty { servedAt = t }
+            t += 1.0 / 60.0
+        }
+        #expect(ranDry)
+        #expect(servedAt != nil)
+        #expect(swaps(events) == 0)
+        // Still held tipped: the jug is swapped between glasses, and the full one never pours from the held tilt.
+        var after: [GameEvent] = []
+        run(s, seconds: 3.0, tilt: 88, events: &after)
+        #expect(swaps(after) == 1)
+        #expect(pourStarts(after) == 0)
+        #expect(s.snapshot.jug.flow == 0)
+        #expect(s.snapshot.jug.fill >= 0.5)
+        #expect(s.snapshot.jug.angle < Rules.jugAngle(forLidTilt: 88))
+        // Tip back, then pour: it pours.
+        run(s, seconds: 0.3, tilt: 0, events: &after)
+        let tilt: Double = pourLid(fill: s.snapshot.jug.fill) + 12
+        run(s, seconds: 1.0, tilt: tilt, events: &after)
+        #expect(s.snapshot.jug.flow > 0.05)
+    }
+
+    @Test func overfillingBelowTheRimIsOverNotSpill() {
+        let s: GameSession = GameSession(mode: .shift("1-1"), layout: duoLayout(), seed: 9)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        guard let first = activeGlass(s) else {
+            Issue.record("no glass")
+            return
+        }
+        let lineFraction: Double = Double(first.lineHeight / first.shape.interiorHeight)
+        #expect(lineFraction < 0.85)
+        // Well past the Good band (12 %), well short of the rim.
+        let stopAt: Double = min(0.2, CoreTuning.goodBand + (1.0 - lineFraction - CoreTuning.goodBand) * 0.5)
+        var stopped: Bool = false
+        var t: Double = 0
+        while t < 20 && servedJudgements(events).isEmpty {
+            var tilt: Double = 0
+            if !stopped {
+                if s.snapshot.telemetry.projectedDistanceToLine >= stopAt {
+                    stopped = true
+                } else {
+                    tilt = pourLid(fill: max(0.03, s.snapshot.jug.fill)) + 10
+                }
+            }
+            events.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: tilt))
+            t += 1.0 / 60.0
+        }
+        let judged: [Judgement] = servedJudgements(events)
+        #expect(judged == [Judgement.over])
+        #expect(overflows(events) == 0)
+        #expect(s.snapshot.puddles.isEmpty)
+        #expect(s.snapshot.strikes == 1)
+        #expect(s.snapshot.streak == 0)
+        #expect(s.snapshot.score == 0)
+        let after: GlassState? = s.snapshot.glasses.first(where: { (g: GlassState) -> Bool in g.id == first.id })
+        if let g = after {
+            #expect(!g.overflowing)
+            #expect(g.liquidHeight < g.shape.interiorHeight)
+            #expect(g.result == Judgement.over)
+        }
+    }
+
+    @Test func aFoamyDrinkPouredToTheLineIsJudgedOnceTheHeadSettles() {
+        // The shift whose first glass is the foamiest drink (root beer today); a phone, so no gate.
+        var pick: Level? = nil
+        var best: Double = 0
+        for l in LevelCatalog.levels where l.conveyorSpeed == nil {
+            guard let o = l.orders.first, o.prefill == 0 else { continue }
+            let liquid: Liquid = LiquidCatalog.liquid(o.liquid)
+            let k: Double = liquid.foamPerVolume * liquid.foamSettle
+            if k > best {
+                best = k
+                pick = l
+            }
+        }
+        guard let level = pick else {
+            Issue.record("no foamy shift")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: phoneLayout(), seed: 5)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        guard let first = activeGlass(s) else {
+            Issue.record("no glass")
+            return
+        }
+        let interior: CGFloat = first.shape.interiorHeight
+        let allowance: CGFloat = CGFloat(CoreTuning.foamSettledFraction) * interior
+        // Pour the LIQUID to the line (the projection counts at most a settled head), pausing if the head climbs high.
+        var stopped: Bool = false
+        var pausing: Bool = false
+        var stopT: Double? = nil
+        var servedT: Double? = nil
+        var headAtServe: CGFloat = -1
+        var maxHead: CGFloat = 0
+        var t: Double = 0
+        while t < 30 && servedT == nil {
+            var tilt: Double = 0
+            if !stopped, let g = activeGlass(s) {
+                if s.snapshot.telemetry.projectedDistanceToLine >= -0.01 {
+                    stopped = true
+                    stopT = t
+                } else {
+                    let top: CGFloat = g.liquidHeight + g.foamHeight
+                    if top > interior * 0.8 {
+                        pausing = true
+                    } else if top < interior * 0.75 {
+                        pausing = false
+                    }
+                    if !pausing { tilt = pourLid(fill: max(0.03, s.snapshot.jug.fill)) + 15 }
+                }
+            }
+            let step: [GameEvent] = s.step(dt: 1.0 / 60.0, tilt: tilt)
+            events.append(contentsOf: step)
+            t += 1.0 / 60.0
+            guard let g = s.snapshot.glasses.first(where: { (x: GlassState) -> Bool in x.id == first.id }) else { break }
+            maxHead = max(maxHead, g.foamHeight)
+            if !servedJudgements(step).isEmpty {
+                servedT = t
+                headAtServe = g.foamHeight
+            }
+        }
+        let judged: [Judgement] = servedJudgements(events)
+        #expect(judged.count == 1)
+        if let j = judged.first { #expect(j.isHit, "judged \(j)") }
+        #expect(overflows(events) == 0)
+        // The head really was tall (judged with it, this glass would have been stamped over the line)…
+        #expect(maxHead > allowance * 2, "head \(maxHead)")
+        // …and the verdict waited for it to settle (or for the 3 s cap).
+        let waited: Double = (servedT ?? 99) - (stopT ?? 0)
+        #expect(headAtServe <= allowance + 0.5 || waited >= 2.9, "served with head \(headAtServe) after \(waited) s")
+        #expect(waited <= 4.0, "verdict \(waited) s after stopping")
+    }
+
+    @Test func fadingLinesWaitForTheFlatGate() {
+        let pick: Level? = LevelCatalog.levels.first(where: { (l: Level) -> Bool in
+            guard l.conveyorSpeed == nil, let o = l.orders.first, let fade = o.lineFadesAfter else { return false }
+            return (o.patience ?? 99) > fade + 3
+        })
+        guard let level = pick, let fade = level.orders.first?.lineFadesAfter else {
+            Issue.record("no shift with a fading first line")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: duoLayout(), seed: 3)
+        var events: [GameEvent] = []
+        // Tabletop, not laid flat yet: the line doesn't fade while nothing can pour.
+        run(s, seconds: fade + 2.0, tilt: 50, events: &events)
+        #expect(s.snapshot.needsFlat)
+        let behindGate: Double? = activeGlass(s)?.lineOpacity
+        #expect(behindGate == Double(1))
+        run(s, seconds: 0.2, tilt: 0, events: &events)
+        #expect(!s.snapshot.needsFlat)
+        run(s, seconds: max(0, fade - 0.5), tilt: 0, events: &events)
+        let early: Double? = activeGlass(s)?.lineOpacity
+        #expect(early == Double(1))
+        run(s, seconds: 1.0 + CoreTuning.lineFadeDuration, tilt: 0, events: &events)
+        let late: Double? = activeGlass(s)?.lineOpacity
+        #expect(late == Double(0))
+    }
+
+    @Test func theBeltWaitsForTheIntro() {
+        guard let level = LevelCatalog.levels.first(where: { (l: Level) -> Bool in l.conveyorSpeed != nil }) else {
+            Issue.record("no conveyor shift")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: phoneLayout(), seed: 3)
+        var events: [GameEvent] = []
+        run(s, seconds: 0.5, tilt: 0, events: &events)
+        #expect(s.snapshot.phase == .intro)
+        let x0: CGFloat? = activeGlass(s)?.x
+        run(s, seconds: 0.25, tilt: 0, events: &events)
+        #expect(s.snapshot.phase == .intro)
+        let x1: CGFloat? = activeGlass(s)?.x
+        #expect(x0 != nil)
+        #expect(x1 == x0)
+        run(s, seconds: 0.5, tilt: 0, events: &events)
+        #expect(s.snapshot.phase == .playing)
+        let x2: CGFloat? = activeGlass(s)?.x
+        if let a = x1, let b = x2 { #expect(b > a) }
+    }
+
+    @Test func conveyorVerdictWaitsForDrinkAlreadyInsideTheGlass() {
+        guard let level = LevelCatalog.levels.first(where: { (l: Level) -> Bool in l.conveyorSpeed != nil }) else {
+            Issue.record("no conveyor shift")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: phoneLayout(), seed: 4)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        var pending: [(id: Int, t: Double, h: CGFloat, interior: CGFloat)] = []
+        var checked: Int = 0
+        var problems: [String] = []
+        var t: Double = 0
+        while t < 25 && !s.isFinished {
+            // Pour hard only over the last stretch before the mouth passes the stream (it lands at x ≈ 340…372), so
+            // drink is still falling inside the glass when it reaches the exit.
+            var tilt: Double = 0
+            if let g = activeGlass(s), Double(g.x - g.shape.rimHalfWidth) > 335 {
+                tilt = pourLid(fill: max(0.03, s.snapshot.jug.fill)) + 18
+            }
+            let step: [GameEvent] = s.step(dt: 1.0 / 60.0, tilt: tilt)
+            t += 1.0 / 60.0
+            for e in step {
+                guard case .served(let id, _, _) = e else { continue }
+                let g: GlassState? = s.snapshot.glasses.first(where: { (x: GlassState) -> Bool in x.id == id })
+                if let g = g, !g.overflowing {
+                    pending.append((id: id, t: t, h: g.liquidHeight, interior: g.shape.interiorHeight))
+                }
+            }
+            var keep: [(id: Int, t: Double, h: CGFloat, interior: CGFloat)] = []
+            for p in pending {
+                if t - p.t < 0.4 {
+                    keep.append(p)
+                    continue
+                }
+                let g: GlassState? = s.snapshot.glasses.first(where: { (x: GlassState) -> Bool in x.id == p.id })
+                if let g = g, !g.overflowing {
+                    checked += 1
+                    let grew: CGFloat = g.liquidHeight - p.h
+                    if grew > p.interior * 0.015 { problems.append("glass \(p.id) rose \(grew) pt after its verdict") }
+                }
+            }
+            pending = keep
+        }
+        #expect(checked >= 2, "verdicts checked \(checked)")
+        #expect(problems.isEmpty, "\(problems)")
     }
 
     // MARK: Modes

@@ -415,6 +415,141 @@ final class SceneTests: XCTestCase {
         }
     }
 
+    // MARK: Round 5
+
+    /// ROUND-5 decision 4 + QA-2 P2-15: an "OVER" stamp exists, and the streak pop says "7 IN A ROW".
+    @MainActor
+    func testStampWordsAndStreakCopy() {
+        let all: [Judgement] = [.perfect, .great, .good, .short, .over, .spill]
+        var words = Set<String>()
+        for j in all {
+            words.insert(SceneArt.stampText(j))
+            let art = SceneArt.stamp(j)
+            XCTAssertGreaterThan(art.size.width, 0)
+            XCTAssertGreaterThan(art.size.height, 0)
+        }
+        XCTAssertEqual(words.count, all.count)
+        XCTAssertEqual(SceneArt.stampText(.over), "OVER")
+        XCTAssertEqual(SceneArt.stampText(.spill), "SPILL!")
+        XCTAssertEqual(SceneArt.streakText(7), "7 IN A ROW")
+        for n in [2, 7, 12, 40] {
+            XCTAssertFalse(SceneArt.streakText(n).contains("×"))
+            XCTAssertFalse(SceneArt.streakText(n).contains("STREAK"))
+            XCTAssertGreaterThan(SceneArt.streak(n).size.width, 0)
+        }
+    }
+
+    /// ROUND-5 decision 4: `.over` stamps only — no spill burst, sheet or shake. Real overflow still spills, once.
+    @MainActor
+    func testOverPlaysNoSpillFXAndRealOverflowDoes() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift(LevelCatalog.levels.first?.id ?? "1-1"), layout: layout, seed: 5)
+        let scene = GameScene(layout: layout)
+        let live = SceneTestDriver(session)
+        scene.driver = live
+        scene.reset(for: session.snapshot)
+        var t: TimeInterval = 10
+        for _ in 0..<90 {
+            t += 1.0 / 60.0
+            scene.update(t)
+        }
+        var snap = session.snapshot
+        guard let idx = snap.glasses.firstIndex(where: { $0.phase == .filling }) ?? snap.glasses.indices.first else {
+            XCTFail("no glass on the counter")
+            return
+        }
+        let id = snap.glasses[idx].id
+        snap.glasses[idx].result = .over
+        snap.glasses[idx].overflowing = false
+        let scripted = ScriptedSceneDriver(snap)
+        scene.driver = scripted
+
+        func play(_ events: [GameEvent], frames: Int = 20) {
+            scripted.queue = events
+            for _ in 0..<frames {
+                t += 1.0 / 60.0
+                scripted.snapshot.time += 1.0 / 60.0
+                scene.update(t)
+            }
+        }
+        play([.served(glassID: id, judgement: .over, points: 0), .strike(1), .streak(0)])
+        XCTAssertEqual(scene.spillFXCount, 0, "OVER must not play the spill burst")
+
+        play([.overflowStarted(glassID: id)])
+        XCTAssertEqual(scene.spillFXCount, 1)
+        play([.served(glassID: id, judgement: .spill, points: 0)])
+        XCTAssertEqual(scene.spillFXCount, 1, "one burst per glass")
+    }
+
+    /// ROUND-5 decision 3: a dry jug (stream stopped, refill waits for the next glass) reads empty; a fresh jug doesn't.
+    @MainActor
+    func testDryJugReadsEmptyAndAFreshJugDoesNot() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift(LevelCatalog.levels.first?.id ?? "1-1"), layout: layout, seed: 2)
+        var j = session.snapshot.jug
+        let jug = SceneJug()
+        jug.update(j, streamWidth: 0, time: 1, dt: 0)
+        XCTAssertFalse(jug.isDry)
+
+        j.fill = 0.02
+        j.flow = 0
+        j.angle = 60
+        for k in 1...30 { jug.update(j, streamWidth: 0, time: 1 + Double(k) / 60, dt: 1.0 / 60.0) }
+        XCTAssertTrue(jug.isDry)
+        XCTAssertEqual(jug.dryAmount, 1, accuracy: 0.001)
+
+        // Still pouring the last drops: not "dry" yet.
+        let pouring = SceneJug()
+        j.flow = 0.2
+        pouring.update(j, streamWidth: 10, time: 1, dt: 0)
+        XCTAssertFalse(pouring.isDry)
+
+        // The refill arrives between glasses: the empty look goes at once (no fade on the new jug).
+        j.fill = 0.6
+        j.flow = 0
+        jug.update(j, streamWidth: 0, time: 2, dt: 1.0 / 60.0)
+        XCTAssertFalse(jug.isDry)
+        XCTAssertEqual(jug.dryAmount, 0, accuracy: 0.0001)
+    }
+
+    /// Round-5 frame 19: no bubbles (fizz or plume) in sand; sand heaps under the stream instead. Fizzy potions keep
+    /// their bubbles.
+    @MainActor
+    func testSandNeverBubblesAndHeapsUnderTheStream() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        func pour(_ liquid: LiquidID, into glassID: String) -> SceneGlass {
+            var drink = LiquidCatalog.liquid(liquid)
+            if liquid == .sand { drink.fizzy = true }       // even if the data said so
+            let shape = GlassCatalog.shape(glassID)
+            let glass = SceneGlass(id: 9, darkBackdrop: liquid != .sand)
+            let h = shape.interiorHeight * 0.4
+            let state = GlassState(id: 9, shape: shape, liquid: drink, x: 352, phase: .filling, liquidHeight: h,
+                                   foamHeight: 0, lineHeight: shape.interiorHeight * 0.7, lineOpacity: 1,
+                                   inPerfectBand: false, overflowing: false, patienceLeft: nil, patienceTotal: nil,
+                                   result: nil)
+            let surfaceY = layout.counterY + max(0, shape.baseThickness) + h
+            var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: true,
+                               tail: StreamPoint(position: CGPoint(x: 352, y: surfaceY), width: 12), advanced: true,
+                               reduceMotion: false, band: 0.025, projected: nil, safeX: 14...656,
+                               keepOutTop: layout.creaseMinY - 8)
+            for k in 0..<40 {
+                f.time = 1 + Double(k) / 60
+                glass.update(state, f)
+            }
+            return glass
+        }
+        let sand = pour(.sand, into: "jar")
+        XCTAssertTrue(sand.isGranular)
+        XCTAssertFalse(sand.showsBubbles)
+        XCTAssertGreaterThan(sand.heap, 2)
+        XCTAssertLessThanOrEqual(sand.heap, SceneGlass.maxHeap + 0.001)
+
+        let potion = pour(.potionBlue, into: "beaker")
+        XCTAssertFalse(potion.isGranular)
+        XCTAssertTrue(potion.showsBubbles)
+        XCTAssertEqual(potion.heap, 0, accuracy: 0.0001)
+    }
+
     @MainActor
     func testSceneBuildsAtLayoutSize() {
         let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), creaseFromTop: 455...495)
@@ -442,5 +577,22 @@ private final class SceneTestDriver: SceneDriver {
     func advance(dt: Double, now: TimeInterval) -> (GameSnapshot, [GameEvent])? {
         let events = session.step(dt: dt, tilt: tilt)
         return (session.snapshot, events)
+    }
+}
+
+/// Replays a fixed snapshot and hands out queued events once (for event → FX tests).
+@MainActor
+private final class ScriptedSceneDriver: SceneDriver {
+    var snapshot: GameSnapshot
+    var queue: [GameEvent] = []
+
+    init(_ snapshot: GameSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func advance(dt: Double, now: TimeInterval) -> (GameSnapshot, [GameEvent])? {
+        let events = queue
+        queue = []
+        return (snapshot, events)
     }
 }

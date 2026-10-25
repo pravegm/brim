@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import SwiftUI
 import Testing
 @testable import Brim
@@ -802,5 +803,257 @@ struct GameCenterQueueTests {
         #expect(GameCenterManager.isStale(daily, today: 299))
         let rush = GameCenterManager.QueuedScore(leaderboard: "brim.rush.best", score: 10, day: nil, token: "t")
         #expect(!GameCenterManager.isStale(rush, today: 400))
+    }
+}
+
+// MARK: - Round 5: QA-2 and REVIEW-5 (App)
+
+@MainActor
+struct Round5AppTests {
+    private func makeController(_ args: String, canvas: CGSize = CGSize(width: 669, height: 951), fold: Bool = true,
+                                store: ProgressStore? = nil, settings: SettingsStore? = nil) -> GameController {
+        let c = GameController(store: store ?? ProgressStore(inMemory: ProgressData()),
+                               settings: settings ?? SettingsStore(defaults: nil),
+                               demo: DemoConfig.parse(args, today: 33))
+        c.updateCanvas(canvas, hasFold: fold)
+        return c
+    }
+
+    // ROUND-5 decision 5 (QA-2 P1-4): a venue achievement needs every shift of the venue cleared, not the venue open.
+    @Test func venueAchievementsNeedEveryShiftCleared() {
+        var data = ProgressData()
+        for level in LevelCatalog.levels(in: .lemonadeStand) { data.stars[level.id] = 3 }
+        if LevelCatalog.starsToUnlock(.sodaFountain) <= data.totalStars {
+            #expect(data.isUnlocked(.sodaFountain))
+        }
+        #expect(!data.earnedAchievements.contains("brim.venue.soda"))
+        let soda = LevelCatalog.levels(in: .sodaFountain)
+        #expect(!soda.isEmpty)
+        for level in soda.dropLast() { data.stars[level.id] = 1 }
+        #expect(!data.earnedAchievements.contains("brim.venue.soda"))
+        if let last = soda.last { data.stars[last.id] = 1 }
+        #expect(data.earnedAchievements.contains("brim.venue.soda"))
+        #expect(!data.earnedAchievements.contains("brim.venue.diner"))
+        // The Sand Bar: one cleared shift isn't "every Sand Bar shift cleared".
+        let sand = LevelCatalog.levels(in: .sandBar)
+        if let first = sand.first {
+            data.stars[first.id] = 1
+            #expect(data.earnedAchievements.contains("brim.sandbar") == (sand.count == 1))
+            for level in sand { data.stars[level.id] = 1 }
+            #expect(data.earnedAchievements.contains("brim.sandbar"))
+        }
+        // The ids never change (they are live in App Store Connect).
+        for id in ["brim.venue.soda", "brim.venue.diner", "brim.venue.conveyor", "brim.venue.potions", "brim.sandbar"] {
+            #expect(GameCenterManager.achievementIDs.contains(id))
+        }
+    }
+
+    @Test func staleQueuedAchievementsAreDropped() {
+        let pending = GameCenterManager.pending(earned: ["brim.first.perfect", "brim.unknown"],
+                                                reported: ["brim.streak.10"])
+        #expect(pending == Set(["brim.first.perfect"]))
+        #expect(GameCenterManager.pending(earned: ["brim.streak.10"], reported: ["brim.streak.10"]).isEmpty)
+    }
+
+    // `.over` everywhere (contract change, ROUND-5 decision 4).
+    @Test func overHasItsOwnSquareGlyphAndColour() {
+        #expect(ShareText.emoji(for: .over) == "🟪")
+        #expect(ShareText.daily(day: 5, judgements: [.perfect, .over, .short, .spill], score: 300)
+                == "Brim Daily #5 ⭐️🟪🟧🟥 300")
+        #expect(RecapGlyph.symbol(for: .over) == "arrow.up")
+        let all: [Judgement] = [.perfect, .great, .good, .short, .over, .spill]
+        #expect(Set(all.map { ShareText.emoji(for: $0) }).count == all.count)
+        #expect(Set(all.map { RecapGlyph.symbol(for: $0) }).count == 4)
+        #expect(!Judgement.over.isHit)
+    }
+
+    // REVIEW-5 P1-7: the streak rides in the share line from 2 days.
+    @Test func shareLineCarriesTheStreak() {
+        #expect(ShareText.daily(day: 297, judgements: [.perfect, .great], score: 570, streak: 4)
+                == "Brim Daily #297 ⭐️🟩 570 🔥4")
+        #expect(ShareText.daily(day: 297, judgements: [.perfect], score: 570, streak: 1) == "Brim Daily #297 ⭐️ 570")
+        #expect(ResultsView.dailyLine(streak: 4, best: 1240) == "🔥 4 days in a row · best 1,240")
+        #expect(ResultsView.dailyLine(streak: 1, best: 300) == "best 300")
+        var data = ProgressData()
+        #expect(data.bestDaily == 0)
+        data.daily[3] = DailyRecord(score: 900, judgements: [], perfects: 0)
+        data.daily[4] = DailyRecord(score: 1240, judgements: [], perfects: 0)
+        #expect(data.bestDaily == 1240)
+    }
+
+    // REVIEW-5 P1-6: the headline counts every strike kind; a struck-out shift shows progress and a tip.
+    @Test func failedShiftHeadlineProgressAndTip() throws {
+        let level = try #require(LevelCatalog.levels(in: .lemonadeStand).first)
+        func shift(_ judgements: [Judgement], id: String? = nil) -> RunResult {
+            RunResult(mode: .shift(id ?? level.id), score: 0, stars: 0, perfects: 0, bestStreak: 0,
+                      judgements: judgements, poured: 0, cleared: false)
+        }
+        #expect(ResultsView.headline(for: shift([.good, .over, .spill, .over]), dailyOnFile: false)
+                == "Shift over — 2 over, 1 spill")
+        #expect(ResultsView.headline(for: shift([.spill, .spill, .spill]), dailyOnFile: false) == "Shift over — 3 spills")
+        #expect(ResultsView.headline(for: shift([.short, .short, .short]), dailyOnFile: false) == "Shift over — 3 shorts")
+        #expect(ResultsView.headline(for: shift([.over, .good]), dailyOnFile: false) == "Not quite")
+        let failed = shift([.good, .over, .spill, .over])
+        #expect(ResultsView.progressLine(for: failed) == "4 of \(level.orders.count) glasses")
+        #expect(ResultsView.coachingTip(for: failed) == "Stop a little earlier: the stream keeps falling.")
+        #expect(ResultsView.coachingTip(for: shift([.short, .short, .good])) != nil)
+        if let foam = LevelCatalog.levels(in: .sodaFountain).first {
+            #expect(ResultsView.coachingTip(for: shift([.over, .spill, .over], id: foam.id))?.contains("Foam") == true)
+        }
+        var cleared = failed
+        cleared.cleared = true
+        cleared.stars = 1
+        #expect(ResultsView.progressLine(for: cleared) == nil)
+        #expect(ResultsView.coachingTip(for: cleared) == nil)
+        let rush = RunResult(mode: .rush, score: 900, stars: 0, perfects: 0, bestStreak: 0, judgements: [.good],
+                             poured: 0, cleared: true)
+        let headline = ResultsView.headline(for: rush, dailyOnFile: false)
+        #expect(headline == "Rush over!")
+        #expect(!headline.lowercased().contains("call"))
+    }
+
+    // QA-2 P2-8: the Daily rolls over at 00:00 UTC; say when, on the player's clock.
+    @Test func dailyRolloverNoteSaysWhenInLocalTime() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let now = try #require(utc.date(from: DateComponents(year: 2026, month: 10, day: 26, hour: 15)))
+        let newYork = try #require(TimeZone(identifier: "America/New_York"))
+        let gb = Locale(identifier: "en_GB")
+        #expect(ResultsView.dailyRolloverNote(now: now, timeZone: newYork, locale: gb)
+                == "Today's scored pour. New glasses at 20:00.")
+        #expect(ResultsView.dailyRolloverNote(now: now, timeZone: utc.timeZone, locale: gb)
+                == "Today's scored pour. New glasses at 00:00.")
+        #expect(!ResultsView.dailyRolloverNote(now: now).contains("tomorrow"))
+    }
+
+    // QA-2 P2-5: once the first glass has arrived, leaving files the attempt (a 0 with nothing served).
+    @Test func anArmedAttemptIsFiledEvenWithNothingServed() {
+        var data = ProgressData()
+        let began = data.beginDailyAttempt(day: 40)
+        #expect(began)
+        data.armDailyAttempt(day: 40)
+        #expect(data.dailyArmed.contains(40))
+        let filed = data.closeDailyAttempt(day: 40)
+        #expect(filed?.score == Int(0))
+        #expect(filed?.judgements.isEmpty == true)
+        #expect(data.daily[40]?.score == Int(0))
+        #expect(data.dailyArmed.isEmpty)
+        let again = data.beginDailyAttempt(day: 40)
+        #expect(!again)
+        // Arming without a marked attempt does nothing.
+        var other = ProgressData()
+        other.armDailyAttempt(day: 41)
+        #expect(other.dailyArmed.isEmpty)
+    }
+
+    @Test func anArmedAttemptLeftByACrashIsFiledAtLaunch() throws {
+        let suite = "brim.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ProgressStore(defaults: defaults)
+        #expect(store.beginDailyAttempt(day: 8))
+        store.armDailyAttempt(day: 8)
+        let relaunched = ProgressStore(defaults: defaults)
+        #expect(relaunched.dailyRecord(day: 8)?.score == Int(0))
+        #expect(relaunched.data.dailyArmed.isEmpty)
+        #expect(!relaunched.beginDailyAttempt(day: 8))
+    }
+
+    @Test func theControllerFilesTheDailyOnceTheFirstGlassArrives() {
+        let store = ProgressStore(inMemory: ProgressData())
+        let c = makeController("mode=daily:33", canvas: CGSize(width: 402, height: 874), fold: false, store: store)
+        c.start(mode: .daily(33))
+        #expect(c.isScoredDaily)
+        var now = 50.0
+        var frames = 0
+        while !store.data.dailyArmed.contains(33) && frames < 1200 {
+            now += 1.0 / 60.0
+            _ = c.advance(dt: 1.0 / 60.0, now: now)
+            frames += 1
+        }
+        #expect(store.data.dailyArmed.contains(33))
+        // Bail out on glass 1 (nothing served yet): that is the day's score now, not a free retry.
+        c.pause()
+        c.quitToMenu()
+        #expect(store.dailyRecord(day: 33) != nil)
+        c.start(mode: .daily(33))
+        #expect(!c.isScoredDaily)
+        #expect(c.isPracticeDaily)
+    }
+
+    // QA-2 P2-4 / ROUND-5 App row: quitting Rush keeps the score.
+    @Test func quittingRushRecordsTheScore() {
+        let store = ProgressStore(inMemory: ProgressData())
+        let c = makeController("mode=rush;autopilot=perfect", canvas: CGSize(width: 402, height: 874), fold: false,
+                               store: store)
+        c.start(mode: .rush)
+        var now = 50.0
+        var frames = 0
+        var score = 0
+        while c.hud.serveTick == 0 && frames < 4000 {
+            now += 1.0 / 60.0
+            score = c.advance(dt: 1.0 / 60.0, now: now)?.0.score ?? score
+            frames += 1
+        }
+        #expect(c.hud.serveTick > 0)
+        #expect(store.data.stats.runs == 0)
+        c.quitToMenu()
+        #expect(store.data.stats.runs == 1)
+        #expect(store.rushBest == score)
+        #expect(store.data.stats.glasses >= 1)
+        // Leaving the attract loop afterwards records nothing more.
+        c.showHome()
+        #expect(store.data.stats.runs == 1)
+    }
+
+    @Test func pauseCardSaysWhatLeavingDoes() {
+        #expect(PauseView.leavingNote(scoredDaily: false, mode: .rush) != nil)
+        #expect(PauseView.leavingNote(scoredDaily: true, mode: .daily(3)) != nil)
+        #expect(PauseView.leavingNote(scoredDaily: false, mode: .shift("1-1")) == nil)
+        #expect(GameController.bestPerfectStreak([.perfect, .perfect, .good, .perfect, .perfect, .perfect, .over]) == 3)
+        #expect(GameController.bestPerfectStreak([]) == 0)
+    }
+
+    // ROUND-5 decision 1: after 6 s stuck on the flat gate, "Use touch instead" switches this run to touch only.
+    @Test func stuckOnTheGateOffersTouchForThisRunOnly() {
+        let settings = SettingsStore(defaults: nil)
+        let c = makeController("mode=shift:1-1;duo", settings: settings)
+        c.start(mode: .shift("1-1"))
+        #expect(!c.usesTouch)
+        // The gate clock runs on the frame clock (CACurrentMediaTime, as the scene passes it).
+        let t0 = CACurrentMediaTime()
+        var now = t0
+        c.hingeSample(angle: 140, time: now)          // held up, never flat
+        var last: GameSnapshot?
+        while now < t0 + 5.5 {
+            now += 1.0 / 60.0
+            last = c.advance(dt: 1.0 / 60.0, now: now)?.0
+        }
+        #expect(last?.needsFlat == true)
+        #expect(c.hud.showFlatGate)
+        #expect(!c.hud.offerTouch)
+        while now < t0 + 6.6 {
+            now += 1.0 / 60.0
+            last = c.advance(dt: 1.0 / 60.0, now: now)?.0
+        }
+        #expect(c.hud.offerTouch)
+        c.useTouchForThisRun()
+        #expect(c.usesTouch)
+        #expect(c.runTouchOverride)
+        #expect(!c.hud.showFlatGate)
+        now += 1.0 / 60.0
+        last = c.advance(dt: 1.0 / 60.0, now: now)?.0
+        #expect(last?.needsFlat == false)
+        // Nothing persisted: the setting is untouched and the next run is back on the hinge.
+        #expect(!settings.touchOnDuo)
+        c.restart()
+        #expect(!c.runTouchOverride)
+        #expect(!c.usesTouch)
+    }
+
+    // QA-2 P2-9: the Home gesture waits for a second swipe while a run is live.
+    @Test func bottomEdgeIsDeferredOnlyWhileLive() {
+        #expect(RootView.deferredEdges(paused: false) == .bottom)
+        #expect(RootView.deferredEdges(paused: true).isEmpty)
     }
 }

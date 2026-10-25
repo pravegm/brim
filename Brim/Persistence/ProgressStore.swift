@@ -81,8 +81,12 @@ struct ProgressData: Codable, Equatable {
     var daily: [Int: DailyRecord] = [:]
     /// QA-1 P1-2: the day's scored attempt while it is being played (marked when it starts, updated on every serve).
     /// Finishing moves it to `daily`; leaving it (Menu, Restart, another mode) or the app dying mid-run files the partial
-    /// pour as the day's score, so the scored attempt can't be retried. An attempt with no glass served is dropped.
+    /// pour as the day's score, so the scored attempt can't be retried. An attempt left before its first glass arrived
+    /// (see `dailyArmed`) is dropped.
     var dailyStarted: [Int: DailyRecord] = [:]
+    /// Round 5 (QA-2 P2-5): days whose scored attempt has had its first glass arrive. From then on leaving (or the app
+    /// dying) files the attempt even with nothing served yet (a 0), so bailing mid-pour on glass 1 is no free retry.
+    var dailyArmed: Set<Int> = []
     var stats = LifetimeStats()
     /// Onboarding hints already learned (`HintKind.rawValue`).
     var hintsSeen: Set<String> = []
@@ -156,6 +160,9 @@ struct ProgressData: Codable, Equatable {
         return count
     }
 
+    /// The best scored Daily Pour on file (0 if none). REVIEW-5 P1-7.
+    var bestDaily: Int { daily.values.map { $0.score }.max() ?? 0 }
+
     // MARK: Recording
 
     /// Folds a finished run into the progress. `today` = `LevelCatalog.dayNumber(for: Date())`.
@@ -186,6 +193,7 @@ struct ProgressData: Codable, Equatable {
                 outcome.dailyCounted = true
             }
             dailyStarted[day] = nil
+            dailyArmed.remove(day)
         case .practice:
             break
         }
@@ -211,7 +219,15 @@ struct ProgressData: Codable, Equatable {
             if daily[day] != nil { return false }
         }
         dailyStarted[day] = DailyRecord(score: 0, judgements: [], perfects: 0)
+        dailyArmed.remove(day)
         return true
+    }
+
+    /// Round 5 (QA-2 P2-5): the scored attempt's first glass has arrived. From now on the attempt is filed when left,
+    /// even before anything is served (as a 0). Does nothing without a marked attempt.
+    mutating func armDailyAttempt(day: Int) {
+        guard dailyStarted[day] != nil, daily[day] == nil else { return }
+        dailyArmed.insert(day)
     }
 
     /// The scored attempt served a glass: remember where it stands, so leaving or dying files the partial pour.
@@ -220,12 +236,18 @@ struct ProgressData: Codable, Equatable {
         dailyStarted[day] = DailyRecord(score: max(score, 0), judgements: judgements, perfects: max(perfects, 0))
     }
 
-    /// The scored attempt was left unfinished: its partial pour becomes the day's score (returned). With no glass
-    /// served yet the marker is simply dropped (nothing was learned) and nil is returned.
+    /// The scored attempt was left unfinished: its partial pour becomes the day's score (returned). Before its first
+    /// glass arrived (not armed) with nothing served, the marker is simply dropped (nothing was seen) and nil is returned;
+    /// once armed it is filed even at 0 glasses.
     mutating func closeDailyAttempt(day: Int) -> DailyRecord? {
-        guard let partial = dailyStarted[day] else { return nil }
+        guard let partial = dailyStarted[day] else {
+            dailyArmed.remove(day)
+            return nil
+        }
         dailyStarted[day] = nil
-        guard daily[day] == nil, !partial.judgements.isEmpty else { return nil }
+        let armed = dailyArmed.contains(day)
+        dailyArmed.remove(day)
+        guard daily[day] == nil, armed || !partial.judgements.isEmpty else { return nil }
         daily[day] = partial
         return partial
     }
@@ -233,8 +255,9 @@ struct ProgressData: Codable, Equatable {
     /// At launch: any attempt still marked belongs to a run whose app died; file it (or drop it if nothing was served).
     /// Returns true when something changed.
     mutating func closeAbandonedDailyAttempts() -> Bool {
-        guard !dailyStarted.isEmpty else { return false }
+        guard !dailyStarted.isEmpty || !dailyArmed.isEmpty else { return false }
         for day in Array(dailyStarted.keys) { _ = closeDailyAttempt(day: day) }
+        dailyArmed = []
         return true
     }
 
@@ -246,13 +269,22 @@ struct ProgressData: Codable, Equatable {
         if stats.bestStreak >= 10 { ids.insert("brim.streak.10") }
         if stats.bestStreak >= 25 { ids.insert("brim.streak.25") }
         if litres >= 10 { ids.insert("brim.litres.10") }
-        if isUnlocked(.sodaFountain) { ids.insert("brim.venue.soda") }
-        if isUnlocked(.milkshakeDiner) { ids.insert("brim.venue.diner") }
-        if isUnlocked(.conveyor) { ids.insert("brim.venue.conveyor") }
-        if isUnlocked(.potionShop) { ids.insert("brim.venue.potions") }
+        // ROUND-5 decision 5 (QA-2 P1-4): venue achievements fire on clearing EVERY shift of the venue (≥ 1 star
+        // each), as docs/appstore/achievements.md says, never on the venue opening.
+        if clearedEveryShift(in: .sodaFountain) { ids.insert("brim.venue.soda") }
+        if clearedEveryShift(in: .milkshakeDiner) { ids.insert("brim.venue.diner") }
+        if clearedEveryShift(in: .conveyor) { ids.insert("brim.venue.conveyor") }
+        if clearedEveryShift(in: .potionShop) { ids.insert("brim.venue.potions") }
         if hasAllStars { ids.insert("brim.allstars") }
-        if LevelCatalog.levels(in: .sandBar).contains(where: { stars(for: $0.id) >= 1 }) { ids.insert("brim.sandbar") }
+        if clearedEveryShift(in: .sandBar) { ids.insert("brim.sandbar") }
         return ids
+    }
+
+    /// Every shift of `venue` has been cleared (≥ 1 star). False for a venue with no shifts.
+    func clearedEveryShift(in venue: VenueID) -> Bool {
+        let levels = LevelCatalog.levels(in: venue)
+        guard !levels.isEmpty else { return false }
+        return levels.allSatisfy { stars(for: $0.id) >= 1 }
     }
 
     // MARK: Formatting
@@ -276,6 +308,7 @@ extension ProgressData {
         rushBest = (try? c.decodeIfPresent(Int.self, forKey: .rushBest)) ?? 0
         daily = (try? c.decodeIfPresent([Int: DailyRecord].self, forKey: .daily)) ?? [:]
         dailyStarted = (try? c.decodeIfPresent([Int: DailyRecord].self, forKey: .dailyStarted)) ?? [:]
+        dailyArmed = (try? c.decodeIfPresent(Set<Int>.self, forKey: .dailyArmed)) ?? []
         stats = (try? c.decodeIfPresent(LifetimeStats.self, forKey: .stats)) ?? LifetimeStats()
         hintsSeen = (try? c.decodeIfPresent(Set<String>.self, forKey: .hintsSeen)) ?? []
     }
@@ -368,7 +401,17 @@ final class ProgressStore: ObservableObject {
         save()
     }
 
-    /// The scored attempt was left unfinished: files the partial pour (returned; nil when nothing was served).
+    /// The scored attempt's first glass arrived (saved, so leaving or a crash from now on files the attempt).
+    func armDailyAttempt(day: Int) {
+        guard data.dailyStarted[day] != nil, !data.dailyArmed.contains(day) else { return }
+        var copy = data
+        copy.armDailyAttempt(day: day)
+        data = copy
+        save()
+    }
+
+    /// The scored attempt was left unfinished: files the partial pour (returned; nil when it was never armed and
+    /// nothing was served).
     @discardableResult
     func closeDailyAttempt(day: Int) -> DailyRecord? {
         guard data.dailyStarted[day] != nil else { return nil }
@@ -396,6 +439,7 @@ final class ProgressStore: ObservableObject {
         var fresh = ProgressData()
         fresh.daily = data.daily
         fresh.dailyStarted = data.dailyStarted
+        fresh.dailyArmed = data.dailyArmed
         data = fresh
         save()
     }

@@ -169,7 +169,9 @@ public enum GameMode: Hashable, Sendable {
 // MARK: Judging
 
 public enum Judgement: String, Codable, Sendable {
-    case perfect, great, good, short, spill
+    /// Round 5 (QA-2 P1-3): `over` = filled past the Good band but nothing went over the rim. A miss and a strike like
+    /// `short`, but no spill FX, no puddle. `spill` now means liquid really overflowed the rim.
+    case perfect, great, good, short, over, spill
     public var isHit: Bool { self == .perfect || self == .great || self == .good }
 }
 

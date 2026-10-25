@@ -39,7 +39,7 @@
 | 31 | **Family Sharing** | **On** | Standard for a one-off paid game; costs nothing |
 | 32 | **What's New** | None for 1.0 (App Store Connect has no field); the 1.0 line goes into TestFlight's "What to Test" | Apple's rule |
 | 33 | **Social and press timing** | Brim posts on the days between Squish's posts; Squish's 17 Nov clip moves to 18 Nov; no Brim posts on 24 Nov | Two launches from one founder must never compete on the same day |
-| 34 | **Daily share emoji** | ⭐ Perfect · 🟩 Great · 🟨 Good · ⬜ Short · 🟥 Spill (confirm against the build) | Star shape for the best result, so the row reads without colour; matches the bible's example |
+| 34 | **Daily share emoji** | ⭐ Perfect · 🟩 Great · 🟨 Good · 🟧 Short · 🟪 Over · 🟥 Spill, then the score and 🔥N for a Daily streak of 2+ days (as built in 1.0 (3), `ShareText`) | Star shape for the best result, so the row reads without colour; matches the bible's example |
 
 ## 2. Requests to engineering (not mine to edit; must land before the release build)
 

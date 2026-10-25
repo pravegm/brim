@@ -28,6 +28,8 @@ final class SceneStream {
     private var wobble: CGFloat = 0.04
     private var thick = false
     private var fizzy = false
+    /// Sand: grains instead of drops.
+    private var granular = false
     private var pts: [CGPoint] = []
     private var ws: [CGFloat] = []
     /// Scratch: cumulative arc length along the run being drawn.
@@ -124,8 +126,14 @@ final class SceneStream {
             tail.strokeColor = look.edge
             baseAlpha = look.alpha
             thick = SceneStream.isThick(liquid.id)
-            fizzy = liquid.fizzy
-            wobble = thick ? 0.14 : (liquid.id == .sand ? 0.02 : 0.045)
+            granular = liquid.id == .sand
+            // Sand never fizzes, whatever the data says.
+            fizzy = liquid.fizzy && !granular
+            wobble = thick ? 0.14 : (granular ? 0.02 : 0.045)
+            // Sand spray is fine grains, not outlined liquid beads (round-5 frame 19: they read as bubbles).
+            drops.lineWidth = granular ? 0 : 1.6
+            drops.strokeColor = granular ? .clear : look.edge
+            drops.fillColor = granular ? SceneColor.darker(look.body, 0.1) : look.body
         }
         if lip == nil {
             if stopTime == nil { stopTime = time }
@@ -240,6 +248,12 @@ final class SceneStream {
             }
         }
         for d in droplets {
+            if granular {
+                // A grain: small, solid, never stretched into a bead.
+                let g = min(2.4, max(1.1, d.radius * 0.6))
+                dropPath.addEllipse(in: CGRect(x: d.position.x - g, y: d.position.y - g, width: g * 2, height: g * 2))
+                continue
+            }
             let r = max(1.4, d.radius * 1.35)
             let speed = hypot(d.velocity.dx, d.velocity.dy)
             if speed > 260 {

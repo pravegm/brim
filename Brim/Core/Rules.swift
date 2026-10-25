@@ -7,6 +7,21 @@ enum Rules {
     /// Lid tilt (degrees) below which the jug stays fully upright.
     static let deadZone: Double = 6
 
+    /// Round 5 (founder decision 1, QA-2 P0-suspect): the flat gate opens at a lid tilt ≤ 12° (hinge ≥ 168°), not
+    /// inside the 6° dead zone, so a Duo lying flat that reads a few degrees shy of 180° still starts. The dead zone
+    /// and the jug mapping are unchanged (a phone lying flat still never dribbles).
+    static let flatGateTilt: Double = 12
+
+    /// Round 5: the lid tilt an input reports while it must hold the jug upright AND must not be read as "flat" by the
+    /// gate (e.g. the hinge's closing guard). Negative, so it is outside the gate (`readsFlat` is false) and the jug
+    /// stands upright (`jugAngle` clamps it to 0). The old `deadZone` value (6) now sits inside the gate.
+    static let closedTilt: Double = -1
+
+    /// Does this lid tilt open the flat gate? 0 ≤ tilt ≤ `flatGateTilt` (`closedTilt` never does).
+    static func readsFlat(lidTilt t: Double) -> Bool {
+        return t >= 0 && t <= flatGateTilt
+    }
+
     /// Lid tilt → jug rotation: 0 inside the dead zone, then 1.55 × (t − 6) (lid 90° → jug ≈ 130°).
     static func jugAngle(forLidTilt t: Double) -> Double {
         let tilt: Double = CoreMath.clamp(t, 0, 90)
@@ -15,7 +30,8 @@ enum Rules {
     }
 
     /// err = (top − line) / interior. Overflowed → spill. |err| within the Perfect band → perfect, ≤ 6 % great,
-    /// ≤ 12 % good (either side); under by more → short; over by more than the Good band (brim-full) → spill.
+    /// ≤ 12 % good (either side); under by more → short; over by more than the Good band but nothing went over the
+    /// rim → over (round 5, QA-2 P1-3: `spill` only when liquid really crossed the rim).
     static func judge(top: CGFloat, line: CGFloat, interior: CGFloat, overflowed: Bool, perfectBand: Double) -> Judgement {
         if overflowed { return .spill }
         let h: Double = max(1e-6, Double(interior))
@@ -27,7 +43,7 @@ enum Rules {
         if mag <= perfect { return .perfect }
         if mag <= great { return .great }
         if mag <= good { return .good }
-        return err < 0 ? .short : .spill
+        return err < 0 ? .short : .over
     }
 
     static func points(for j: Judgement, multiplier: Int) -> Int {
@@ -36,7 +52,7 @@ enum Rules {
         case .perfect: return CoreTuning.pointsPerfect * m
         case .great: return CoreTuning.pointsGreat * m
         case .good: return CoreTuning.pointsGood * m
-        case .short, .spill: return 0
+        case .short, .over, .spill: return 0
         }
     }
 

@@ -56,6 +56,20 @@ final class SceneJug {
     private let metalLines: SKShapeNode
     private let decal: SKSpriteNode
     private let lipGlint: SKShapeNode
+    /// Dry jug (ROUND-5 decision 3): beads of residue clinging to the inner walls (jug-local, behind the front glass)
+    /// and a last drop hanging from the lip that swells and falls now and then (world space).
+    private let residue: SKShapeNode
+    private let lastDrop: SKShapeNode
+
+    /// 0 = has liquid, 1 = dry (eased). See `dryFill`.
+    private(set) var dryAmount: CGFloat = 0
+    private var dryKnown = false
+    /// True once the jug reads as empty: under `dryFill` and not pouring.
+    var isDry: Bool { dryAmount > 0.5 }
+    /// At or below this fill (and with no outflow) the jug is drawn empty. Core stops the stream at 2.5 %.
+    static let dryFill: Double = 0.03
+    /// The hanging drop's cycle (s): swell, fall, gone.
+    static let dripPeriod: Double = 1.6
 
     private var localOutline: [CGPoint] = []
     private var localDrawnBounds: CGRect = .null
@@ -127,6 +141,8 @@ final class SceneJug {
         metalLines = SKShapeNode()
         decal = SKSpriteNode()
         lipGlint = SKShapeNode()
+        residue = SKShapeNode()
+        lastDrop = SKShapeNode()
 
         let ink = SceneColor.ink
         shadow.fillColor = ink.withAlphaComponent(0.10)
@@ -153,10 +169,19 @@ final class SceneJug {
         handleShine.zPosition = 0.2
         interior.strokeColor = .clear
         interior.zPosition = 0.3
+        residue.strokeColor = UIColor(white: 1, alpha: 0.7)
+        residue.lineWidth = 1
+        residue.zPosition = 0.31
+        residue.alpha = 0
+        residue.isHidden = true
+        lastDrop.lineWidth = 1.4
+        lastDrop.zPosition = 3.5
+        lastDrop.isHidden = true
         backFrame.addChild(handleOutline)
         backFrame.addChild(handleBody)
         backFrame.addChild(handleShine)
         backFrame.addChild(interior)
+        backFrame.addChild(residue)
 
         liquid.fillColor = .white
         liquid.strokeColor = .clear
@@ -270,6 +295,7 @@ final class SceneJug {
         root.addChild(liquid)
         root.addChild(surface)
         root.addChild(frontFrame)
+        root.addChild(lastDrop)
         applyStyleColors()
     }
 
@@ -325,7 +351,8 @@ final class SceneJug {
         openingFull = nil
     }
 
-    func update(_ j: JugState, streamWidth: CGFloat) {
+    /// `time`: the session clock (the dry jug's last drop runs on it); `dt`: simulation step (0 = paused / first draw).
+    func update(_ j: JugState, streamWidth: CGFloat, time: Double = 0, dt: CGFloat = 0) {
         guard j.outline.count >= 3 else {
             root.isHidden = true
             return
@@ -367,9 +394,14 @@ final class SceneJug {
             liquid.fillColor = .white
             let g = SceneLiquidLook.gradient(j.liquid)
             surface.strokeColor = SceneColor.lighter(g.top, 0.6)
-            spoutSheet.fillColor = SceneLiquidLook.stream(j.liquid).body
+            let look = SceneLiquidLook.stream(j.liquid)
+            spoutSheet.fillColor = look.body
+            residue.fillColor = look.body.withAlphaComponent(0.75)
+            lastDrop.fillColor = look.body
+            lastDrop.strokeColor = look.edge
             openingFull = nil
         }
+        updateDry(j, time: time, dt: dt)
         if style.form == .scoop {
             // Open top: sand shows in the mouth once the scoop is well filled.
             let full = j.fill > 0.55
@@ -380,7 +412,8 @@ final class SceneJug {
         }
         if j.liquidPolygon.count >= 3 && j.fill > 0.0005 {
             liquid.isHidden = false
-            liquid.alpha = max(0.9, CGFloat(j.liquid.opacity))
+            // Dry: what's left is a thin residue, not "a bit more to pour".
+            liquid.alpha = max(0.9, CGFloat(j.liquid.opacity)) * (1 - 0.6 * dryAmount)
             liquid.path = ScenePaths.polygon(j.liquidPolygon)
             var maxY = -CGFloat.greatestFiniteMagnitude
             for p in j.liquidPolygon { maxY = max(maxY, p.y) }
@@ -389,7 +422,7 @@ final class SceneJug {
                 minX = min(minX, p.x)
                 maxX = max(maxX, p.x)
             }
-            if maxX - minX > 6 {
+            if maxX - minX > 6 && dryAmount < 0.5 {
                 let line = CGMutablePath()
                 line.move(to: CGPoint(x: minX + 3, y: maxY - 1.2))
                 line.addLine(to: CGPoint(x: maxX - 3, y: maxY - 1.2))
@@ -404,6 +437,78 @@ final class SceneJug {
             surface.isHidden = true
             spoutSheet.isHidden = true
         }
+    }
+
+    // MARK: Dry jug
+
+    /// ROUND-5 decision 3: when the jug runs dry mid-glass Core stops the stream and the refill waits for the next
+    /// glass, so the jug must READ empty: the leftover sliver fades to a residue, beads cling to the inner walls, the
+    /// surface line goes, and while it is tipped a last drop swells at the lip and falls every `dripPeriod`.
+    private func updateDry(_ j: JugState, time: Double, dt: CGFloat) {
+        let dry = j.fill < SceneJug.dryFill && j.flow < 0.02
+        let target: CGFloat = dry ? 1 : 0
+        if !dryKnown || (!dry && j.fill > 0.1) {
+            // First draw, or a fresh jug arrived (swap / refill): no fade.
+            dryKnown = true
+            dryAmount = target
+        } else if dt > 0 {
+            let step = dt * (dry ? 3.5 : 6)
+            dryAmount = target > dryAmount ? min(target, dryAmount + step) : max(target, dryAmount - step)
+        }
+        residue.isHidden = dryAmount < 0.01 || residue.path == nil
+        residue.alpha = dryAmount
+
+        // The last drop: only while the spout points down (tipped), on the session clock (still when paused). Sand
+        // doesn't drip.
+        guard dryAmount > 0.01, j.angle > 25, j.liquid.id != .sand else {
+            lastDrop.isHidden = true
+            return
+        }
+        let period = SceneJug.dripPeriod
+        let u = CGFloat((time.truncatingRemainder(dividingBy: period) + period).truncatingRemainder(dividingBy: period)
+            / period)
+        var r: CGFloat
+        var fall: CGFloat = 0
+        var a: CGFloat = 1
+        if u < 0.72 {
+            r = 1.6 + 2.2 * (u / 0.72)                       // swelling on the lip
+        } else {
+            let k = (u - 0.72) / 0.28                        // let go: falls and fades
+            r = 3.8 * (1 - 0.25 * k)
+            fall = 46 * k * k
+            a = 1 - k
+        }
+        r = max(1.2, r)
+        let p = CGMutablePath()
+        let cx = j.lip.x, top = j.lip.y - 1 - fall
+        // A teardrop: a round bottom pulled into a point toward the lip.
+        p.move(to: CGPoint(x: cx, y: top + (fall > 0 ? r * 0.6 : 1.5)))
+        p.addQuadCurve(to: CGPoint(x: cx + r, y: top - r * 1.4), control: CGPoint(x: cx + r * 0.9, y: top - r * 0.2))
+        p.addArc(center: CGPoint(x: cx, y: top - r * 1.4), radius: r, startAngle: 0, endAngle: .pi, clockwise: true)
+        p.addQuadCurve(to: CGPoint(x: cx, y: top + (fall > 0 ? r * 0.6 : 1.5)),
+                       control: CGPoint(x: cx - r * 0.9, y: top - r * 0.2))
+        p.closeSubpath()
+        lastDrop.path = p
+        lastDrop.isHidden = false
+        lastDrop.alpha = a * dryAmount
+    }
+
+    /// Residue beads on the inner walls (jug-local), built with the static parts.
+    private func buildResidue(local: [CGPoint], b: CGRect) {
+        let poly = ScenePaths.polygon(local)
+        let path = CGMutablePath()
+        let spots: [(CGFloat, CGFloat, CGFloat)] = [(0.2, -1, 3.2), (0.34, 1, 2.6), (0.47, -1, 2.2), (0.28, 1, 3.4),
+                                                    (0.58, 1, 2.0), (0.4, -1, 1.8)]
+        for (fy, side, r) in spots {
+            let y = b.minY + b.height * fy
+            guard let xl = ScenePaths.xOnPolygon(local, atY: y, rightmost: false),
+                  let xr = ScenePaths.xOnPolygon(local, atY: y, rightmost: true), xr - xl > 30 else { continue }
+            let x = side < 0 ? xl + 7 + r : xr - 7 - r
+            let c = CGPoint(x: x, y: y)
+            guard poly.contains(c) else { continue }
+            path.addEllipse(in: CGRect(x: c.x - r, y: c.y - r * 1.3, width: r * 2, height: r * 2.6))
+        }
+        residue.path = path.isEmpty ? nil : path
     }
 
     // MARK: Spout channel
@@ -554,6 +659,7 @@ final class SceneJug {
         buildHandle(outer: outer, b: b, side: side)
         buildTwine(outer: outer, b: b)
         buildHighlights(local: local, mid: mid, b: b)
+        buildResidue(local: local, b: b)
 
         // Everything drawn, in jug-local space (for `worldBounds`: hints must sit beside the lid and handle too).
         var lb = ScenePaths.bounds(outer)

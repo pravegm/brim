@@ -93,6 +93,10 @@ final class SceneGlass {
     private var bubbleR: [CGFloat] = []
     private var bubblePhase: [CGFloat] = []
     private var foamBumps: [CGFloat] = []
+    /// Sand: a cone where the stream lands (pt above the mean level) and where it sits (0…1 across the surface).
+    /// Cosmetic and mean-neutral: the drawn surface averages to Core's level, so the line still reads honestly.
+    private(set) var heap: CGFloat = 0
+    private var heapX: CGFloat = 0.5
     private var lastX: CGFloat?
     private var lastVX: CGFloat = 0
     private var velocityValid = false
@@ -129,6 +133,8 @@ final class SceneGlass {
 
     static let bubbleCount = 12
     static let foamBubbleCount = 9
+    /// Glasses narrower than this (interior half-width at the surface) get no plume.
+    static let plumeMinHalfWidth: CGFloat = 26
 
     init(id: Int, darkBackdrop: Bool) {
         self.id = id
@@ -180,7 +186,7 @@ final class SceneGlass {
         shadow.fillColor = ink.withAlphaComponent(darkBackdrop ? 0.38 : 0.2)
         shadow.strokeColor = .clear
         shadow.zPosition = 0
-        interior.fillColor = UIColor(white: 1, alpha: darkBackdrop ? 0.12 : 0.2)
+        interior.fillColor = UIColor(white: 1, alpha: darkBackdrop ? 0.15 : 0.2)
         interior.strokeColor = .clear
         interior.zPosition = 1
         rimBack.strokeColor = darkBackdrop ? UIColor(white: 1, alpha: 0.35) : ink.withAlphaComponent(0.3)
@@ -222,9 +228,11 @@ final class SceneGlass {
         walls.fillColor = UIColor(white: 1, alpha: darkBackdrop ? 0.2 : 0.3)
         walls.strokeColor = .clear
         walls.zPosition = 0
-        outline.strokeColor = darkBackdrop ? UIColor(white: 1, alpha: 0.7) : ink.withAlphaComponent(0.66)
+        // Round 5 (frame 17): on the dark Potion Shop / dusk backdrops a slim vial nearly vanished — a brighter,
+        // slightly heavier keyline there.
+        outline.strokeColor = darkBackdrop ? UIColor(white: 1, alpha: 0.86) : ink.withAlphaComponent(0.66)
         outline.fillColor = .clear
-        outline.lineWidth = 2.4
+        outline.lineWidth = darkBackdrop ? 2.8 : 2.4
         outline.lineJoin = .round
         outline.zPosition = 0.05
         extraOutline.strokeColor = darkBackdrop ? UIColor(white: 1, alpha: 0.6) : ink.withAlphaComponent(0.66)
@@ -326,6 +334,10 @@ final class SceneGlass {
     }
     /// Current drawn opacity of the whole glass (waiting look × suppression).
     var drawnAlpha: CGFloat { back.alpha }
+    /// Sand (or anything granular): no bubbles, no slosh, grains instead of a splash crown.
+    var isGranular: Bool { liquidID == .sand }
+    /// Whether rising bubbles are drawn this frame (tests: never in sand).
+    var showsBubbles: Bool { !bubbles.isHidden || !plume.isHidden }
     /// Liquid half-width at the current level (for splashes that must stay inside the mouth).
     var surfaceHalfWidth: CGFloat { ScenePaths.halfWidth(profile, at: level) }
     /// True once the glass has stopped sliding (used to place the coaster under the pour spot).
@@ -359,7 +371,7 @@ final class SceneGlass {
     func splash(worldX: CGFloat, strength: Double) {
         guard let f = surfaceFraction(worldX: worldX) else { return }
         let s = CGFloat(min(max(strength, 0), 2))
-        wave.kick(at: f, impulse: -(6 + s * 30))
+        wave.kick(at: f, impulse: -(6 + s * 30) * (isGranular ? 0.15 : 1))
     }
 
     func slosh(_ amount: CGFloat) { wave.slosh(amount) }
@@ -440,6 +452,7 @@ final class SceneGlass {
             }
         }
         wave.step(dt)
+        updateHeap(h: h, f)
         if flash > 0 { flash = max(0, flash - dt * 2.4) }
         if lockFlash > 0 { lockFlash = max(0, lockFlash - dt * 3) }
         if g.overflowing && !lastOverflowing { startOverflow() }
@@ -514,6 +527,53 @@ final class SceneGlass {
         shadow.alpha = max(0.45, 1 - dy / 26)
     }
 
+    // MARK: Sand heap
+
+    /// Sand piles up into a low cone under the stream and slumps flat within ~1 s of the pour stopping.
+    private func updateHeap(h: CGFloat, _ f: GlassFrame) {
+        guard isGranular else {
+            heap = 0
+            return
+        }
+        let dt = f.dt
+        guard dt > 0 else { return }
+        if f.pouring, h > 1, let t = f.tail, abs(t.position.y - surfaceWorldY) < 30,
+           let fr = surfaceFraction(worldX: t.position.x) {
+            let target = min(SceneGlass.maxHeap, 3 + t.width * 0.35)
+            heap += (target - heap) * min(1, dt * 5)
+            heapX += (fr - heapX) * min(1, dt * 8)
+        } else {
+            heap = max(0, heap - dt * 8)
+        }
+    }
+
+    static let maxHeap: CGFloat = 9
+
+    /// Adds the sand cone to `surf` (glass-local surface points), keeping the mean at Core's level.
+    private func addHeap(_ surf: inout [CGPoint], h: CGFloat, cap: CGFloat) {
+        let n = surf.count
+        guard heap > 0.05, n >= 2 else { return }
+        let spread: CGFloat = 0.38
+        var bumps: [CGFloat] = []
+        bumps.reserveCapacity(n)
+        var sum: CGFloat = 0
+        for i in 0..<n {
+            let u = CGFloat(i) / CGFloat(n - 1)
+            let d = abs(u - heapX) / spread
+            // A cone (sand keeps a straight slope), rounded at the tip and the foot.
+            let lin: CGFloat = max(0, 1 - d)
+            let smooth: CGFloat = lin * lin * (3 - 2 * lin)
+            let b: CGFloat = smooth * 0.35 + lin * 0.65
+            bumps.append(b)
+            sum += b
+        }
+        let mean = sum / CGFloat(n)
+        for i in 0..<n {
+            let y = surf[i].y + heap * (bumps[i] - mean)
+            surf[i].y = min(max(y, 0), cap)
+        }
+    }
+
     // MARK: Liquid, foam, bubbles
 
     private func surfacePoints(height h: CGFloat, widthAt wh: CGFloat, waveScale: CGFloat, cap: CGFloat) -> [CGPoint] {
@@ -539,8 +599,10 @@ final class SceneGlass {
             return
         }
         let n = SceneWave.count
-        let waveScale = min(1, h / 18)
-        let surf = surfacePoints(height: h, widthAt: h, waveScale: waveScale, cap: rimY + 2)
+        // Sand doesn't slosh: a near-still surface with a cone under the stream instead.
+        let waveScale = min(1, h / 18) * (isGranular ? 0.12 : 1)
+        var surf = surfacePoints(height: h, widthAt: h, waveScale: waveScale, cap: rimY + 2)
+        if isGranular { addHeap(&surf, h: h, cap: rimY + 2) }
 
         let lp = CGMutablePath()
         lp.move(to: surf[n - 1])
@@ -605,11 +667,16 @@ final class SceneGlass {
             foamBubbles.isHidden = true
         }
 
-        // Rising bubbles (fizzy drinks).
-        if g.liquid.fizzy && h > 8 {
+        // Rising bubbles (fizzy drinks; never in sand). Round 5 (frame 17): a slim vial with the full dozen was a fizz
+        // of noise that hid its own level, so the count and size follow the glass's width.
+        if g.liquid.fizzy && !isGranular && h > 8 {
             let bp = CGMutablePath()
             let t = CGFloat(time)
-            let count = reduceMotion ? SceneGlass.bubbleCount / 2 : SceneGlass.bubbleCount
+            let bodyHW = ScenePaths.halfWidth(profile, at: h * 0.5)
+            let widthK = min(1, max(0.34, bodyHW / 48))
+            let full = reduceMotion ? SceneGlass.bubbleCount / 2 : SceneGlass.bubbleCount
+            let count = min(SceneGlass.bubbleCount, max(3, Int((CGFloat(full) * widthK).rounded())))
+            let sizeK: CGFloat = bodyHW < 30 ? 0.8 : 1
             for i in 0..<count {
                 bubbleY[i] += bubbleSpeed[i] * dt / max(h, 1)
                 if bubbleY[i] >= 1 {
@@ -619,7 +686,7 @@ final class SceneGlass {
                 }
                 let by = 2 + bubbleY[i] * (h - 5)
                 let hw = ScenePaths.halfWidth(profile, at: by)
-                let r = bubbleR[i] * (0.7 + 0.3 * bubbleY[i])
+                let r = bubbleR[i] * (0.7 + 0.3 * bubbleY[i]) * sizeK
                 let bx = bubbleX[i] * max(0, hw - r - 2) + sin(t * 3 + bubblePhase[i]) * 1.4
                 bp.addEllipse(in: CGRect(x: bx - r, y: by - r, width: r * 2, height: r * 2))
             }
@@ -633,12 +700,14 @@ final class SceneGlass {
     /// Where the stream plunges in: a short plume of bubbles under the surface (replaces the ghost "tongue",
     /// REVIEW-2 P1-6). Thick drinks coil on top instead (SceneStream).
     private func drawPlume(h: CGFloat, _ f: GlassFrame, thick: Bool) {
-        guard !thick, f.pouring, h > 12, let t = f.tail, abs(t.position.y - surfaceWorldY) < 30,
-              let fr = surfaceFraction(worldX: t.position.x) else {
+        // No plume in sand (it read as bubbles rising through it), and none in slim glasses (vial, flute), where the
+        // stream already fills most of the mouth and the plume only hid the level.
+        let hwTop = ScenePaths.halfWidth(profile, at: h)
+        guard !thick, !isGranular, hwTop >= SceneGlass.plumeMinHalfWidth, f.pouring, h > 12, let t = f.tail,
+              abs(t.position.y - surfaceWorldY) < 30, let fr = surfaceFraction(worldX: t.position.x) else {
             plume.isHidden = true
             return
         }
-        let hwTop = ScenePaths.halfWidth(profile, at: h)
         let cx = -hwTop + 2 * hwTop * fr
         let depth = min(36, h - 8)
         let spread = max(5, min(t.width + 6, hwTop * 0.7))
@@ -725,8 +794,8 @@ final class SceneGlass {
         let bandFrac = CGFloat(min(max(f.band, 0.008), 0.08))
         if abs(g.lineHeight - builtLine) > 0.25 || abs(bandFrac - builtBand) > 0.0005 { buildLine(g.lineHeight, bandFrac: bandFrac) }
         var a = CGFloat(min(max(g.lineOpacity, 0), 1))
-        if g.result == .short {
-            a *= 0.55 + 0.45 * CGFloat(0.5 + 0.5 * sin(f.time * 9))     // the sad pulse
+        if g.result == .short || g.result == .over {
+            a *= 0.55 + 0.45 * CGFloat(0.5 + 0.5 * sin(f.time * 9))     // the sad pulse: "the line was here"
         }
         let hidden = a < 0.01
         for n in [lineGlow, lineHalo, lineInk, tab] {

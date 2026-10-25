@@ -18,6 +18,9 @@ enum BrimTheme {
     static let peach = Color(brimHex: 0xFFC9A3)
     static let card = Color(brimHex: 0xFFFBF4)
     static let spill = Color(brimHex: 0xE5484D)
+    /// Round 5: the `over` verdict (too full, nothing spilled): plum, matching its 🟪 share square and clearly apart
+    /// from Good's gold and Short's terracotta.
+    static let over = Color(brimHex: 0xA97BDB)
     static let lemonade = Color(brimHex: 0xFFE066)
 
     static func number(_ size: CGFloat) -> Font { .system(size: size, weight: .heavy, design: .rounded) }
@@ -44,6 +47,7 @@ enum BrimTheme {
         case .great: return mintDeep
         case .good: return gold
         case .short: return terracotta
+        case .over: return over
         case .spill: return spill
         }
     }

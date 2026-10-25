@@ -101,3 +101,22 @@
 - `testflight.yml` gained `check_only`, an unsigned Release archive: it passes (2.5 MB, privacy manifest OK, no demo
   code).
 - TestFlight is now blocked only on the founder: the app record and the 4 ASC secrets.
+
+## Night of 25–26 Oct (founder asleep; unsupervised)
+- The founder added the 4 ASC secrets and the app record (Apple ID 6826940959).
+- **TestFlight 1.0 (2) was uploaded** in 3m50s (run 40240439898). App Store Connect then reported it VALID and
+  IN_BETA_TESTING (`tf-status.yml`).
+- New CI frames for the venues no one had reviewed: conveyor, potion, sand, late Rush, Daily results, a failed
+  shift, full venues.
+- **QA-2** (first-hour real-device audit):
+  - Suspected P0: the flat gate opened only at ≥174°, while a real flat Duo may read 170–174°.
+  - P1s: a quick lift read as closing and re-locked the gate; the mid-pour jug refill flooded the glass; "SPILL"
+    was stamped with no overflow; venue achievements fired when a venue unlocked.
+- **Round 5** (`design/ROUND-5.md`):
+  - gate opens at ≥168° with a "Use touch" escape;
+  - "closing" only counts below 120°;
+  - refills happen between glasses;
+  - new `over` verdict;
+  - achievements fire on clear.
+- In parallel: the balance engineer (simulated novice, casual and expert players over all levels) and the critic
+  (REVIEW-5: late venues and day-7 fun).

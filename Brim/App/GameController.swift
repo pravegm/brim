@@ -36,6 +36,8 @@ final class HUDState: ObservableObject {
     @Published var showFlatGate = false
     /// The gate was re-armed by a resume (after a pause or closing the phone): "Lay it flat to carry on".
     @Published var gateAfterPause = false
+    /// ROUND-5 decision 1: the gate has held for `GameController.touchOfferDelay` s: the card offers "Use touch instead".
+    @Published var offerTouch = false
     /// Where the jug and the glass under the spout are (world), for hints and the "Fill to here" callout.
     @Published var anchors: PlayAnchors?
     /// REVIEW-3 P1-4 fallback (phones): the next order's drink colour when no waiting glass fits on screen; the HUD
@@ -76,6 +78,10 @@ final class GameController: ObservableObject, SceneDriver {
     static let autopauseBelow = 70.0
     /// A run paused by closing resumes by itself once the phone is open past this again (and then waits for flat).
     static let autoResumeAbove = 100.0
+    /// ROUND-5 decision 1: seconds stuck on the flat gate before its card offers "Use touch instead".
+    static let touchOfferDelay = 6.0
+    /// The flat gate card waits this long, so a gate that opens at once (autopilot, a phone already flat) never flashes.
+    static let gateCardDelay = 0.35
 
     // MARK: Published state (changes rarely; the HUD lives in `hud`)
 
@@ -99,6 +105,9 @@ final class GameController: ObservableObject, SceneDriver {
     @Published private(set) var usesTouch = true
     /// Book pose: the player chose "Play with touch instead"; the game runs in a portrait column.
     @Published private(set) var bookTouchOverride = false
+    /// ROUND-5 decision 1: the player tapped "Use touch instead" on the flat gate. This run only; nothing is stored, and
+    /// the next run (start, restart, next shift, menu) is back on the hinge.
+    @Published private(set) var runTouchOverride = false
     /// QA-1 P1-2: this run is today's one scored Daily attempt (the pause card has no Restart).
     @Published private(set) var isScoredDaily = false
     /// QA-1 P2-25: a Daily whose scored attempt is already on file: practice ("Daily #297 · Practice" in the HUD).
@@ -144,6 +153,9 @@ final class GameController: ObservableObject, SceneDriver {
     /// The day of the scored Daily attempt being played (nil otherwise), and the run's judgements so far.
     private var scoredDailyDay: Int?
     private var runJudgements: [Judgement] = []
+    /// The scored Daily's first glass has arrived / the attempt has been armed (`armDailyIfReady`).
+    private var dailyGlassArrived = false
+    private var dailyArmed = false
     /// The screen is being kept awake (`UIApplication.isIdleTimerDisabled`, QA-1 P1-4).
     private var screenKeptAwake = false
     /// Demo `screen=menu`: the attract loop has been held mid-pour once (REVIEW-3 P1-2).
@@ -405,9 +417,9 @@ final class GameController: ObservableObject, SceneDriver {
     /// Chooses the play input: the hinge on a Duo, touch elsewhere (or when the player asked for touch).
     func refreshInputMode() {
         let hasHinge = hingeSeen || hinge.hasHinge
-        let touchWanted = !hasHinge || settings.touchOnDuo || bookTouchOverride
+        let touchWanted = !hasHinge || settings.touchOnDuo || bookTouchOverride || runTouchOverride
         let wantsTouch: Bool
-        if demo != nil, let demoSource {
+        if demo != nil, let demoSource, !runTouchOverride {
             wantsTouch = demoSource === touch
         } else {
             wantsTouch = touchWanted
@@ -417,6 +429,26 @@ final class GameController: ObservableObject, SceneDriver {
 
     func chooseTouchInBookPose() {
         bookTouchOverride = true
+        refreshInputMode()
+    }
+
+    /// ROUND-5 decision 1 (QA-2 P0-suspect): "Use touch instead" on the flat gate. The rest of this run pours by drag
+    /// (the touch source reads 0 until a drag, so the gate opens on the next step); nothing is persisted.
+    func useTouchForThisRun() {
+        guard route == .playing, !isAttract, !runTouchOverride else { return }
+        runTouchOverride = true
+        touch.cancelled()
+        refreshInputMode()
+        flatSince = nil
+        if hud.showFlatGate { hud.showFlatGate = false }
+        if hud.offerTouch { hud.offerTouch = false }
+        trace("BRIM-T touch for this run")
+    }
+
+    /// Ends the run-only touch override (a new run or the menu).
+    private func clearRunTouchOverride() {
+        guard runTouchOverride else { return }
+        runTouchOverride = false
         refreshInputMode()
     }
 
@@ -431,7 +463,9 @@ final class GameController: ObservableObject, SceneDriver {
 
     func start(mode: GameMode) {
         resultsTask?.cancel()
+        closeOutRushRun()
         closeOutDailyAttempt()
+        clearRunTouchOverride()
         isAttract = false
         self.mode = mode
         summary = nil
@@ -466,6 +500,33 @@ final class GameController: ObservableObject, SceneDriver {
         outcome.dailyCounted = true
         GameCenterManager.shared.report(result: result, outcome: outcome, progress: store.data)
         trace("BRIM-T daily left day=\(day) score=\(filed.score) glasses=\(filed.judgements.count)")
+    }
+
+    /// Round 5 (QA-2 P2-4, "Rush quit records the score"): leaving a Rush run before it ended (Menu, Restart, another
+    /// mode) records it like a finished one: Rush best, lifetime stats and the Game Center score. Nothing served = nothing
+    /// recorded.
+    private func closeOutRushRun() {
+        guard case .rush = mode, !isAttract, !recordedFinish, let session, !session.isFinished else { return }
+        guard !runJudgements.isEmpty else { return }
+        recordedFinish = true
+        let s = session.snapshot
+        let result = RunResult(mode: .rush, score: s.score, stars: 0, perfects: s.perfects,
+                               bestStreak: Self.bestPerfectStreak(runJudgements), judgements: runJudgements, poured: 0,
+                               cleared: true)
+        let outcome = store.record(result, today: LevelCatalog.dayNumber(for: Date()))
+        GameCenterManager.shared.report(result: result, outcome: outcome, progress: store.data)
+        trace("BRIM-T rush left score=\(s.score) glasses=\(runJudgements.count)")
+    }
+
+    /// The longest run of consecutive Perfects (the session's streak rule). Pure.
+    static func bestPerfectStreak(_ judgements: [Judgement]) -> Int {
+        var best = 0
+        var run = 0
+        for j in judgements {
+            run = j == .perfect ? run + 1 : 0
+            best = max(best, run)
+        }
+        return best
     }
 
     func restart() {
@@ -526,8 +587,12 @@ final class GameController: ObservableObject, SceneDriver {
         // glass judged as a Short; lock it behind the flat gate the moment the hinge reads as closing.
         // QA-1 P2-3: not while pouring by touch (the hinge isn't the input, and its guard latch would re-close the gate
         // every frame between 70° and 78°).
+        // ROUND-5 decision 2 (QA-2 P1-1): `isClosing` is only the below-78° latch now; a brisk lift or a fast close that
+        // stops short is cut by the hinge source itself and never re-locks the gate. A re-lock mid-run reads "Lay it flat
+        // to carry on", never "to start".
         if closingGuardActive && !usesTouch && isLiveRun && hinge.isClosing && !session.snapshot.needsFlat {
             session.requireFlat()
+            if session.snapshot.needsFlat && !hud.gateAfterPause { hud.gateAfterPause = true }
         }
         let events = session.step(dt: step, tilt: tilt)
         simTime += step
@@ -536,6 +601,7 @@ final class GameController: ObservableObject, SceneDriver {
             feedback.handle(events: events, snapshot: snapshot)
         }
         process(events, snapshot: snapshot)
+        armDailyIfReady(snapshot)
         publishHUD(snapshot, now: now, force: false)
         checkFreeze(snapshot, events: events, now: now)
         return (snapshot, events)
@@ -545,7 +611,7 @@ final class GameController: ObservableObject, SceneDriver {
 
     private var activeSource: TiltSource {
         if isAttract, let autopilot { return autopilot }
-        if !isAttract, let demoSource { return demoSource }
+        if !isAttract, !runTouchOverride, let demoSource { return demoSource }
         if usesTouch { return touch }
         return hinge
     }
@@ -637,7 +703,9 @@ final class GameController: ObservableObject, SceneDriver {
 
     private func startAttract() {
         resultsTask?.cancel()
+        closeOutRushRun()
         closeOutDailyAttempt()
+        clearRunTouchOverride()
         if isPracticeDaily { isPracticeDaily = false }
         isAttract = true
         mode = .practice
@@ -707,6 +775,9 @@ final class GameController: ObservableObject, SceneDriver {
         flatSince = nil
         recap = []
         runJudgements = []
+        dailyGlassArrived = false
+        dailyArmed = false
+        if hud.offerTouch { hud.offerTouch = false }
         hintTask?.cancel()
         activeHint = nil
         hud.lastJudgement = nil
@@ -773,21 +844,36 @@ final class GameController: ObservableObject, SceneDriver {
                     store.markHintSeen(HintKind.lift.rawValue)
                     activeHint = nil
                 }
-                if servedCount == 1, judgement == .spill, hintsEnabled,
+                // Spilled, or filled past the band without spilling (round 5 `.over`): stop a little earlier.
+                if servedCount == 1, judgement == .spill || judgement == .over, hintsEnabled,
                    !store.hasSeenHint(HintKind.anticipate.rawValue) {
                     showTimedHint(.anticipate, seconds: 4.0)
                 }
+            case .glassArrived:
+                // Round 5 (QA-2 P2-5): see `armDailyIfReady`.
+                if scoredDailyDay != nil { dailyGlassArrived = true }
             case .lockedIn:
                 break
             case .flatArmed:
                 if demo != nil { print(String(format: "BRIM-T flat armed t=%.2f", simTime)) }
             case let .finished(result):
                 handleFinished(result)
-            case .glug, .splashInGlass, .splashOnCounter, .enteredPerfectBand, .overflowStarted, .glassArrived,
+            case .glug, .splashInGlass, .splashOnCounter, .enteredPerfectBand, .overflowStarted,
                  .streak, .multiplier, .strike, .jugRefilled, .jugSwapped, .jugEmpty:
                 break
             }
         }
+    }
+
+    /// Round 5 (QA-2 P2-5, ROUND-5 App row): the scored Daily is filed once its first glass has ARRIVED (and, on a Duo,
+    /// the flat gate is open, so the player could pour into it): from then on leaving files the attempt even at 0
+    /// glasses served, so pausing mid-overpour on glass 1 and leaving is no free retry. Leaving before that (still on
+    /// the gate, or in the first moment) costs nothing.
+    private func armDailyIfReady(_ snapshot: GameSnapshot) {
+        guard let day = scoredDailyDay, dailyGlassArrived, !dailyArmed, !snapshot.needsFlat else { return }
+        dailyArmed = true
+        store.armDailyAttempt(day: day)
+        trace("BRIM-T daily armed day=\(day)")
     }
 
     private func showTimedHint(_ hint: HintKind, seconds: Double) {
@@ -808,14 +894,18 @@ final class GameController: ObservableObject, SceneDriver {
         // The flat gate card waits a moment, so a gate that opens at once (autopilot, a phone already flat) never
         // flashes.
         var gate = false
+        var offer = false
         if s.needsFlat && !isAttract && !usesTouch && s.phase != .finished {
             let since = flatSince ?? now
             flatSince = since
-            gate = now - since >= 0.35
+            gate = now - since >= Self.gateCardDelay
+            // ROUND-5 decision 1: still stuck after 6 s, offer touch for this run.
+            offer = now - since >= Self.touchOfferDelay
         } else {
             flatSince = nil
         }
         if hud.showFlatGate != gate { hud.showFlatGate = gate }
+        if hud.offerTouch != offer { hud.offerTouch = offer }
         var upcoming: RGBA?
         if !isAttract, s.phase != .finished, !(layout?.hasFold ?? false),
            !s.glasses.contains(where: { $0.isWaitingInSlot }), let order = session?.upcomingOrder {

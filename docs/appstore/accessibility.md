@@ -17,7 +17,7 @@ Common tasks for Brim:
 | Voice Control | **No** | Decided | Pouring needs the hinge or a drag; there's no spoken alternative |
 | Larger Text | **No** | Decided | Partial only (menus scale, the in-game HUD and result stamps don't reach 200%) |
 | Dark Interface | **No** | Decided | Light only by design (`UIUserInterfaceStyle: Light` in `project.yml`; cream wall palette) |
-| Differentiate Without Color Alone | **Yes**, if check A passes | **Verify** | Results are words (PERFECT / GREAT / GOOD / SHORT / SPILL), not colours |
+| Differentiate Without Color Alone | **Yes**, if check A passes | **Verify** | Results are words (PERFECT / GREAT / GOOD / SHORT / OVER / SPILL), not colours; recap coasters add a glyph (✓, ↓ short, ↑ over, drop for spill) |
 | Sufficient Contrast | **Yes**, if check B passes | **Verify** | Ink `#2B2233` on cream `#FFF4E2` is about 14:1 (13.99:1) |
 | Reduced Motion | **Yes**, if check C passes | **Verify** | Bible §8: no screen shake, fewer particles |
 | Captions | **No** (not applicable) | Decided | No dialogue, video or audio-only content |
@@ -28,7 +28,7 @@ Common tasks for Brim:
 ## Checks (on the release build, on a Duo and on a non-Duo iPhone)
 
 ### A. Differentiate Without Color Alone
-- [ ] Every judgement shows its **word** (stamp or label), not just a colour flash. Spill also shows a puddle; Short pulses the level line.
+- [ ] Every judgement shows its **word** (stamp or label), not just a colour flash. Spill also shows a puddle; Short pulses the level line; Over is its own word ("OVER"), with no puddle.
 - [ ] The fill line is a **dashed line with a tick tab**, readable without its colour; the Perfect-band glow is extra, not the only cue.
 - [ ] Stars are filled vs outlined **shapes**, not colour-only.
 - [ ] Locked venues show a **lock glyph or "?"**, not just greyed colour.

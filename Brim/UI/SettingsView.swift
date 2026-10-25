@@ -29,12 +29,15 @@ struct SettingsView: View {
                         toggleRow("Haptics", icon: "hand.tap.fill", isOn: $settings.hapticsOn)
                         divider
                         toggleRow("Respect silent mode", icon: "bell.slash.fill", isOn: $settings.respectSilentSwitch,
-                                  footnote: "Off: Brim plays sound even with the ring switch on silent.")
+                                  footnote: "Off: Brim plays sound even in Silent Mode.")
                     }
                     section("Controls") {
-                        toggleRow("Touch controls on iPhone Duo", icon: "hand.draw.fill", isOn: $settings.touchOnDuo,
-                                  footnote: "Drag up to pour instead of lifting the top half.")
-                        divider
+                        // QA-2 P2-12: only where there is a hinge to swap for touch.
+                        if controller.hingeSeen {
+                            toggleRow("Touch controls on iPhone Duo", icon: "hand.draw.fill", isOn: $settings.touchOnDuo,
+                                      footnote: "Drag up to pour instead of lifting the top half.")
+                            divider
+                        }
                         if reduceMotion {
                             infoRow("Calmer motion", icon: "figure.walk.motion", value: "On",
                                     footnote: "On because Reduce Motion is on in iOS Settings.")

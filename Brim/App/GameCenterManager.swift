@@ -91,13 +91,19 @@ final class GameCenterManager {
         return day != today
     }
 
+    /// `ids` is the full set the progress earns now (`ProgressData.earnedAchievements`).
     func unlock(_ ids: Set<String>) {
         guard !disabled else { return }
         let reported = Set(UserDefaults.standard.stringArray(forKey: reportedKey) ?? [])
-        var pending = Set(UserDefaults.standard.stringArray(forKey: pendingKey) ?? [])
-        pending.formUnion(ids.subtracting(reported).filter { Self.achievementIDs.contains($0) })
+        let pending = Self.pending(earned: ids, reported: reported)
         UserDefaults.standard.set(Array(pending).sorted(), forKey: pendingKey)
         flush()
+    }
+
+    /// What still has to be sent: earned now, known, not yet confirmed. Round 5 (QA-2 P1-4): an entry queued by an older
+    /// build under the old venue rule (unlocking, not clearing) but not earned now is dropped, never sent. Pure; tested.
+    static func pending(earned: Set<String>, reported: Set<String>) -> Set<String> {
+        earned.subtracting(reported).filter { achievementIDs.contains($0) }
     }
 
     // MARK: - Internals

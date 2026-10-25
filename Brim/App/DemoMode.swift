@@ -73,7 +73,7 @@ import UIKit
 // - Demo runs keep the scene rendering on every screen (the real app pauses it under Venues, Settings, results and the
 //   pose cards), so `BRIM-T frame 120` always arrives.
 
-enum DemoAutopilot: String, Equatable { case perfect, great, short, spill }
+enum DemoAutopilot: String, Equatable { case perfect, great, short, over, spill }
 
 struct DemoConfig: Equatable {
     enum Screen: String, Equatable { case menu, venues, results, settings, game, standup, cover, icon }

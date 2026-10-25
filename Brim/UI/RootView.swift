@@ -228,8 +228,8 @@ struct RootView: View {
             }
             HintsOverlay(hud: controller.hud, hint: controller.activeHint, touch: controller.usesTouch, info: info)
                 .allowsHitTesting(false)
-            FlatGateOverlay(hud: controller.hud, info: info)
-                .allowsHitTesting(false)
+            // Only its card takes touches ("Use touch instead", ROUND-5 decision 1).
+            FlatGateOverlay(hud: controller.hud, info: info, onUseTouch: { controller.useTouchForThisRun() })
             HUDView(hud: controller.hud, mode: controller.mode, title: controller.hudTitle,
                     info: info, calm: controller.calmMotion, onPause: { controller.pause() })
             if controller.isUserPaused {
@@ -242,6 +242,9 @@ struct RootView: View {
         }
         .animation(BrimTheme.settle(reduceMotion), value: controller.isUserPaused)
         .animation(BrimTheme.settle(reduceMotion), value: controller.isClosedPaused)
+        // QA-2 P2-9: a drag that starts in the bottom ~20 pt must pour, not go Home mid-run. iOS then needs a second
+        // swipe for Home while a run is live; the pause cards give the edge back.
+        .defersSystemGestures(on: RootView.deferredEdges(paused: controller.isUserPaused || controller.isClosedPaused))
         .onChange(of: controller.isUserPaused) { _, paused in
             if paused && dragging {
                 dragging = false
@@ -254,6 +257,12 @@ struct RootView: View {
                 controller.touch.ended()
             }
         }
+    }
+
+    /// The screen edges whose system gestures wait for a second swipe during play: the bottom (Home) while a run is
+    /// live, none while it's paused. Pure.
+    static func deferredEdges(paused: Bool) -> Edge.Set {
+        paused ? [] : .bottom
     }
 
     private func iconLayer(_ canvas: CGSize) -> some View {

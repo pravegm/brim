@@ -1,16 +1,22 @@
 import Foundation
 
 /// How the autopilot finishes each glass (CI frames, the menu's attract loop).
+///
+/// Round 5 (decision 4): `over` fills past the Good band but stops below the brim, so Core stamps "OVER" (a miss with
+/// nothing spilled); `spill` keeps pouring until liquid really runs over the rim (Core's `.spill` now means exactly
+/// that, and it is judged live on the overflow).
 enum AutopilotStyle: String, CaseIterable, Sendable {
-    case perfect, great, short, spill
+    case perfect, great, short, over, spill
 
     /// Stop pouring once the projected top reaches this signed distance from the line (fraction of interior height).
-    /// `spill` ignores it and keeps pouring until the glass overflows.
+    /// `spill` ignores it and keeps pouring until the glass overflows. `over` is capped below the brim per glass
+    /// (`goal(lineFraction:)`).
     var stopDistance: Double {
         switch self {
         case .perfect: return -0.003
         case .great: return 0.045
         case .short: return -0.16
+        case .over: return 0.18
         case .spill: return 1.0
         }
     }
@@ -21,8 +27,21 @@ enum AutopilotStyle: String, CaseIterable, Sendable {
         case .perfect: return 0.018
         case .great: return 0.03
         case .short: return 0.06
+        case .over: return 0.025
         case .spill: return 1.0
         }
+    }
+
+    /// Room kept under the brim by the `over` style (fraction of interior height): its stop is a projection, so it
+    /// keeps clear of a real overflow (which would be a spill).
+    static let overBrimClearance = 0.05
+
+    /// The stop goal for a glass whose line sits at `lineFraction` of its interior height. Only `over` depends on the
+    /// glass: past the Good band (12 %) when there is room, never closer than `overBrimClearance` to the brim.
+    func goal(lineFraction: Double) -> Double {
+        guard self == .over else { return stopDistance }
+        let line = lineFraction.isFinite ? TiltMath.clamp(lineFraction, 0, 1) : 0.8
+        return min(stopDistance, max(1 - line - Self.overBrimClearance, 0))
     }
 }
 
@@ -119,6 +138,12 @@ final class AutopilotTiltSource: TiltSource {
             spring = FeelSpring()
             return 0
         }
+        // ROUND-5 decision 3: a jug that ran dry mid-glass only swaps for a fresh one once the hand tips back, and a
+        // fresh jug that lands while still tipped holds just short of pouring. Ease back, as a player would.
+        if let snap, snap.jug.fill <= 0.001, snap.jug.flow < 0.01 {
+            rest()
+            return output(dt: dt)
+        }
         decide(snap, time: time, dt: dt)
         return output(dt: dt)
     }
@@ -171,6 +196,7 @@ final class AutopilotTiltSource: TiltSource {
             streamLanding = false
         }
         let projected = telemetry.projectedDistanceToLine.isFinite ? telemetry.projectedDistanceToLine : -1
+        let goal = style.goal(lineFraction: Self.lineFraction(of: glass))
         if let previous = lastProjected, dt > 0 {
             let raw = (projected - previous) / dt
             projectedRate += (raw - projectedRate) * min(1, dt / 0.12)
@@ -196,11 +222,11 @@ final class AutopilotTiltSource: TiltSource {
             command = 0
             if time - stageStart >= Self.reaction { beginPour(at: time) }
         case .pouring:
-            pour(snap: snap, glass: glass, projected: projected, flow: flow, time: time, dt: dt)
+            pour(snap: snap, glass: glass, projected: projected, goal: goal, flow: flow, time: time, dt: dt)
         case .stopped:
             command = 0
             let streamDone = flow < 0.004 && time - stageStart > 0.1
-            if style != .spill, topUps < 2, streamDone, style.stopDistance - projected > style.topUpMargin {
+            if style != .spill, topUps < 2, streamDone, goal - projected > style.topUpMargin {
                 learnFromStop(final: projected)
                 topUps += 1
                 beginPour(at: time)
@@ -213,9 +239,9 @@ final class AutopilotTiltSource: TiltSource {
         }
     }
 
-    private func pour(snap: GameSnapshot, glass: GlassState, projected: Double, flow: Double, time: TimeInterval,
-                      dt: Double) {
-        if shouldStop(projected: projected, glass: glass, time: time) {
+    private func pour(snap: GameSnapshot, glass: GlassState, projected: Double, goal: Double, flow: Double,
+                      time: TimeInterval, dt: Double) {
+        if shouldStop(projected: projected, goal: goal, glass: glass, time: time) {
             stopRecord = StopRecord(projected: projected, rate: max(projectedRate, 0))
             enter(.stopped, at: time)
             command = 0
@@ -242,7 +268,7 @@ final class AutopilotTiltSource: TiltSource {
                 learnedStartTilt = TiltMath.clamp(0.6 * learnedStartTilt + 0.4 * spring.value, 8, 80)
             }
             // Remaining distance net of what the lead says is still to come: a bigger lead slows the hand earlier.
-            let remaining = style.stopDistance - projected - max(projectedRate, 0) * max(effectiveLead, 0)
+            let remaining = goal - projected - max(projectedRate, 0) * max(effectiveLead, 0)
             let wanted = style == .spill ? 0.8 : wantedFlow(remaining: remaining)
             // Viscous drinks answer slowly: a gentler hand so it doesn't hunt.
             let gain = 70 / (1 + 4 * liquidLag)
@@ -261,12 +287,21 @@ final class AutopilotTiltSource: TiltSource {
         stopRecord = nil
     }
 
-    private func shouldStop(projected: Double, glass: GlassState, time: TimeInterval) -> Bool {
+    /// The line as a fraction of the glass's interior height (0.8 if the shape is degenerate).
+    private static func lineFraction(of glass: GlassState) -> Double {
+        let interior = Double(glass.shape.interiorHeight)
+        guard interior > 0 else { return 0.8 }
+        let line = Double(glass.lineHeight) / interior
+        return line.isFinite ? line : 0.8
+    }
+
+    private func shouldStop(projected: Double, goal: Double, glass: GlassState, time: TimeInterval) -> Bool {
         if style == .spill {
             // Safety net if the session never flags the overflow: stop once the projection has been well past the
             // brim for a while (time-based, so a fast glass still overflows for real before the hand lets go).
-            let interior = Double(glass.shape.interiorHeight)
-            let line = interior > 0 ? Double(glass.lineHeight) / interior : 0.8
+            // Only a real overflow (`overflowing`, Core's `.spill`) ends the pour early; an `.over` verdict can't
+            // happen while the stream still runs, so the spill style never settles for one.
+            let line = Self.lineFraction(of: glass)
             if projected > (1 - line) + 0.15 {
                 if beyondBrimSince == nil { beyondBrimSince = time }
             } else {
@@ -276,7 +311,7 @@ final class AutopilotTiltSource: TiltSource {
             return false
         }
         let lead = max(projectedRate, 0) * effectiveLead
-        return projected + lead >= style.stopDistance
+        return projected + lead >= goal
     }
 
     /// The lead in use: the learned one, but until a stop has been measured at least a guess that grows with the
@@ -325,7 +360,15 @@ final class AutopilotTiltSource: TiltSource {
     private func learnFromStop(final: Double) {
         guard let record = stopRecord else { return }
         stopRecord = nil
-        guard style != .spill, overflowSince == nil, final.isFinite, record.rate > 0.015 else { return }
+        guard style != .spill else { return }
+        if overflowSince != nil {
+            // It ran over although the hand meant to stop (the `over` style near the brim, a hidden lag): the settled
+            // level says nothing (liquid was lost), but the lead was clearly too short. Grow it.
+            leadTime = min(leadTime + 0.15, Self.maxLead)
+            learnedStops += 1
+            return
+        }
+        guard final.isFinite, record.rate > 0.015 else { return }
         let observed = TiltMath.clamp((final - record.projected) / record.rate, Self.minLead, Self.maxLead)
         // The first measurement replaces the guess outright; after that, a calm average.
         leadTime = learnedStops == 0 ? observed : leadTime + (observed - leadTime) * 0.5

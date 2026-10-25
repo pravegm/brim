@@ -31,13 +31,17 @@ struct ResultsView: View {
     /// The line the Share button sends: the day's scored attempt (this run, or the one already on file).
     private var shareText: String? {
         guard let day = dailyDay else { return nil }
+        let streak = controller.store.dailyStreak(today: day)
         if let onFile = outcome.dailyOnFile {
-            return ShareText.daily(day: day, judgements: onFile.judgements, score: onFile.score)
+            return ShareText.daily(day: day, judgements: onFile.judgements, score: onFile.score, streak: streak)
         }
         // Only the scored attempt is shared as "Brim Daily #N".
         guard outcome.dailyCounted else { return nil }
-        return ShareText.daily(day: day, judgements: result.judgements, score: result.score)
+        return ShareText.daily(day: day, judgements: result.judgements, score: result.score, streak: streak)
     }
+
+    /// A struck-out shift: "3 of 7 glasses" leads, the score steps down (REVIEW-5 P1-6).
+    private var progressHero: String? { Self.progressLine(for: result) }
 
     /// Pure (tested): "Flawless" only when every glass was Perfect. A failed shift says what ended it (REVIEW-2 P2-6:
     /// never "So close" on a three-spill run).
@@ -47,14 +51,92 @@ struct ResultsView: View {
             if !result.judgements.isEmpty && result.judgements.allSatisfy({ $0 == .perfect }) { return "Flawless shift!" }
             if result.stars >= 3 { return "Great shift!" }
             if result.cleared { return "Shift cleared" }
-            let spills = result.judgements.filter { $0 == .spill }.count
-            if spills >= 3 { return "Shift over — \(spills) spills" }
+            // REVIEW-5 P1-6: what ended it, counting every strike (short, over, spill), itemised when mixed:
+            // "Shift over — 3 spills", "Shift over — 2 over, 1 spill".
+            let misses = result.judgements.filter { !$0.isHit }
+            if misses.count >= 3 { return "Shift over — \(missBreakdown(misses))" }
             return "Not quite"
         case .daily:
             return dailyOnFile ? "Practice pour" : "Daily poured"
-        case .rush, .practice:
-            return "Last call!"
+        case .rush:
+            // QA-2 P2-13: never "Last call!" (a bar's call for alcohol).
+            return "Rush over!"
+        case .practice:
+            return "Nice pouring!"
         }
+    }
+
+    /// "3 spills", "3 shorts", "2 over, 1 spill" (one kind: the plural; mixed: each kind, most first). Pure.
+    static func missBreakdown(_ misses: [Judgement]) -> String {
+        let kinds: [(Judgement, String, String)] = [(.over, "over", "over"), (.short, "short", "shorts"),
+                                                     (.spill, "spill", "spills")]
+        var parts: [(count: Int, text: String)] = []
+        for (kind, one, many) in kinds {
+            let n = misses.filter { $0 == kind }.count
+            if n > 0 { parts.append((count: n, text: "\(n) \(n == 1 ? one : many)")) }
+        }
+        if parts.count <= 1 { return parts.first?.text ?? "\(misses.count) misses" }
+        // Stable: most first, ties in the order above.
+        let ordered = parts.enumerated().sorted { a, b in
+            a.element.count != b.element.count ? a.element.count > b.element.count : a.offset < b.offset
+        }
+        return ordered.map { $0.element.text }.joined(separator: ", ")
+    }
+
+    /// REVIEW-5 P1-6: one coaching line for a failed shift, from its venue and its most common miss. Pure; tested.
+    static func coachingTip(for result: RunResult) -> String? {
+        guard case let .shift(id) = result.mode, !result.cleared else { return nil }
+        let misses = result.judgements.filter { !$0.isHit }
+        guard !misses.isEmpty else { return nil }
+        let overs = misses.filter { $0 == .over }.count
+        let shorts = misses.filter { $0 == .short }.count
+        let spills = misses.filter { $0 == .spill }.count
+        let venue = LevelCatalog.level(id)?.venue
+        if shorts > overs && shorts > spills {
+            if venue == .conveyor { return "Start pouring before the glass reaches the spout." }
+            return "A little longer: keep pouring until the line glows."
+        }
+        switch venue {
+        case .sodaFountain?: return "Foam keeps rising after you stop. Stop early, let it settle, top up."
+        case .milkshakeDiner?: return "Thick drinks keep coming. Stop well before the line."
+        case .sandBar?: return "Sand slides all at once. Tip slowly, stop early."
+        default: break
+        }
+        if spills > overs { return "Ease off near the brim: stop before the line." }
+        return "Stop a little earlier: the stream keeps falling."
+    }
+
+    /// REVIEW-5 P1-6: a struck-out shift leads with how far it got ("3 of 7 glasses"), not a giant 0. nil otherwise.
+    static func progressLine(for result: RunResult) -> String? {
+        guard case let .shift(id) = result.mode, !result.cleared,
+              let total = LevelCatalog.level(id)?.orders.count, total > 0 else { return nil }
+        let served = min(result.judgements.count, total)
+        return "\(served) of \(total) glass\(total == 1 ? "" : "es")"
+    }
+
+    /// REVIEW-5 P1-7: the Daily's ceremony line: "🔥 4 days in a row · best 1,240" (the streak only from 2 days). Pure.
+    static func dailyLine(streak: Int, best: Int) -> String {
+        var parts: [String] = []
+        if streak >= 2 { parts.append("🔥 \(streak) days in a row") }
+        if best > 0 { parts.append("best \(ShareText.grouped(best))") }
+        return parts.isEmpty ? "First Daily Pour" : parts.joined(separator: " · ")
+    }
+
+    /// QA-2 P2-8: the Daily rolls over at 00:00 UTC, which is not "tomorrow" in most of the Americas. Says when, in the
+    /// player's own clock: "New glasses at 7:00 PM." Pure (tested with a fixed zone and locale).
+    static func dailyRolloverNote(now: Date, timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC") ?? TimeZone(secondsFromGMT: 0) ?? timeZone
+        let startOfDay = utc.startOfDay(for: now)
+        guard let next = utc.date(byAdding: .day, value: 1, to: startOfDay) else {
+            return "Today's scored pour. New glasses at midnight UTC."
+        }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return "Today's scored pour. New glasses at \(formatter.string(from: next))."
     }
 
     var body: some View {
@@ -200,9 +282,16 @@ struct ResultsView: View {
                         .scaleEffect(showBadge ? 1 : 0.4)
                         .opacity(showBadge ? 1 : 0)
                 }
+                if let progressHero {
+                    Text(progressHero)
+                        .font(BrimTheme.title(info.isCompact ? 32 : 38))
+                        .foregroundStyle(BrimTheme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
                 Text(ShareText.grouped(shownScore))
-                    .font(BrimTheme.number(info.isCompact ? 44 : 52))
-                    .foregroundStyle(BrimTheme.ink)
+                    .font(BrimTheme.number(progressHero != nil ? 28 : (info.isCompact ? 44 : 52)))
+                    .foregroundStyle(progressHero != nil ? BrimTheme.inkSoft : BrimTheme.ink)
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -216,7 +305,11 @@ struct ResultsView: View {
             // On a Duo the glasses stand on the flat half's counter instead (duoLayout).
             if !info.hasFold {
                 if !summary.recap.isEmpty {
-                    RecapRow(recap: summary.recap, maxCount: info.size.width < 420 ? 8 : 10)
+                    // REVIEW-5 P1-7: the Daily's 10 glasses all fit on an iPhone card (smaller, tighter).
+                    let narrow = info.size.width < 420
+                    let compactDaily = narrow && dailyDay != nil
+                    RecapRow(recap: summary.recap, maxCount: compactDaily ? 10 : (narrow ? 8 : 10),
+                             glassWidth: compactDaily ? 24 : 30, spacing: compactDaily ? 4 : 6)
                         .padding(.top, 2)
                 } else if !result.judgements.isEmpty {
                     judgementStrip
@@ -248,6 +341,11 @@ struct ResultsView: View {
     }
 
     private var statsLine: String {
+        // REVIEW-5 P1-7: the Daily leads with its streak and best, never a row of zeros.
+        if let day = dailyDay, outcome.dailyCounted || outcome.dailyOnFile != nil {
+            return Self.dailyLine(streak: controller.store.dailyStreak(today: day),
+                                  best: controller.store.data.bestDaily)
+        }
         let glasses = result.judgements.count
         return "\(result.perfects) perfect · best streak \(result.bestStreak) · \(glasses) glass\(glasses == 1 ? "" : "es")"
     }
@@ -261,16 +359,20 @@ struct ResultsView: View {
             if let onFile = outcome.dailyOnFile {
                 return "Practice — today's scored pour: \(ShareText.grouped(onFile.score))"
             }
-            return outcome.dailyCounted ? "Today's scored pour. New glasses tomorrow." : nil
+            return outcome.dailyCounted ? Self.dailyRolloverNote(now: Date()) : nil
         }
         if case .rush = result.mode, !outcome.isNewBest, outcome.previousBest > 0 {
             return "Best \(ShareText.grouped(outcome.previousBest))"
         }
-        return nil
+        // REVIEW-5 P1-6: a failed shift says what to try next.
+        return Self.coachingTip(for: result)
     }
 
-    /// "Next unlock: 3 more ★ for Milkshake Diner" (nothing when it was just unlocked or all are open).
+    /// "Next unlock: 3 more ★ for Milkshake Diner" (nothing when it was just unlocked or all are open). REVIEW-5: not
+    /// on a Daily card, nor on a shift that wasn't cleared.
     private var unlockLine: String? {
+        if dailyDay != nil { return nil }
+        if isShift && !result.cleared { return nil }
         guard outcome.newlyUnlocked.isEmpty, let next = controller.store.data.nextUnlock else { return nil }
         let star = next.missing == 1 ? "1 more ★" : "\(next.missing) more ★"
         return "Next unlock: \(star) for \(LevelCatalog.title(of: next.venue))"
@@ -367,11 +469,14 @@ struct ResultsView: View {
 struct RecapRow: View {
     let recap: [GlassRecap]
     var maxCount: Int = 10
+    /// Each mini glass's box width (height 4:3 of it), and the gap between glasses.
+    var glassWidth: CGFloat = 30
+    var spacing: CGFloat = 6
 
     var body: some View {
         let shown = Array(recap.suffix(maxCount))
         let hidden = recap.count - shown.count
-        return HStack(alignment: .bottom, spacing: 6) {
+        return HStack(alignment: .bottom, spacing: spacing) {
             if hidden > 0 {
                 Text("+\(hidden)")
                     .font(BrimTheme.text(12, .heavy))
@@ -381,7 +486,7 @@ struct RecapRow: View {
             ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
                 VStack(spacing: 4) {
                     MiniGlass(item: item)
-                        .frame(width: 30, height: 40)
+                        .frame(width: glassWidth, height: glassWidth * 4 / 3)
                     // Colour plus a glyph, so the verdict reads without colour (REVIEW-3 P2-4).
                     Circle()
                         .fill(BrimTheme.color(for: item.judgement))
@@ -439,14 +544,15 @@ struct ResultsCounter: View {
     }
 }
 
-/// The verdict glyph on a recap coaster: ✓ for a hit, a drop for a spill, ↓ for a short (REVIEW-3 P2-4: the coaster
-/// colour alone isn't colour-blind safe).
+/// The verdict glyph on a recap coaster: ✓ for a hit, a drop for a spill, ↓ for a short, ↑ for an over (REVIEW-3
+/// P2-4: the coaster colour alone isn't colour-blind safe).
 enum RecapGlyph {
     static func symbol(for judgement: Judgement) -> String {
         switch judgement {
         case .perfect, .great, .good: return "checkmark"
         case .spill: return "drop.fill"
         case .short: return "arrow.down"
+        case .over: return "arrow.up"
         }
     }
 }

@@ -195,8 +195,24 @@ final class SceneFX {
 
     /// Splash crown where the stream hits a glass's surface: droplets leap up and fall back in, staying inside the
     /// mouth (|x − centre| < half-width − 3) and drawn behind the glass's front wall.
-    func splashCrown(at pos: CGPoint, glassX: CGFloat, mouthHalfWidth: CGFloat, color: UIColor, strength: Double) {
+    /// `granular` (sand): no liquid crown — a low puff of fine grains that drops straight back onto the heap.
+    func splashCrown(at pos: CGPoint, glassX: CGFloat, mouthHalfWidth: CGFloat, color: UIColor, strength: Double,
+                     granular: Bool = false) {
         let s = CGFloat(min(max(strength, 0.1), 1.5))
+        if granular {
+            let count = reduceMotion ? 2 : 4
+            let limit = max(2, mouthHalfWidth - 3)
+            let grain = SceneColor.darker(color, 0.12)
+            for _ in 0..<count {
+                let x0 = min(max(pos.x + rng.range(-5, 5), glassX - limit), glassX + limit)
+                let room = max(0, min(glassX + limit - x0, x0 - (glassX - limit)))
+                let vx = rng.sign() * min(rng.range(10, 45), max(6, room / 0.25))
+                let vy = rng.range(40, 90 + 40 * s)
+                droplet(inner, at: CGPoint(x: x0, y: pos.y + 1), vel: CGVector(dx: vx, dy: vy), size: rng.range(1.8, 3),
+                        color: grain, life: rng.range(0.18, 0.26), gravity: 1800, floorY: pos.y - 1)
+            }
+            return
+        }
         let count = Int((reduceMotion ? 2 : 4) + s * (reduceMotion ? 2 : 6))
         let limit = max(2, mouthHalfWidth - 3)
         let life: CGFloat = 0.42

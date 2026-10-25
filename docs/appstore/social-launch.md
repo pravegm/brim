@@ -72,7 +72,7 @@ Counted by script with the link filled in (X and Mastodon count a link as 23; Bl
 > Brim · Daily #[n] · ⭐⭐🟩⭐🟨⭐🟥⭐⭐🟩 · [score]
 > https://apps.apple.com/app/id6826940959
 
-The row is whatever the app's Share button produces; never type one by hand. **Emoji key** (from the bible; confirm against the build): ⭐ Perfect · 🟩 Great · 🟨 Good · ⬜ Short · 🟥 Spill. Add the key as a reply the first time, for people who can't tell the colours apart.
+The row is whatever the app's Share button produces; never type one by hand. **Emoji key** (as built, `ShareText`): ⭐ Perfect · 🟩 Great · 🟨 Good · 🟧 Short · 🟪 Over · 🟥 Spill; a trailing 🔥4 is the Daily streak. Add the key as a reply the first time, for people who can't tell the colours apart.
 
 ### Teaser (Fri 6 Nov)
 > I made a game where your iPhone Duo is a jug.

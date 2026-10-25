@@ -70,34 +70,53 @@ struct OneEuroSmoother {
     }
 }
 
-/// The closing guard (ROUND-3 decision 1, "closing never pours"), on the raw hinge reports (the freshest truth).
+/// The closing guard (ROUND-3 decision 1, "closing never pours"; ROUND-5 decision 2, "lifting is not closing"), on
+/// the raw hinge reports (the freshest truth).
 ///
-/// Cut the pour when the hinge is below `cutBelow` (latched until it is above `reopenAbove`), or when it closes faster
-/// than `fastCloseSpeed` (the cut holds `fastCloseHold` after the last fast report). Between 90° and 78° the lid tilt
-/// is simply clamped to 90 by `TiltMath.lidTilt`. Pure, with explicit times, so it is testable.
+/// Two different things:
+/// - **Re-lock** (`belowLatch`): the hinge went below `cutBelow` (78°) and stays latched until it is back above
+///   `reopenAbove` (88°). Only this one means "the phone is being shut": `HingeTiltSource.isClosing`, which the App
+///   turns into `requireFlat()` (the flat gate re-locks).
+/// - **Fast-close cut** (`holdUntil`): the hinge closes faster than `fastCloseSpeed` while it is already below
+///   `fastCloseBelow` (120°; both reports of the pair). The pour is cut (`closedTilt`) for `fastCloseHold` after the
+///   last fast report, so a slam toward shut never gushes, but the gate stays open: a brisk tip that stops short pours
+///   again a moment later. Above 120° a fast lift is simply a pour (QA-2 P1-1).
 ///
-/// Speed from report pairs: the Duo sends nothing while the hinge is still, so a report after a long silence is
-/// treated as one nominal interval of motion (a close from rest is caught on its first report, not its second).
+/// Between 90° and 78° the lid tilt is simply clamped to 90 by `TiltMath.lidTilt`. Pure, with explicit times, so it
+/// is testable.
+///
+/// Speed from report pairs. The Duo sends nothing while the hinge is still, so the first report after a silence has
+/// no usable timing: it counts as fast only when it already dropped `slamFromRestStep` (a slam from rest), never for
+/// the few degrees a hand moves when it resumes tipping after a hold. Two callbacks that arrive bunched can't fake a
+/// fast close either: a fast pair must also move at least `fastCloseMinStep`.
 struct ClosingGuard {
     static let cutBelow = 78.0
     static let reopenAbove = 88.0
-    /// °/s of closing (angle falling) that cuts the pour at any angle.
+    /// °/s of closing (angle falling) that cuts the pour, below `fastCloseBelow`.
     static let fastCloseSpeed = 160.0
+    /// Round 5 (decision 2): fast motion only counts as closing below this hinge angle (both reports of the pair).
+    static let fastCloseBelow = 120.0
+    /// A fast pair must also close at least this many degrees (bunched callbacks inflate a small step's speed).
+    static let fastCloseMinStep = 4.0
+    /// The first report after a silence counts as a fast close only if it already dropped this far (≈ 360°/s over one
+    /// nominal interval): a slam from rest, not a hand resuming a tip after a hold (QA-2 P1-1b: 6° or more).
+    static let slamFromRestStep = 12.0
     static let fastCloseHold = 0.35
     /// A gap longer than this means the hinge had stopped reporting (it was still).
     static let staleGap = 0.25
     /// The Duo's report interval while moving (25–30 Hz).
     static let nominalInterval = 1.0 / 30
-    /// Lid tilt reported while the guard cuts: the jug stands exactly upright (`Rules.jugAngle` = 0, no outflow), but
-    /// it is NOT inside the dead zone (`tilt < Rules.deadZone` arms the flat gate), so a closing or half-shut phone
-    /// can never open the flat gate on its way back. Set it to 0 to get the literal "tilt 0".
-    static let closedTilt: Double = Rules.deadZone
+    /// Lid tilt reported while the guard cuts: Core's `Rules.closedTilt` (round 5). The flat gate now opens at a lid
+    /// tilt of 0…12° (`Rules.readsFlat`), so the old value (the 6° dead zone) would read as "flat"; this one is
+    /// negative: the jug stands exactly upright (`Rules.jugAngle` clamps it to 0, no outflow) and a closing or
+    /// half-shut phone can never open the flat gate on its way back (nor flicker a re-locked gate open every frame).
+    static let closedTilt: Double = Rules.closedTilt
 
-    /// Latched below `cutBelow`, released above `reopenAbove`.
+    /// Latched below `cutBelow`, released above `reopenAbove`. This alone re-locks the flat gate.
     private(set) var belowLatch = false
     /// The fast-close cut lasts until this time.
     private(set) var holdUntil = -Double.infinity
-    /// °/s, positive while closing, from the last two reports (diagnostics).
+    /// °/s, positive while closing, from the last two reports (diagnostics; after a silence, over one nominal interval).
     private(set) var closingSpeed = 0.0
     private var previousAngle: Double?
     private var previousTime = 0.0
@@ -105,10 +124,19 @@ struct ClosingGuard {
     init() {}
 
     mutating func sample(_ angle: Double, at time: Double) {
+        var fast = false
         if let previous = previousAngle {
             let gap = time - previousTime
-            let dt = gap > Self.staleGap ? Self.nominalInterval : TiltMath.clamp(gap, 1.0 / 60, Self.staleGap)
-            closingSpeed = (previous - angle) / dt
+            let drop = previous - angle
+            let belowLift = previous <= Self.fastCloseBelow && angle < Self.fastCloseBelow
+            if gap > Self.staleGap {
+                closingSpeed = drop / Self.nominalInterval
+                fast = belowLift && drop >= Self.slamFromRestStep
+            } else {
+                let dt = TiltMath.clamp(gap, 1.0 / 60, Self.staleGap)
+                closingSpeed = drop / dt
+                fast = belowLift && drop >= Self.fastCloseMinStep && closingSpeed > Self.fastCloseSpeed
+            }
         } else {
             closingSpeed = 0
         }
@@ -119,11 +147,12 @@ struct ClosingGuard {
         } else if angle > Self.reopenAbove {
             belowLatch = false
         }
-        if closingSpeed > Self.fastCloseSpeed {
+        if fast {
             holdUntil = max(holdUntil, time + Self.fastCloseHold)
         }
     }
 
+    /// The pour is cut (either reason).
     func isCut(at time: Double) -> Bool {
         belowLatch || time < holdUntil
     }
@@ -193,7 +222,7 @@ struct HoldStabiliser {
         if index < count - 1 {
             return abs(newestAngle - angles[index]) / max(newestTime - times[index], 1.0 / 60)
         }
-        // The first report after a silence: assume one nominal interval of motion.
+        // The first report after a silence: assume one nominal interval of motion (this only opens the smoothing up).
         return abs(newestAngle - angles[count - 2]) / ClosingGuard.nominalInterval
     }
 

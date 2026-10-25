@@ -8,13 +8,17 @@ enum ShareText {
         case .great: return "🟩"
         case .good: return "🟨"
         case .short: return "🟧"
+        // Round 5: over the Good band without spilling. Purple, so it never reads as Good (🟨) or Short (🟧).
+        case .over: return "🟪"
         case .spill: return "🟥"
         }
     }
 
-    static func daily(day: Int, judgements: [Judgement], score: Int) -> String {
+    /// `streak` = consecutive Daily Pours ending that day; shown as " 🔥4" from 2 days (REVIEW-5 P1-7).
+    static func daily(day: Int, judgements: [Judgement], score: Int, streak: Int = 0) -> String {
         let grid = judgements.map(emoji(for:)).joined()
-        return "Brim Daily #\(day) \(grid) \(grouped(score))"
+        let fire = streak >= 2 ? " 🔥\(streak)" : ""
+        return "Brim Daily #\(day) \(grid) \(grouped(score))\(fire)"
     }
 
     /// Thousands with commas whatever the locale, so the shared line reads the same everywhere: 1840 → "1,840".

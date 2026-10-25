@@ -79,10 +79,20 @@ enum CoreTuning {
     /// With no head, outflow below this snaps to 0: cutoff + lagTau · ropeSnapPerLag (viscous ropes snap thick).
     static let outflowCutoff: Double = 15
     static let ropeSnapPerLag: Double = 320
-    /// Jug counts as empty below this fill (shifts: auto-swap; Rush: run ends).
+    /// Jug counts as empty below this fill (shifts: it runs dry, see below; Rush: run ends).
     static let jugEmptyFill: Double = 0.025
     /// No outflow for this long while a jug is swapped (empty jug, or a different drink's jug).
     static let jugSwapPause: Double = 0.6
+    /// Round 5 (founder decision 3, QA-2 P1-2): refills happen between glasses, never mid-pour.
+    /// A shift jug that runs dry mid-glass stays empty (no stream) until the glass is served or the jug has been
+    /// tipped back below the refilled jug's pour point for this long; then it is swapped.
+    static let jugDryTipBackTime: Double = 0.4
+    /// When the next glass is sent to the stop, the jug is refilled there (between glasses) if it holds less than
+    /// this × the drink that glass needs to its line.
+    static let jugRefillMargin: Double = 1.3
+    /// A refill swap that starts with the hand tipped past the new jug's pour point holds the new jug this many degrees
+    /// short of it until the hand has tipped back once (nothing gushes from a jug that arrives already tipped).
+    static let tipBackHoldMargin: Double = 0.5
     /// Rush: a Perfect refills this fraction of the jug's capacity, a Great `rushRefillGreat`.
     /// Budget (tier-0 orders need ~14,000 pt²; the Rush jug holds ~121,000): a decent player (50 % Perfect, 30 % Great)
     /// nets −3,700 per glass → ~33 glasses ≈ 2.4 min; a strong one (75 % Perfect) runs 4+ min until the tiers bite;
@@ -161,7 +171,10 @@ enum CoreTuning {
     /// Served after this long with no outflow and nothing in the air (`.lockedIn` fires at the start of it).
     static let serveIdle: Double = 0.35
     /// If a head is still settling, serving waits up to this much longer (lets "pour slow, then top up" work).
-    static let foamServeGrace: Double = 1.2
+    /// Round 5 (founder decision 4, QA-2 P1-3): foamy drinks are judged once the head has settled, capped at 3 s of
+    /// idle (serveIdle + this). At the cap an unsettled head counts only up to `foamSettledFraction` (see
+    /// `GameSession.judgedTop`), so pouring the liquid to the line and letting the foam settle is fair.
+    static let foamServeGrace: Double = 3.0 - CoreTuning.serveIdle
     /// A head below this fraction of the interior height counts as settled.
     static let foamSettledFraction: Double = 0.025
     /// A glass needs at least this much poured in (pt²) before it can be served by stopping.
@@ -174,6 +187,9 @@ enum CoreTuning {
     static let conveyorLeadIn: Double = 40
     /// Conveyor: judged when the mouth's left edge passes the stream's landing x by this much.
     static let conveyorExitMargin: Double = 6
+    /// Round 5 (QA-2 P2-2): past the exit, the verdict waits for drink already inside the mouth to land, at most this
+    /// long.
+    static let conveyorInsideWaitMax: Double = 0.5
     /// Delay between the deciding judgement and `finished`, so the last stamp is seen.
     static let finishDelay: Double = 0.9
     /// Glass placement: the landing x is sampled over the pours this jug fill will really use (pour point … +span of

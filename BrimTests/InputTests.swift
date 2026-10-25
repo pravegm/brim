@@ -117,7 +117,8 @@ private final class ToyBar {
                     if idle >= 0.35 {
                         let d = volume - line
                         let a = abs(d)
-                        let j: Judgement = a <= 0.025 ? .perfect : (a <= 0.06 ? .great : (a <= 0.12 ? .good : (d < 0 ? .short : .spill)))
+                        // Round 5: past the Good band with nothing over the rim is `.over`, not `.spill`.
+                        let j: Judgement = a <= 0.025 ? .perfect : (a <= 0.06 ? .great : (a <= 0.12 ? .good : (d < 0 ? .short : .over)))
                         result = j
                         finals.append((judgement: j, distance: d))
                         phaseTime = 0
@@ -187,50 +188,247 @@ private func inputHeldSpread(stabilise: Bool) -> (sd: Double, mean: Double) {
     return (sd: (variance / Double(max(tilts.count, 1))).squareRoot(), mean: mean)
 }
 
+/// `GameController.advance` on a Duo, in miniature (round 5): read the hinge, re-lock the flat gate when it reports
+/// closing, step the session. Counts what a player would notice.
+@MainActor
+private final class DuoRig {
+    let hinge = HingeTiltSource()
+    let session: GameSession
+    var measureFrom = Double.infinity
+    private(set) var relocks = 0
+    private(set) var flatArms = 0
+    private(set) var closingFrames = 0
+    private(set) var cutFramesAfterArming = 0
+    private(set) var maxFlowSince = 0.0
+    private var lastReport: Double?
+
+    init(level: String = "1-1") {
+        TiltInputLog.shared.clear()
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        session = GameSession(mode: .shift(level), layout: layout, seed: 1)
+        session.requireFlat()
+    }
+
+    /// A raw hinge report. With `silentWhenStill`, a report equal to the previous one is dropped (the Duo sends
+    /// nothing while the hinge is still).
+    func report(_ angle: Double, at time: Double, silentWhenStill: Bool) {
+        if silentWhenStill, let last = lastReport, last == angle { return }
+        lastReport = angle
+        hinge.ingest(angleDegrees: angle, at: time)
+    }
+
+    @discardableResult
+    func frame(at time: Double, dt: Double) -> Double {
+        let tilt = hinge.tilt(at: time)
+        if hinge.isClosing { closingFrames += 1 }
+        if hinge.isClosing && !session.snapshot.needsFlat {
+            session.requireFlat()
+            relocks += 1
+        }
+        let events = session.step(dt: dt, tilt: tilt)
+        for event in events {
+            if case .flatArmed = event { flatArms += 1 }
+        }
+        if flatArms > 0 && tilt == ClosingGuard.closedTilt { cutFramesAfterArming += 1 }
+        if time >= measureFrom { maxFlowSince = max(maxFlowSince, session.snapshot.jug.flow) }
+        return tilt
+    }
+}
+
 // MARK: - Tests
 
 @MainActor
 struct InputTests {
-    // MARK: Closing guard (ROUND-3 decision 1: closing never pours)
+    // MARK: Closing guard (ROUND-3 decision 1: closing never pours; ROUND-5 decision 2: lifting is not closing)
 
-    @Test func theClosedTiltIsUprightButNeverFlat() {
+    @Test func theClosedTiltIsUprightAndNeverOpensTheFlatGate() {
         // The jug stands exactly upright (no outflow) …
         #expect(Rules.jugAngle(forLidTilt: ClosingGuard.closedTilt) == 0.0)
-        // … but a closing phone never reads as "laid flat", so it can't open the flat gate on its way back.
-        #expect(!(ClosingGuard.closedTilt < Rules.deadZone))
         #expect(ClosingGuard.cutBelow < ClosingGuard.reopenAbove)
+        #expect(ClosingGuard.reopenAbove < ClosingGuard.fastCloseBelow)
+        // … and a re-locked gate fed the cut tilt stays locked (decision 1 moved the gate to a lid tilt ≤ 12°, so the
+        // old 6° value would now read as "flat" and flicker the gate open every other frame).
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift("1-1"), layout: layout, seed: 1)
+        session.requireFlat()
+        var armed = false
+        for _ in 0..<180 {
+            for event in session.step(dt: 1.0 / 60, tilt: ClosingGuard.closedTilt) {
+                if case .flatArmed = event { armed = true }
+            }
+        }
+        #expect(armed == false)
+        #expect(session.snapshot.needsFlat)
+        #expect(session.snapshot.jug.flow == 0.0)
     }
 
-    @Test func fastCloseCutsThePourWithinOneSample() {
-        // Held at 150° (reporting, or one report then the Duo's silence while still), then shut at 300°/s to 20°.
+    @Test func closingGuardCountsOnlyGenuineFastClosesBelow120() {
+        // A fast tip above 120°, or one that ends just below it: a pour, not a close.
+        var high = ClosingGuard()
+        high.sample(150, at: 0)
+        high.sample(136, at: 1.0 / 30)
+        high.sample(123, at: 2.0 / 30)
+        high.sample(110, at: 0.1)
+        #expect(high.isCut(at: 0.1) == false)
+        // Both reports below 120° and fast: cut for `fastCloseHold`, with no re-lock.
+        var low = ClosingGuard()
+        low.sample(115, at: 0)
+        low.sample(100, at: 1.0 / 30)
+        #expect(low.isCut(at: 1.0 / 30))
+        #expect(low.belowLatch == false)
+        #expect(low.isCut(at: 1.0 / 30 + ClosingGuard.fastCloseHold + 0.01) == false)
+        // Bunched callbacks: a 3° step 4 ms apart reads as 180°/s but is no close.
+        var bunched = ClosingGuard()
+        bunched.sample(112, at: 0)
+        bunched.sample(109, at: 0.004)
+        #expect(bunched.closingSpeed > ClosingGuard.fastCloseSpeed)
+        #expect(bunched.isCut(at: 0.004) == false)
+        // Resuming a tip after a still hold (the Duo sent nothing): the first report's 8° says nothing about speed.
+        var resumed = ClosingGuard()
+        resumed.sample(118, at: 0)
+        resumed.sample(110, at: 0.6)
+        #expect(resumed.isCut(at: 0.6) == false)
+        // A slam from rest: the first report already dropped 15°.
+        var slam = ClosingGuard()
+        slam.sample(115, at: 0)
+        slam.sample(100, at: 0.6)
+        #expect(slam.isCut(at: 0.6))
+        // A slow drift below 78° latches; only above 88° releases it.
+        var drift = ClosingGuard()
+        drift.sample(80, at: 0)
+        drift.sample(77, at: 0.1)
+        #expect(drift.belowLatch)
+        drift.sample(88, at: 0.5)
+        #expect(drift.belowLatch)
+        drift.sample(88.5, at: 0.6)
+        #expect(drift.belowLatch == false)
+    }
+
+    @Test func aFastCloseFrom120To20CutsAtOnceAndReLocksOnlyBelow78() {
+        // Held at 120° (reporting, or one report then the Duo's silence while still), then shut at 400°/s to 20°.
         // 30 Hz reports, 120 Hz frames.
         for silentBefore in [false, true] {
+            TiltInputLog.shared.clear()
             let source = HingeTiltSource()
-            var tiltBefore = 0.0
+            var raw = 120.0
             var firstMoveFrame: Int?
             var leakedFrames = 0
+            var cutWithoutRelock = false
+            var relockedAbove78 = false
             for frame in 0..<360 {
                 let time = Double(frame) / 120
                 if frame % 4 == 0 {
-                    if time < 1 {
-                        if !silentBefore || frame == 0 { source.ingest(angleDegrees: 150, at: time) }
-                    } else {
-                        let angle = max(150 - 300 * (time - 1), 20)
-                        source.ingest(angleDegrees: angle, at: time)
-                        if angle < 150 && firstMoveFrame == nil { firstMoveFrame = frame }
+                    raw = time < 1 ? 120 : max(120 - 400 * (time - 1), 20)
+                    if !silentBefore || frame == 0 || raw < 120 {
+                        source.ingest(angleDegrees: raw, at: time)
+                        if raw < 120 && firstMoveFrame == nil { firstMoveFrame = frame }
                     }
                 }
                 let tilt = source.tilt(at: time)
-                if frame == 119 { tiltBefore = tilt }
                 // From the frame of the first moving report on, the pour is cut.
                 if firstMoveFrame != nil && tilt != ClosingGuard.closedTilt { leakedFrames += 1 }
+                if source.isCutting && !source.isClosing { cutWithoutRelock = true }
+                if source.isClosing && raw >= ClosingGuard.cutBelow { relockedAbove78 = true }
             }
-            #expect(abs(tiltBefore - 30) < 0.5)
             #expect(firstMoveFrame != nil)
             #expect(leakedFrames == 0)
+            // The gate re-locks (isClosing) only once the hinge is below 78°; before that the pour is merely cut.
+            #expect(cutWithoutRelock)
+            #expect(relockedAbove78 == false)
             #expect(source.isClosing)
-            #expect(Rules.jugAngle(forLidTilt: source.tilt(at: 3.5)) == 0.0)
+            #expect(source.tilt(at: 3.5) == ClosingGuard.closedTilt)
         }
+        TiltInputLog.shared.clear()
+    }
+
+    @Test func aFullSlamFromThePourRangeLeaksAtMostOneReport() {
+        // 150° → 20° at 400°/s: above 120° it is a pour; the cut lands on the first fast pair below 120°.
+        TiltInputLog.shared.clear()
+        let source = HingeTiltSource()
+        var firstBelow120: Int?
+        var firstCut: Int?
+        var leakedBeforeCut = 0
+        var leakedAfterCut = 0
+        for frame in 0..<360 {
+            let time = Double(frame) / 120
+            if frame % 4 == 0 {
+                let raw: Double = time < 1 ? 150 : max(150 - 400 * (time - 1), 20)
+                source.ingest(angleDegrees: raw, at: time)
+                if raw < ClosingGuard.fastCloseBelow && firstBelow120 == nil { firstBelow120 = frame }
+            }
+            let cut = source.tilt(at: time) == ClosingGuard.closedTilt
+            if cut && firstCut == nil { firstCut = frame }
+            if firstBelow120 != nil && firstCut == nil && !cut { leakedBeforeCut += 1 }
+            if firstCut != nil && !cut { leakedAfterCut += 1 }
+        }
+        #expect(firstBelow120 != nil)
+        #expect(firstCut != nil)
+        // At most one report interval (30 Hz, read at 120 Hz).
+        #expect(leakedBeforeCut <= 4)
+        #expect(leakedAfterCut == 0)
+        #expect(source.isClosing)
+        TiltInputLog.shared.clear()
+    }
+
+    @Test func aQuickTipFrom150To110At400DegPerSecondPoursAndNeverCloses() {
+        // QA-2 P1-1a on a Duo, through the session: flat (the gate opens), lift to 150°, then a quick tip to 110° at
+        // 400°/s and hold (reporting, or silent while still). It pours, and the gate never re-locks.
+        for silent in [false, true] {
+            let rig = DuoRig()
+            rig.measureFrom = 1.8
+            var tilt = 0.0
+            for frame in 0..<(120 * 4) {
+                let time = Double(frame) / 120
+                if frame % 4 == 0 {
+                    let angle: Double
+                    if time < 1 {
+                        angle = 178
+                    } else if time < 1.5 {
+                        angle = 178 - 56 * (time - 1)
+                    } else {
+                        angle = max(150 - 400 * (time - 1.5), 110)
+                    }
+                    rig.report(angle, at: time, silentWhenStill: silent)
+                }
+                tilt = rig.frame(at: time, dt: 1.0 / 120)
+            }
+            #expect(rig.flatArms == 1)
+            #expect(rig.closingFrames == 0)
+            #expect(rig.relocks == 0)
+            #expect(rig.cutFramesAfterArming == 0)
+            #expect(rig.session.snapshot.needsFlat == false)
+            #expect(rig.maxFlowSince > 0.1, "never poured (max flow \(rig.maxFlowSince))")
+            #expect(abs(tilt - 70) < 1)
+        }
+        TiltInputLog.shared.clear()
+    }
+
+    @Test func tippingFurtherAfterAStillHoldPours() {
+        // QA-2 P1-1b: pour down to 118°, hold still 0.6 s (the Duo sends nothing), then tip on at 90°/s. The first
+        // report after the silence has already dropped 8° (it read as 240°/s before round 5).
+        let rig = DuoRig()
+        rig.measureFrom = 2.7
+        var tilt = 0.0
+        for frame in 0..<(120 * 4) {
+            let time = Double(frame) / 120
+            if frame % 4 == 0 {
+                if time < 1 {
+                    rig.report(178, at: time, silentWhenStill: false)
+                } else if time < 2.001 {
+                    rig.report(178 - 60 * (time - 1), at: time, silentWhenStill: false)
+                } else if time >= 2.599 {
+                    rig.report(max(110 - 90 * max(time - 2.6, 0), 100), at: time, silentWhenStill: false)
+                }
+            }
+            tilt = rig.frame(at: time, dt: 1.0 / 120)
+        }
+        #expect(rig.flatArms == 1)
+        #expect(rig.closingFrames == 0)
+        #expect(rig.relocks == 0)
+        #expect(rig.cutFramesAfterArming == 0)
+        #expect(rig.maxFlowSince > 0.1, "never poured (max flow \(rig.maxFlowSince))")
+        #expect(abs(tilt - 80) < 1)
+        TiltInputLog.shared.clear()
     }
 
     @Test func slowCloseCutsBelow78AndOnlyReopensAbove88() {
@@ -262,7 +460,9 @@ struct InputTests {
             if raw < ClosingGuard.cutBelow && !cut { problems.append("below78 " + label) }
             if !closing && raw <= ClosingGuard.reopenAbove && !cut { problems.append("reopen<=88 " + label) }
             if !closing && raw > ClosingGuard.reopenAbove && cut { problems.append("reopen>88 " + label) }
+            // A slow close has no fast cut: the re-lock (isClosing) and the cut are the same thing here.
             if source.isClosing != cut { problems.append("isClosing " + label) }
+            if source.isCutting != cut { problems.append("isCutting " + label) }
         }
         #expect(problems == [String]())
         #expect(sawClamp)
@@ -278,40 +478,46 @@ struct InputTests {
             let time = Double(frame) / 120
             if frame % 4 == 0 { source.ingest(angleDegrees: time < 1 ? 175 : max(175 - 120 * (time - 1), 120), at: time) }
             tilt = source.tilt(at: time)
-            if source.isClosing { everCut = true }
+            if source.isCutting || source.isClosing { everCut = true }
         }
         #expect(everCut == false)
         #expect(abs(tilt - 60) < 0.5)
     }
 
-    @Test func aFastFlickHoldsTheCutBrieflyThenPoursAgain() {
-        // 150° → 120° at 300°/s, then held: cut for 0.35 s after the last fast report, then the jug follows again.
+    @Test func aFastFlickBelow120CutsBrieflyWithoutReLockingThenPoursAgain() {
+        // 125° → 95° at 300°/s, then held: cut for 0.35 s after the last fast pair below 120°, the gate never
+        // re-locks, then the jug follows again.
+        TiltInputLog.shared.clear()
         let source = HingeTiltSource()
         var tiltDuring = 0.0
-        var closingDuring = false
+        var cuttingDuring = false
+        var closingEver = false
         var tiltAfter = 0.0
-        var closingAfter = true
+        var cuttingAfter = true
         for frame in 0..<360 {
             let time = Double(frame) / 120
-            if frame % 4 == 0 { source.ingest(angleDegrees: time < 1 ? 150 : max(150 - 300 * (time - 1), 120), at: time) }
+            if frame % 4 == 0 { source.ingest(angleDegrees: time < 1 ? 125 : max(125 - 300 * (time - 1), 95), at: time) }
             let tilt = source.tilt(at: time)
+            if source.isClosing { closingEver = true }
             if frame == 144 {
                 tiltDuring = tilt
-                closingDuring = source.isClosing
+                cuttingDuring = source.isCutting
             }
             if frame == 180 {
                 tiltAfter = tilt
-                closingAfter = source.isClosing
+                cuttingAfter = source.isCutting
             }
         }
         #expect(tiltDuring == ClosingGuard.closedTilt)
-        #expect(closingDuring)
-        #expect(closingAfter == false)
-        #expect(abs(tiltAfter - 60) < 1)
+        #expect(cuttingDuring)
+        #expect(closingEver == false)
+        #expect(cuttingAfter == false)
+        #expect(abs(tiltAfter - 85) < 1)
         // `lastAngle` stays current from the reports alone (the App reads it while the run is paused).
         source.ingest(angleDegrees: 64, at: 3.2)
         #expect(source.lastAngle == 64.0)
         #expect(source.isClosing)
+        TiltInputLog.shared.clear()
     }
 
     // MARK: Hold stabiliser (REVIEW-2 hinge-noise risk)
@@ -644,6 +850,43 @@ struct InputTests {
         let index = min(Int(((overflow + 0.3) * 60).rounded()), tilts.count - 1)
         #expect(tilts[index] > 20)
         #expect(bar.finals.first?.judgement == .spill)
+        // Round 5: a spill is liquid really over the rim; the spill style never settles for an `.over`.
+        #expect(!bar.finals.contains { $0.judgement == .over })
+    }
+
+    @Test func autopilotSpillsForRealOnAnOrdinaryGlassToo() {
+        // The usual fill rate: it keeps pouring through the Good band and the brim until the glass overflows.
+        let bar = ToyBar()
+        let pilot = AutopilotTiltSource(style: .spill) { bar.snapshot }
+        _ = runToyBar(bar, pilot, seconds: 8)
+        #expect(!bar.overflowTimes.isEmpty)
+        #expect(bar.finals.first?.judgement == .spill)
+        #expect(!bar.finals.contains { $0.judgement == .over })
+    }
+
+    @Test func autopilotOverFillsPastTheGoodBandButNeverOverflows() {
+        // Round 5 (decision 4): the `over` style stops past the Good band (12 %) and short of the brim, so the glass is
+        // an honest OVER, not a spill.
+        let bar = ToyBar()
+        let pilot = AutopilotTiltSource(style: .over) { bar.snapshot }
+        _ = runToyBar(bar, pilot, seconds: 30)
+        #expect(bar.finals.count >= 4)
+        #expect(bar.overflowTimes.isEmpty)
+        #expect(bar.finals.allSatisfy { $0.judgement == .over })
+    }
+
+    @Test func autopilotGoalsPerGlass() {
+        // Only `over` depends on the glass: past the Good band when there is room, never closer than the clearance
+        // to the brim.
+        #expect(AutopilotStyle.perfect.goal(lineFraction: 0.9) == AutopilotStyle.perfect.stopDistance)
+        #expect(AutopilotStyle.spill.goal(lineFraction: 0.9) == AutopilotStyle.spill.stopDistance)
+        #expect(AutopilotStyle.over.goal(lineFraction: 0.5) == AutopilotStyle.over.stopDistance)
+        #expect(AutopilotStyle.over.stopDistance > 0.12)
+        let tall = AutopilotStyle.over.goal(lineFraction: 0.8)
+        #expect(tall > 0.12)
+        #expect(tall <= 0.2 - AutopilotStyle.overBrimClearance + 1e-9)
+        #expect(AutopilotStyle.over.goal(lineFraction: 0.97) >= 0)
+        #expect(AutopilotStyle.over.goal(lineFraction: Double.nan).isFinite)
     }
 
     // MARK: Touch on a Duo (round 4, QA P2-3)

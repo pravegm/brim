@@ -90,6 +90,8 @@ final class FeedbackDirector: FeedbackSink {
     private var bandGlassID: Int?
     private var wasInBand = false
     private var observedBand: Double?
+    /// The dry-jug "glug-out" (round 5).
+    private var dryJug = DryJugWatch()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -245,7 +247,8 @@ final class FeedbackDirector: FeedbackSink {
                 lastBedSend = now
                 let master = soundOn ? BrimAudioEngine.masterGain : 0
                 let bed = SoundBook.pourBed(telemetry: telemetry, foam: activeFoam(snapshot), texture: texture,
-                                            master: master, band: band, streak: snapshot.streak)
+                                            master: master, band: band, streak: snapshot.streak,
+                                            lineOpacity: activeLineOpacity(snapshot))
                 audio.setBed(bed)
             }
             haptics.updateFlow(flow: telemetry.flow, fill: telemetry.activeFill, now: now)
@@ -254,6 +257,12 @@ final class FeedbackDirector: FeedbackSink {
         for event in events {
             if !pourAudible && Self.isPourTexture(event) { continue }
             react(to: event, snapshot: snapshot, texture: texture, now: now)
+        }
+
+        // Round 5 (decision 3): the jug ran dry mid-pour, so the stream just stops. Tell the player softly.
+        if dryJug.update(snapshot: snapshot, events: events, paused: paused) {
+            audio.play(SoundBook.glugOut(dice: &dice))
+            haptics.play(HapticBook.glugOut)
         }
     }
 
@@ -314,8 +323,11 @@ final class FeedbackDirector: FeedbackSink {
             if !lockedGlasses.contains(glassID) {
                 if lockedGlasses.count > 64 { lockedGlasses.removeAll() }
                 lockedGlasses.insert(glassID)
-                audio.play(SoundBook.lockedIn(streak: snapshot.streak, dice: &dice))
-                haptics.play(HapticBook.lockedIn)
+                // REVIEW-5 P1-1: a faded line stays a secret (no tink, no tick; the verdict still speaks).
+                if Self.lockInAudible(glassID: glassID, snapshot: snapshot) {
+                    audio.play(SoundBook.lockedIn(streak: snapshot.streak, dice: &dice))
+                    haptics.play(HapticBook.lockedIn)
+                }
             }
         case .flatArmed:
             audio.play(SoundBook.flatArmed())
@@ -328,7 +340,7 @@ final class FeedbackDirector: FeedbackSink {
                 haptics.play(HapticBook.multiplier)
             }
         case .strike:
-            break // the spill already spoke
+            break // the miss already spoke (spill, short or over)
         case .jugRefilled:
             audio.play(SoundBook.refill())
             haptics.play(HapticBook.refill)
@@ -372,6 +384,10 @@ final class FeedbackDirector: FeedbackSink {
         case .short:
             audio.play(SoundBook.short())
             haptics.play(HapticBook.short)
+        case .over:
+            // Round 5: too full, nothing spilled. A soft "hm-mm?", never the spill's splash and buzz.
+            audio.play(SoundBook.over())
+            haptics.play(HapticBook.over)
         case .spill:
             break // the spill already spoke (once); the slide below still runs
         }
@@ -383,6 +399,19 @@ final class FeedbackDirector: FeedbackSink {
 
     private func ensureStarted() {
         if !started { start() }
+    }
+
+    /// The line opacity of the glass under the spout (1 when there is none): the shimmer goes quiet once it fades.
+    private func activeLineOpacity(_ snapshot: GameSnapshot) -> Double {
+        guard let glass = snapshot.glasses.first(where: { $0.phase == .filling }) else { return 1 }
+        return glass.lineOpacity
+    }
+
+    /// The lock-in cue for `glassID` may sound: its line is still visible (REVIEW-5 P1-1). A glass missing from the
+    /// snapshot counts as visible (the cue is the stream finishing, not a hint).
+    nonisolated static func lockInAudible(glassID: Int, snapshot: GameSnapshot) -> Bool {
+        guard let glass = snapshot.glasses.first(where: { $0.id == glassID }) else { return true }
+        return SoundBook.lineCuesAudible(lineOpacity: glass.lineOpacity)
     }
 
     /// The head on the glass under the spout, as a fraction of its interior height (soda fizz follows it).
@@ -417,5 +446,51 @@ final class FeedbackDirector: FeedbackSink {
     private func persist() {
         FeedbackSettings(soundOn: soundOn, hapticsOn: hapticsOn, respectSilentSwitch: respectSilentSwitch)
             .save(to: defaults)
+    }
+}
+
+/// Round 5 (decision 3, QA-2 P1-2): when the jug runs dry mid-glass the stream simply stops and the jug is swapped
+/// between glasses. There is no Core event for "dry", so this reads it from the snapshot: the jug's fill is all but
+/// gone (`dryFill`) while it is tipped (`tippedAngle`) in a live run. It fires once, then re-arms only when the jug is
+/// full again (`rearmFill`: a swap or a refill), so holding an empty jug tipped never repeats it. Not in Rush (an empty
+/// jug ends the run, with its own `jugEmpty` cue). Pure, so it is testable.
+struct DryJugWatch {
+    /// "≈ 0": a little above Core's empty-jug threshold (2.5 %), so a stream stopped there still counts.
+    static let dryFill = 0.03
+    static let rearmFill = 0.08
+    /// Jug rotation (degrees) that counts as tipped: well past the dead zone, short of any real pour of a fuller jug.
+    static let tippedAngle = 20.0
+
+    /// True once a non-empty jug has been seen since the last cue.
+    private(set) var armed = false
+
+    init() {}
+
+    /// One frame. True when the glug-out should play now.
+    mutating func update(fill: Double, jugAngle: Double, live: Bool) -> Bool {
+        guard fill.isFinite, jugAngle.isFinite else { return false }
+        if fill >= Self.rearmFill {
+            armed = true
+            return false
+        }
+        guard armed, live, fill <= Self.dryFill, jugAngle >= Self.tippedAngle else { return false }
+        armed = false
+        return true
+    }
+
+    /// One frame from the session's snapshot and events. Live = a playing, unpaused, ungated, non-Rush run in which
+    /// this frame did not already end the run on an empty jug.
+    mutating func update(snapshot: GameSnapshot, events: [GameEvent], paused: Bool) -> Bool {
+        var live = !paused && !snapshot.needsFlat && snapshot.phase == .playing
+        if case .rush = snapshot.mode { live = false }
+        for event in events {
+            switch event {
+            case .jugEmpty, .finished(_):
+                live = false
+            default:
+                break
+            }
+        }
+        return update(fill: snapshot.jug.fill, jugAngle: snapshot.jug.angle, live: live)
     }
 }

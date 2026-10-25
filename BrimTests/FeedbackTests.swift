@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import Brim
@@ -395,4 +396,184 @@ struct FeedbackTests {
         #expect(FeedbackDirector.pausedIdleDelay >= 1)
         #expect(BrimAudioEngine.napAfter >= 1)
     }
+
+    // MARK: Round 5
+
+    @Test func overCueIsSoftAndDistinctFromShortAndSpill() {
+        var dice = FeelDice(seed: 21)
+        let over = SoundBook.over()
+        let short = SoundBook.short()
+        let spill = SoundBook.spill(dice: &dice)
+        #expect(!over.isEmpty)
+        #expect(over != short)
+        // Its contour lifts where Short's sinks.
+        var overFirst: SynthTone?
+        var shortFirst: SynthTone?
+        for command in over { if case .tone(let tone) = command, overFirst == nil { overFirst = tone } }
+        for command in short { if case .tone(let tone) = command, shortFirst == nil { shortFirst = tone } }
+        #expect((overFirst?.end ?? 0) > (overFirst?.start ?? 1))
+        #expect((shortFirst?.end ?? 1) < (shortFirst?.start ?? 0))
+        // Soft: as quiet as Short, far below the spill, and none of the spill's drips or tones.
+        let overPeak = over.map { $0.gain }.max() ?? 1
+        let shortPeak = short.map { $0.gain }.max() ?? 0
+        let spillPeak = spill.map { $0.gain }.max() ?? 0
+        #expect(overPeak <= shortPeak * 1.1)
+        #expect(overPeak < spillPeak * 0.5)
+        for command in over {
+            if case .bubble(_) = command { Issue.record("over has a drip") }
+            #expect(!spill.contains(command))
+        }
+        // Haptics: a soft "uh-uh", neither Short's thud nor the spill's rumble.
+        #expect(HapticBook.over != HapticBook.short)
+        #expect(HapticBook.over != HapticBook.spill)
+        #expect(HapticBook.over.wobble.isEmpty)
+        let overHaptic = HapticBook.over.notes.map { $0.intensity }.max() ?? 1
+        let spillHaptic = HapticBook.spill.notes.map { $0.intensity }.max() ?? 0
+        #expect(overHaptic <= 0.45)
+        #expect(overHaptic < spillHaptic * 0.5)
+    }
+
+    @Test func glugOutSlowsFallsAndFades() {
+        var dice = FeelDice(seed: 9)
+        let cue = SoundBook.glugOut(dice: &dice)
+        var bubbles: [SynthBubble] = []
+        for command in cue { if case .bubble(let bubble) = command { bubbles.append(bubble) } }
+        #expect(bubbles.count >= 3)
+        for index in 1..<bubbles.count {
+            #expect(bubbles[index].frequency < bubbles[index - 1].frequency)
+            #expect(bubbles[index].gain < bubbles[index - 1].gain)
+            #expect(bubbles[index].delay > bubbles[index - 1].delay)
+        }
+        // Gaps grow: "glug… glg… g".
+        if bubbles.count >= 3 {
+            #expect(bubbles[2].delay - bubbles[1].delay > bubbles[1].delay - bubbles[0].delay)
+        }
+        // Soft: below a Perfect, never an alarm.
+        var perfectDice = FeelDice(seed: 9)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &perfectDice).map { $0.gain }.max() ?? 0
+        for command in cue { #expect(command.gain < perfectPeak * 0.6) }
+        // The haptic gulps fade and keep time with the sound.
+        let taps = HapticBook.glugOut.notes
+        #expect(taps.count == bubbles.count)
+        for index in 0..<min(taps.count, bubbles.count) {
+            #expect(abs(taps[index].time - Double(bubbles[index].delay)) < 1e-6)
+            if index > 0 { #expect(taps[index].intensity < taps[index - 1].intensity) }
+        }
+        for note in taps { #expect(note.intensity <= 0.35) }
+    }
+
+    @Test func dryJugWatchFiresOncePerEmptyJug() {
+        var watch = DryJugWatch()
+        // Never seen a fuller jug (a run that starts empty): nothing.
+        #expect(watch.update(fill: 0.01, jugAngle: 80, live: true) == false)
+        // A jug in use arms it; tipped and run dry: the cue, once.
+        #expect(watch.update(fill: 0.6, jugAngle: 40, live: true) == false)
+        #expect(watch.update(fill: 0.2, jugAngle: 70, live: true) == false)
+        #expect(watch.update(fill: 0.02, jugAngle: 85, live: true))
+        #expect(watch.update(fill: 0.0, jugAngle: 90, live: true) == false)
+        #expect(watch.update(fill: 0.0, jugAngle: 0, live: true) == false)
+        // Swapped for a full one: armed again. Upright and nearly empty is not "dry while tilted".
+        #expect(watch.update(fill: 0.7, jugAngle: 0, live: true) == false)
+        #expect(watch.update(fill: 0.02, jugAngle: 5, live: true) == false)
+        // Not live (paused, gated, Rush): it waits, then speaks once play is live.
+        #expect(watch.update(fill: 0.01, jugAngle: 80, live: false) == false)
+        #expect(watch.update(fill: 0.01, jugAngle: 80, live: true))
+        // NaN never fires.
+        #expect(watch.update(fill: 0.9, jugAngle: 0, live: true) == false)
+        #expect(watch.update(fill: Double.nan, jugAngle: 80, live: true) == false)
+        #expect(watch.update(fill: 0.01, jugAngle: Double.nan, live: true) == false)
+    }
+
+    @Test func dryJugWatchReadsTheSnapshot() {
+        var watch = DryJugWatch()
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.5, angle: 50), events: [], paused: false) == false)
+        // Paused or behind the flat gate: not now.
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90), events: [], paused: true) == false)
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90, needsFlat: true), events: [],
+                             paused: false) == false)
+        // The frame that ends the run on an empty jug has its own cue.
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90), events: [.jugEmpty],
+                             paused: false) == false)
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90), events: [], paused: false))
+        // Rush: an empty jug ends the run (`jugEmpty`), never a glug-out.
+        var rush = DryJugWatch()
+        #expect(rush.update(snapshot: feedbackSnapshot(fill: 0.5, angle: 50, mode: .rush), events: [],
+                            paused: false) == false)
+        #expect(rush.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90, mode: .rush), events: [],
+                            paused: false) == false)
+    }
+
+    @Test func overAndGlugOutRenderCleanly() {
+        let synth = PourSynth(sampleRate: 48_000)
+        var bed = PourBed()
+        bed.master = 1.4
+        synth.send(.bed(bed))
+        var dice = FeelDice(seed: 4)
+        for command in SoundBook.over() { synth.send(command) }
+        for command in SoundBook.glugOut(dice: &dice) { synth.send(command) }
+        let frames = 512
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+        defer { buffer.deallocate() }
+        var peak: Float = 0
+        var finite = true
+        for _ in 0..<100 {
+            synth.render(frames: frames, into: buffer)
+            for index in 0..<frames {
+                let value = buffer[index]
+                if !value.isFinite { finite = false }
+                peak = max(peak, abs(value))
+            }
+        }
+        #expect(finite)
+        #expect(peak > 0.002)
+        #expect(peak < 1)
+    }
+
+    /// REVIEW-5 P1-1: on a glass whose line has faded, the shimmer and the lock-in tink must not tell the player
+    /// where the line is.
+    @Test func fadedLinesSilenceTheShimmerAndTheLockIn() {
+        let water = SoundBook.texture(for: .water)
+        let telemetry = PourTelemetry(flow: 0.2, landingRate: 0.2, activeFill: 0.78, distanceToLine: -0.01,
+                                      projectedDistanceToLine: 0.0)
+        let visible = SoundBook.pourBed(telemetry: telemetry, foam: 0, texture: water, master: 1, band: 0.025,
+                                        lineOpacity: 1)
+        let fading = SoundBook.pourBed(telemetry: telemetry, foam: 0, texture: water, master: 1, band: 0.025,
+                                       lineOpacity: 0.6)
+        let faded = SoundBook.pourBed(telemetry: telemetry, foam: 0, texture: water, master: 1, band: 0.025,
+                                      lineOpacity: 0.4)
+        let gone = SoundBook.pourBed(telemetry: telemetry, foam: 0, texture: water, master: 1, band: 0.025,
+                                     lineOpacity: 0)
+        #expect(visible.shimmerGain > 0)
+        #expect(fading.shimmerGain > 0)
+        #expect(faded.shimmerGain == Float(0))
+        #expect(gone.shimmerGain == Float(0))
+        // The rest of the pour still sounds.
+        #expect(faded.splashGain == visible.splashGain)
+        #expect(faded.resonanceGain == visible.resonanceGain)
+        #expect(SoundBook.lineCuesAudible(lineOpacity: Double.nan) == false)
+        // The lock-in tink follows the same rule, per glass.
+        #expect(FeedbackDirector.lockInAudible(glassID: 1, snapshot: feedbackSnapshot(fill: 0.5, angle: 0,
+                                                                                       lineOpacity: 1)))
+        #expect(FeedbackDirector.lockInAudible(glassID: 1, snapshot: feedbackSnapshot(fill: 0.5, angle: 0,
+                                                                                       lineOpacity: 0.3)) == false)
+        #expect(FeedbackDirector.lockInAudible(glassID: 99, snapshot: feedbackSnapshot(fill: 0.5, angle: 0,
+                                                                                        lineOpacity: 0.3)))
+    }
+}
+
+/// A one-glass snapshot for the director's pure helpers.
+private func feedbackSnapshot(fill: Double, angle: Double, needsFlat: Bool = false, mode: GameMode = .shift("1-1"),
+                              lineOpacity: Double = 1) -> GameSnapshot {
+    let liquid = Liquid(id: .water, name: "Water", top: RGBA(0.6, 0.85, 1), bottom: RGBA(0.4, 0.65, 0.95), foam: nil,
+                        lagTau: 0.04, foamPerVolume: 0, foamSettle: 1, reposeDegrees: 0, opacity: 0.5, fizzy: false)
+    let shape = GlassShape(id: "tumbler", name: "Tumbler", style: .tumbler,
+                           profile: [CGPoint(x: 55, y: 0), CGPoint(x: 62, y: 120)], baseThickness: 8, wall: 3)
+    let glass = GlassState(id: 1, shape: shape, liquid: liquid, x: 335, phase: .filling, liquidHeight: 40,
+                           foamHeight: 0, lineHeight: 96, lineOpacity: lineOpacity, inPerfectBand: false,
+                           overflowing: false, patienceLeft: nil, patienceTotal: nil, result: nil)
+    let jug = JugState(liquid: liquid, angle: angle, fill: fill, outline: [], liquidPolygon: [], lip: .zero,
+                       pivot: .zero, flow: 0)
+    return GameSnapshot(time: 0, phase: .playing, mode: mode, jug: jug, stream: [], droplets: [], glasses: [glass],
+                        puddles: [], score: 0, streak: 0, multiplier: 1, strikes: 0, maxStrikes: 3, ordersDone: 0,
+                        ordersTotal: nil, perfects: 0, telemetry: PourTelemetry(), needsFlat: needsFlat)
 }

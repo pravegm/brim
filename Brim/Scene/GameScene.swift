@@ -100,6 +100,9 @@ final class GameScene: SKScene {
     private var bandEstimate: [Int: Double] = [:]
     private var wasInBand: [Int: Bool] = [:]
     private var spilled: Set<Int> = []
+    /// How many spill bursts (sheet + droplets + shake) have played since the last reset. Only real overflow
+    /// (`.overflowStarted` or a `.spill` verdict) starts one — never `.over` (ROUND-5 decision 4). For tests.
+    private(set) var spillFXCount = 0
 
     private var lastUpdateTime: TimeInterval?
     private var lastSimTime: Double?
@@ -263,6 +266,7 @@ final class GameScene: SKScene {
         bandEstimate.removeAll()
         wasInBand.removeAll()
         spilled.removeAll()
+        spillFXCount = 0
         fx.clear()
         stream.clear()
         ghostJug?.removeFromParent()
@@ -355,7 +359,7 @@ final class GameScene: SKScene {
         }
         stream.update(points: s.stream, droplets: s.droplets, liquid: s.jug.liquid, time: s.time, landing: landing,
                       lip: s.jug.flow > 0.004 ? s.jug.lip : nil)
-        jug.update(s.jug, streamWidth: stream.displayWidth(s.stream.first?.width ?? 0))
+        jug.update(s.jug, streamWidth: stream.displayWidth(s.stream.first?.width ?? 0), time: s.time, dt: dt)
         updateLiftShadow(s, dt: dt)
         if s.jug.outline.count >= 3 {
             // Everything drawn (lid, knob, handle included), so hints beside the jug never overlap it.
@@ -594,7 +598,7 @@ final class GameScene: SKScene {
                     v.lastCrownTime = s.time
                     fx.splashCrown(at: CGPoint(x: x, y: v.surfaceWorldY), glassX: v.x,
                                    mouthHalfWidth: max(4, min(v.surfaceHalfWidth, v.innerRimHalfWidth)),
-                                   color: v.liquidColor, strength: strength)
+                                   color: v.liquidColor, strength: strength, granular: v.isGranular)
                 }
             case let .splashOnCounter(x, strength):
                 let c = SceneColor.mix(SceneColor.opaque(s.jug.liquid.bottom.skColor), SceneColor.opaque(s.jug.liquid.top.skColor), 0.6)
@@ -620,8 +624,12 @@ final class GameScene: SKScene {
                                     floorY: layout.counterY - 4)
                     bump()
                 } else if judgement == .spill {
+                    // ROUND-5 decision 4: `.spill` now only ever means liquid really crossed the rim (usually already
+                    // shown by `.overflowStarted`; `spill` runs once per glass).
                     spill(glassID)
                 }
+                // `.over` (past the Good band, nothing over the rim) and `.short`: the stamp only — no sheet, no
+                // burst, no shake, no wet glass.
             case let .streak(n):
                 if n >= 2, let id = lastServedGlass, let v = glasses[id] {
                     v.showStreak(n, reduceMotion: reduceMotion, safeX: safeX, keepOutTop: foldKeepOutTop)
@@ -643,6 +651,7 @@ final class GameScene: SKScene {
         spillColor = v.liquidColor
         if spilled.contains(glassID) { return }
         spilled.insert(glassID)
+        spillFXCount += 1
         v.startOverflow()
         v.markWet(seconds: 2.2)
         fx.spillBurst(rim: v.rimWorld, rimHalfWidth: v.outerRimHalfWidth, color: v.liquidColor, floorY: layout.counterY - 3)

@@ -401,29 +401,56 @@ struct FillToHereCallout: View {
 // MARK: - Duo flat gate (ROUND-2 decision 2)
 
 /// "Lay it flat to start": shown while the session waits for the lid to lie flat (`snapshot.needsFlat`, Duo only),
-/// beside the jug like the hints.
+/// beside the jug like the hints. ROUND-5 decision 1: after `GameController.touchOfferDelay` s stuck on the gate, a quiet
+/// "Use touch instead" button switches this run (only) to touch. Only the card takes touches; the rest of the overlay
+/// lets them through.
 struct FlatGateOverlay: View {
     @ObservedObject var hud: HUDState
     let info: CanvasInfo
+    /// "Use touch instead" (`GameController.useTouchForThisRun`).
+    var onUseTouch: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
+            Color.clear
+                .allowsHitTesting(false)
             if hud.showFlatGate {
-                let size = CGSize(width: min(max(info.size.width * 0.34, 200), 240), height: 190)
+                let size = CGSize(width: min(max(info.size.width * 0.34, 200), 240), height: hud.offerTouch ? 250 : 190)
                 let spot = HintSpot.place(size: size, anchors: hud.anchors, info: info)
                 VStack(spacing: 10) {
-                    LayFlatGlyph()
-                        .frame(width: 96, height: 64)
-                    Text(hud.gateAfterPause ? "Lay it flat to carry on" : "Lay it flat to start")
-                        .font(BrimTheme.title(20))
-                        .foregroundStyle(BrimTheme.ink)
-                        .multilineTextAlignment(.center)
-                    Text("Then lift the top half to pour.")
-                        .font(BrimTheme.text(14, .bold))
-                        .foregroundStyle(BrimTheme.inkSoft)
-                        .multilineTextAlignment(.center)
+                    VStack(spacing: 10) {
+                        LayFlatGlyph()
+                            .frame(width: 96, height: 64)
+                        Text(hud.gateAfterPause ? "Lay it flat to carry on" : "Lay it flat to start")
+                            .font(BrimTheme.title(20))
+                            .foregroundStyle(BrimTheme.ink)
+                            .multilineTextAlignment(.center)
+                        Text("Then lift the top half to pour.")
+                            .font(BrimTheme.text(14, .bold))
+                            .foregroundStyle(BrimTheme.inkSoft)
+                            .multilineTextAlignment(.center)
+                    }
+                    .accessibilityElement(children: .combine)
+                    if hud.offerTouch {
+                        Button(action: onUseTouch) {
+                            Label("Use touch instead", systemImage: "hand.draw.fill")
+                                .font(BrimTheme.text(15, .heavy))
+                                .foregroundStyle(BrimTheme.ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 44)
+                                .frame(maxWidth: .infinity)
+                                .background(Capsule().fill(BrimTheme.creamDeep))
+                                .overlay(Capsule().stroke(BrimTheme.ink.opacity(0.15), lineWidth: 1))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Drag up to pour for the rest of this run")
+                        .transition(.opacity)
+                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14)
@@ -436,11 +463,11 @@ struct FlatGateOverlay: View {
                 )
                 .position(spot.center)
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
-                .accessibilityElement(children: .combine)
             }
         }
         .frame(width: info.size.width, height: info.size.height)
         .animation(BrimTheme.pop(reduceMotion), value: hud.showFlatGate)
+        .animation(BrimTheme.pop(reduceMotion), value: hud.offerTouch)
     }
 }
 
@@ -505,7 +532,10 @@ struct ClosedPauseView: View {
                             .foregroundStyle(BrimTheme.ink)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Your \(GameController.runNoun(for: controller.mode)) is paused. It carries on once the phone lies flat.")
+                        // QA-2 P2-11: with touch on a Duo it carries on as soon as the phone is open again.
+                        Text(controller.usesTouch
+                             ? "Your \(GameController.runNoun(for: controller.mode)) is paused. It carries on once the phone is open."
+                             : "Your \(GameController.runNoun(for: controller.mode)) is paused. It carries on once the phone lies flat.")
                             .font(BrimTheme.text(14, .bold))
                             .foregroundStyle(BrimTheme.inkSoft)
                             .multilineTextAlignment(.center)
@@ -553,6 +583,14 @@ struct PauseView: View {
     @ObservedObject var controller: GameController
     let info: CanvasInfo
 
+    /// What leaving now does to the score, when it matters: today's scored Daily is filed as it stands, and a Rush run
+    /// keeps its score (round 5, QA-2 P2-4). Pure.
+    static func leavingNote(scoredDaily: Bool, mode: GameMode) -> String? {
+        if scoredDaily { return "Today's scored pour: leave now and the glasses so far are your score." }
+        if case .rush = mode { return "Leave now and your score so far still counts." }
+        return nil
+    }
+
     var body: some View {
         ZStack {
             BrimTheme.ink.opacity(0.42)
@@ -594,8 +632,8 @@ struct PauseView: View {
                             Label("Menu", systemImage: "house.fill")
                         }
                     }
-                    if controller.isScoredDaily {
-                        Text("Today's scored pour: leave now and the glasses so far are your score.")
+                    if let note = PauseView.leavingNote(scoredDaily: controller.isScoredDaily, mode: controller.mode) {
+                        Text(note)
                             .font(BrimTheme.text(13, .bold))
                             .foregroundStyle(BrimTheme.cream.opacity(0.85))
                             .multilineTextAlignment(.center)

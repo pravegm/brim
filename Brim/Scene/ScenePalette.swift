@@ -58,6 +58,8 @@ enum SceneColor {
     static let perfect = hex(0x3FD0FF)
     static let coral = hex(0xFF6B5B)
     static let leaf = hex(0x5FCB8F)
+    /// ROUND-5 decision 4: the "OVER" stamp — warm amber, clearly not GREAT's gold nor SPILL!'s coral.
+    static let overAmber = hex(0xF59B2E)
     static let jugGlass = hex(0xE4F5FB)
     static let foamDefault = hex(0xFFF6E6)
     /// The icon's teal ceramic (REVIEW-1 P1-9).

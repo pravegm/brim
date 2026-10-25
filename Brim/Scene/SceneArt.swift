@@ -403,21 +403,42 @@ enum SceneArt {
 
     /// Judgement stamps, 1.5× the round-1 size (REVIEW-1 P0-5).
     static func stamp(_ j: Judgement) -> SceneSprite {
+        let text = stampText(j)
         switch j {
-        case .perfect: return label("PERFECT", pointSize: 64, fill: SceneColor.perfect, outline: .white, key: "stamp2-perfect")
-        case .great: return label("GREAT", pointSize: 56, fill: SceneColor.gold, outline: .white, key: "stamp2-great")
-        case .good: return label("GOOD", pointSize: 50, fill: SceneColor.hex(0x5FCB8F), outline: .white, key: "stamp2-good")
-        case .short: return label("SHORT", pointSize: 46, fill: SceneColor.hex(0x9A8FB0), outline: .white, key: "stamp2-short")
-        case .spill: return label("SPILL!", pointSize: 58, fill: SceneColor.coral, outline: .white, key: "stamp2-spill")
+        case .perfect: return label(text, pointSize: 64, fill: SceneColor.perfect, outline: .white, key: "stamp2-perfect")
+        case .great: return label(text, pointSize: 56, fill: SceneColor.gold, outline: .white, key: "stamp2-great")
+        case .good: return label(text, pointSize: 50, fill: SceneColor.hex(0x5FCB8F), outline: .white, key: "stamp2-good")
+        case .short: return label(text, pointSize: 46, fill: SceneColor.hex(0x9A8FB0), outline: .white, key: "stamp2-short")
+        // ROUND-5 decision 4: filled past the Good band, nothing over the rim. A calm warm amber (between GREAT's gold
+        // and SPILL!'s coral), the same size as SHORT: a miss, but not a mess.
+        case .over: return label(text, pointSize: 46, fill: SceneColor.overAmber, outline: .white, key: "stamp2-over")
+        case .spill: return label(text, pointSize: 58, fill: SceneColor.coral, outline: .white, key: "stamp2-spill")
         }
+    }
+
+    /// The word each verdict stamps.
+    static func stampText(_ j: Judgement) -> String {
+        switch j {
+        case .perfect: return "PERFECT"
+        case .great: return "GREAT"
+        case .good: return "GOOD"
+        case .short: return "SHORT"
+        case .over: return "OVER"
+        case .spill: return "SPILL!"
+        }
+    }
+
+    /// QA-2 P2-15: "7 IN A ROW" — "×" belongs to the HUD's multiplier.
+    static func streakText(_ n: Int) -> String {
+        return "\(n) IN A ROW"
     }
 
     static func streak(_ n: Int) -> SceneSprite {
         // Streaks climb one at a time: drop the label a few steps back so a long Rush streak doesn't keep one
         // texture per value forever (QA-1 P2-12). A sprite still on screen keeps its own texture reference.
-        if n > 4 { labels["streak2-\(n - 4)"] = nil }
-        return label("×\(n) STREAK", pointSize: 30, fill: SceneColor.gold, outline: SceneColor.ink.withAlphaComponent(0.88),
-              key: "streak2-\(n)")
+        if n > 4 { labels["streak3-\(n - 4)"] = nil }
+        return label(streakText(n), pointSize: 30, fill: SceneColor.gold, outline: SceneColor.ink.withAlphaComponent(0.88),
+              key: "streak3-\(n)")
     }
 
     // MARK: Backdrop (one texture for the whole canvas)

@@ -18,12 +18,12 @@ Thanks for reviewing Brim: a paid game with no ads, no in-app purchases, no acco
 You don't need a Duo. Every mode, venue, unlock and achievement works on any iPhone and in the Simulator.
 - Tap Play. A jug sits at the top of the screen and a glass on the counter below, with a fill line.
 - Put a finger anywhere and drag UP: the jug tips and pours. Let go and the jug eases back upright and the pour stops.
-- The stream takes a moment to fall, so stop just before the line. The glass is judged Perfect / Great / Good / Short / Spill once the pour has landed.
+- The stream takes a moment to fall, so stop just before the line. The glass is judged Perfect / Great / Good / Short / Over / Spill once the pour has landed (Over: too full but nothing went over the rim; Spill: liquid went over the rim).
 - On iPhone Duo: Settings > "Touch controls on iPhone Duo" turns on the same drag control.
 
 2. HOW THE HINGE IS USED (iPhone Duo)
 Brim reads the hinge angle only through the public iOS 27.1 API (SwiftUI onHingeChange), behind an availability check. No private API is used.
-a) Open the Duo fully and lay it on a table, inner screen up, fold running left to right. The jug is drawn on the far half, the glass on the near half. Each run starts with "Lay it flat to start".
+a) Open the Duo fully and lay it on a table, inner screen up, fold running left to right. The jug is drawn on the far half, the glass on the near half. Each run starts with "Lay it flat to start" (it opens once the hinge reads about 168 degrees or flatter). If it hasn't opened after 6 seconds, the card offers "Use touch instead", which switches that run to the drag control.
 b) Raise the far half off the table, like lifting a laptop lid. The jug tips with it and pours across the fold into the glass. Nothing pours until the lid is about 6 degrees up, so a phone lying flat never dribbles.
 c) Lower the lid back toward flat to stop. Play happens between about 174 and 90 degrees (never past upright), mostly with slow, held angles. A full jug pours with a small lift; an emptier jug needs a bigger one.
 d) Book pose (fold running top to bottom): the game pauses and shows "Turn me so the fold runs side to side, then lay me flat." with a "Use touch" button.
@@ -39,8 +39,8 @@ f) Closed: the outer display shows a calm status card (today's Daily Pour, best 
 4. MODES AND UNLOCKS (nothing hidden, nothing to buy)
 - Shifts: five venues (Lemonade Stand, Soda Fountain, Milkshake Diner, The Conveyor, Potion Shop). Stars earned in one venue open the next.
 - A sixth, secret venue (Sand Bar) opens after earning 3 stars on every shift. There is no code, shortcut or purchase for it.
-- Rush: endless; ends after 3 spills or when the jug runs dry.
-- Daily Pour: 10 glasses, the same for everyone that day, one scored attempt (leaving part-way keeps the score so far); practice afterwards is unscored. The result can be shared as text through the system share sheet.
+- Rush: endless; ends after 3 spills or when the jug runs dry. Leaving a Rush run from the pause menu keeps its score.
+- Daily Pour: 10 glasses, the same for everyone that day, one scored attempt (once the first glass is in place, leaving part-way keeps the score so far); practice afterwards is unscored. The result can be shared as text through the system share sheet.
 
 5. CONTENT
 Every drink is non-alcoholic: water, lemonade, juice, sodas (cola, root beer, cream soda), milkshakes, honey, syrup and fictional coloured potions. No characters are harmed; a spill makes a puddle.

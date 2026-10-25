@@ -73,6 +73,13 @@ enum HapticBook {
     static let good = HapticCue(notes: [.tap(0.45, 0.55)])
     /// Short: a soft, dull thud.
     static let short = HapticCue(notes: [.tap(0.45, 0.1), .buzz(0.3, 0.05, duration: 0.12)])
+    /// Over (round 5: past the Good band, nothing spilled): a soft "uh-uh", two muted taps and a faint sag. Lighter
+    /// than Short's thud and nothing like the spill's rumble.
+    static let over = HapticCue(notes: [.tap(0.38, 0.32), .tap(0.3, 0.22, at: 0.2),
+                                        .buzz(0.18, 0.1, at: 0.2, duration: 0.14)])
+    /// The jug ran dry mid-pour (round 5): four soft dull gulps, each weaker, in time with `SoundBook.glugOut`.
+    static let glugOut = HapticCue(notes: [.tap(0.32, 0.25), .tap(0.26, 0.22, at: 0.13), .tap(0.2, 0.2, at: 0.3),
+                                           .tap(0.14, 0.18, at: 0.52)])
     /// Spill (once, the instant it overflows): a heavy wobbly buzz — three decaying hits over a wobbling rumble that
     /// runs out with the overflow sheet (~0.55 s).
     static let spill = HapticCue(

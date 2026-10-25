@@ -101,6 +101,10 @@ final class GameSession {
         var lockSent: Bool
         /// Round 3: queued in the next-glass slot (sliding to it or standing there), not yet sent to the stop.
         var waiting: Bool
+        /// Round 5 (QA-2 P2-1): seconds at the stop while playing with the flat gate open (drives "line fades").
+        var lineClock: Double
+        /// Round 5 (QA-2 P2-2): conveyor: seconds since the mouth passed the stream (waiting for drink inside it).
+        var exitWait: Double
     }
 
     // MARK: - Configuration
@@ -120,7 +124,8 @@ final class GameSession {
 
     private var phase: SessionPhase = .intro
     private var time: Double = 0
-    /// The flat gate (Duo only): no outflow, jug upright, patience paused, until the lid tilt is inside the dead zone.
+    /// The flat gate (Duo only): no outflow, jug upright, patience paused, until the lid tilt reads flat
+    /// (`Rules.readsFlat`: ≤ `Rules.flatGateTilt`, round 5).
     private var needsFlat: Bool = false
     private var usesFlatGate: Bool
 
@@ -146,6 +151,18 @@ final class GameSession {
     private var exitDY: Double = 0
     /// Seconds since the jug could last deliver (head > 0); the spout rope snaps after `CoreTuning.ropeMaxTime`.
     private var headlessTime: Double = 0
+    /// Round 5: the jug angle the hand asks for this sub-step (before the tip-back hold below).
+    private var commandAngle: Double = 0
+    /// Round 5 (founder decision 3): a shift jug ran dry mid-glass. It stays empty (fill 0, no stream, the glass is
+    /// not judged by stopping) until the glass is served or the jug is tipped back below `dryRefillAngle` for
+    /// `CoreTuning.jugDryTipBackTime`; then it is swapped for a refilled one.
+    private var jugRanDry: Bool = false
+    private var dryTipBack: Double = 0
+    private var dryRefillAngle: Double = 0
+    /// Round 5: after a refill swap that started with the hand tipped, the jug is held at this angle (just short of its
+    /// pour point) until the hand has tipped back to it once, so a jug that arrives already tipped never gushes.
+    /// nil = no hold.
+    private var tipBackLimit: Double? = nil
 
     // Hot-path caches (round 4, QA P2-8; results are identical, only repeated work and allocations are skipped)
     /// The angle `lipX/lipY/exitDX/exitDY` were last computed for (NaN = never).
@@ -256,7 +273,7 @@ final class GameSession {
         let safeDt: Double = dt.isFinite ? dt : 0
         let frameDt: Double = CoreMath.clamp(safeDt, 0, CoreTuning.maxFrameDt)
         let lidTilt: Double = tilt.isFinite ? tilt : 0
-        if needsFlat && frameDt > 0 && lidTilt < Rules.deadZone && phase != .finished {
+        if needsFlat && frameDt > 0 && Rules.readsFlat(lidTilt: lidTilt) && phase != .finished {
             needsFlat = false
             events.append(.flatArmed)
         }
@@ -301,8 +318,17 @@ final class GameSession {
             }
         }
 
-        jugAngle = angle
-        updateJugFrame(angle: angle)
+        commandAngle = angle
+        var shown: Double = angle
+        if let limit = tipBackLimit {
+            if swapTimer <= 0 && angle <= limit {
+                tipBackLimit = nil
+            } else {
+                shown = min(angle, limit)
+            }
+        }
+        jugAngle = shown
+        updateJugFrame(angle: shown)
         updateOutflow(h, events: &events)
         updateResumeHold(h)
         updatePourEdges(h, events: &events)
@@ -310,7 +336,7 @@ final class GameSession {
         integrateSprays(h)
         updateGlasses(h, events: &events)
         updatePuddles(h)
-        checkJugEmpty(events: &events)
+        checkJugEmpty(h, events: &events)
 
         if let pf = pendingFinish {
             let left: Double = pf - h
@@ -392,7 +418,7 @@ final class GameSession {
     }
 
     private func updateOutflow(_ h: Double, events: inout [GameEvent]) {
-        let canPour: Bool = phase == .playing && swapTimer <= 0 && jugFill > 0 && !needsFlat
+        let canPour: Bool = phase == .playing && swapTimer <= 0 && jugFill > 0 && !needsFlat && tipBackLimit == nil
         var target: Double = 0
         var deliverable: Bool = false
         if canPour {
@@ -515,10 +541,10 @@ final class GameSession {
         events.append(.jugSwapped)
     }
 
-    private func checkJugEmpty(events: inout [GameEvent]) {
-        if jugFill >= CoreTuning.jugEmptyFill { return }
+    private func checkJugEmpty(_ h: Double, events: inout [GameEvent]) {
         if phase != .playing { return }
         if isRush {
+            if jugFill >= CoreTuning.jugEmptyFill { return }
             if jugDry || pendingFinish != nil { return }
             if outflow > 0 || !particles.isEmpty { return }
             // Something to serve still? Then the normal serve rule judges it first (a Perfect may refill the jug).
@@ -529,12 +555,70 @@ final class GameSession {
             jugDry = true
             events.append(.jugEmpty)
             pendingFinish = CoreTuning.finishDelay
-        } else {
-            if swapTimer > 0 { return }
-            let refill: Double = max(startFill, 0.5)
-            jugFills[jugLiquid.id] = refill
-            beginSwap(to: jugLiquid, fill: refill, events: &events)
+            return
         }
+        // Shifts / Daily (round 5, founder decision 3): never refill mid-pour.
+        if jugRanDry {
+            if swapTimer > 0 || pendingFinish != nil { return }
+            dryTipBack = commandAngle < dryRefillAngle ? dryTipBack + h : 0
+            if dryTipBack >= CoreTuning.jugDryTipBackTime {
+                refillDryJug(events: &events)
+                // The glass under the spout waits for the player to pour again (like a resume), so tipping back for
+                // a fresh jug doesn't get it judged as it stands.
+                if activeGlassIndex() != nil { resumeHold = 0 }
+            }
+            return
+        }
+        if jugFill >= CoreTuning.jugEmptyFill || swapTimer > 0 { return }
+        // Ran dry (only happens while pouring): the stream stops at the lip and the jug shows empty (fill 0).
+        jugRanDry = true
+        jugFill = 0
+        outflow = 0
+        sandFlowing = false
+        avalanche = 0
+        dryTipBack = 0
+        dryRefillAngle = pourHoldAngle(liquid: jugLiquid, fill: refillFill())
+        // No event: `.jugEmpty` stays Rush's run-end. Feedback / Scene read the dry jug from the snapshot
+        // (`jug.fill == 0` while tipped: the glug-out cue, the empty-jug look).
+    }
+
+    /// The fill a shift jug is refilled to.
+    private func refillFill() -> Double {
+        return max(startFill, 0.5)
+    }
+
+    /// Just short of the jug angle at which a jug of this drink and fill starts to pour.
+    private func pourHoldAngle(liquid: Liquid, fill: Double) -> Double {
+        let threshold: Double = JugGeometry.pourThreshold(jug, fill: CoreMath.clamp(fill, 0.02, 1))
+        return max(0, threshold + liquid.reposeDegrees - CoreTuning.tipBackHoldMargin)
+    }
+
+    /// A swap to a refilled jug: like any swap, plus the tip-back hold if the hand is already tipped past the new
+    /// jug's pour point (it would otherwise arrive pouring and gush). A hand that starts tipping during the swap pours
+    /// as usual once it is done.
+    private func beginRefill(to liquid: Liquid, fill: Double, events: inout [GameEvent]) {
+        beginSwap(to: liquid, fill: fill, events: &events)
+        let limit: Double = pourHoldAngle(liquid: liquid, fill: fill)
+        tipBackLimit = commandAngle > limit ? limit : nil
+    }
+
+    private func refillDryJug(events: inout [GameEvent]) {
+        jugRanDry = false
+        dryTipBack = 0
+        let refill: Double = refillFill()
+        jugFills[jugLiquid.id] = refill
+        beginRefill(to: jugLiquid, fill: refill, events: &events)
+    }
+
+    /// Would a jug at `fill` run short of the drink glass `gi` needs to its line (with the margin)? Only when a
+    /// refill would actually hold more.
+    private func jugShort(_ fill: Double, forGlass gi: Int) -> Bool {
+        let refill: Double = refillFill()
+        if fill >= refill { return false }
+        let g: Glass = glasses[gi]
+        let lineVolume: Double = Double(GlassMath.volume(g.shape, upTo: CGFloat(g.order.line * g.interior)))
+        let need: Double = max(0, lineVolume - g.volume)
+        return fill * jugVolume < need * CoreTuning.jugRefillMargin
     }
 
     // MARK: - Stream particles
@@ -889,7 +973,8 @@ final class GameSession {
                 }
             case .filling:
                 // The belt waits behind the flat gate, like patience does.
-                if let belt = glasses[i].belt, !needsFlat { glasses[i].x += belt * h }
+                // Round 5 (QA-2 P2-3): nor during the intro (nothing can pour yet).
+                if let belt = glasses[i].belt, !needsFlat, phase != .intro { glasses[i].x += belt * h }
                 updateFilling(i, h, events: &events)
             case .served:
                 if let belt = glasses[i].belt { glasses[i].x += belt * h }
@@ -917,9 +1002,11 @@ final class GameSession {
     }
 
     private func updateFilling(_ i: Int, _ h: Double, events: inout [GameEvent]) {
-        // Line fade ("line fades" orders): reveal again once served.
-        if let fade = glasses[i].order.lineFadesAfter, let arrived = glasses[i].arrivedAt {
-            let t: Double = time - arrived - fade
+        // Line fade ("line fades" orders): reveal again once served. Round 5 (QA-2 P2-1): its clock runs only while
+        // playing with the flat gate open, like patience, so the line can't fade before the player can pour.
+        if phase == .playing && !needsFlat { glasses[i].lineClock += h }
+        if let fade = glasses[i].order.lineFadesAfter {
+            let t: Double = glasses[i].lineClock - fade
             glasses[i].lineOpacity = 1 - CoreMath.clamp(t / CoreTuning.lineFadeDuration, 0, 1)
         }
 
@@ -958,9 +1045,13 @@ final class GameSession {
         }
 
         if glasses[i].belt != nil {
-            // Conveyor: judged once the mouth has passed the stream.
+            // Conveyor: judged once the mouth has passed the stream and the drink already inside it has landed
+            // (round 5, QA-2 P2-2; waits at most `conveyorInsideWaitMax`).
             if glasses[i].x - glasses[i].rimHalf > glasses[i].landingX + CoreTuning.conveyorExitMargin {
-                serve(i, events: &events)
+                glasses[i].exitWait += h
+                if !hasDrinkInside(glasses[i].id) || glasses[i].exitWait >= CoreTuning.conveyorInsideWaitMax {
+                    serve(i, events: &events)
+                }
             }
             return
         }
@@ -984,9 +1075,23 @@ final class GameSession {
         }
     }
 
+    /// Stream particles that have fallen through this glass's mouth and not landed yet.
+    private func hasDrinkInside(_ id: Int) -> Bool {
+        for p in particles where p.glassID == id { return true }
+        return false
+    }
+
+    /// The top a glass is judged at: the liquid plus at most a settled head (`foamSettledFraction` of the interior).
+    /// Serving waits for the head to settle (cap 3 s of idle), so this is the visible top except when the cap hits
+    /// (round 5, founder decision 4).
+    private func judgedTop(_ g: Glass) -> Double {
+        let liquidTop: Double = Double(GlassMath.height(g.shape, forVolume: CGFloat(g.volume)))
+        return min(visibleTop(g), liquidTop + CoreTuning.foamSettledFraction * g.interior)
+    }
+
     private func serve(_ i: Int, events: inout [GameEvent]) {
         let interior: Double = glasses[i].interior
-        let top: Double = visibleTop(glasses[i])
+        let top: Double = judgedTop(glasses[i])
         let lineH: Double = glasses[i].order.line * interior
         let j: Judgement = Rules.judge(top: CGFloat(top), line: CGFloat(lineH), interior: CGFloat(interior),
                                        overflowed: glasses[i].overflowed, perfectBand: glasses[i].band)
@@ -1006,7 +1111,7 @@ final class GameSession {
             perfects += 1
         case .great, .good:
             break
-        case .short, .spill:
+        case .short, .over, .spill:
             streak = 0
         }
         if j.isHit { hits += 1 }
@@ -1019,13 +1124,17 @@ final class GameSession {
         if streak != oldStreak { events.append(.streak(streak)) }
         if multiplier != oldMultiplier { events.append(.multiplier(multiplier)) }
 
-        // Strikes: shifts and daily count spills and shorts; Rush counts spills; practice never.
+        // Strikes: shifts and daily count spills, overs and shorts; Rush counts spills and overs (an over-pour struck
+        // in Rush before round 5 too, as a spill); practice never.
+        // Note (QA-2 P2-4; Rush stays endless by design): a Rush patience timeout is judged on what is in the glass —
+        // usually `.short`, which doesn't strike in Rush — so an idle Rush never ends by itself. Banking the score on
+        // quit is the App's job.
         var strike: Bool = false
         if !isPractice {
             if isRush {
-                strike = j == .spill
+                strike = j == .spill || j == .over
             } else {
-                strike = j == .spill || j == .short
+                strike = j == .spill || j == .over || j == .short
             }
         }
         if strike {
@@ -1054,6 +1163,10 @@ final class GameSession {
                 pendingFinish = CoreTuning.finishDelay
             }
         }
+
+        // Round 5 (decision 3): a jug that ran dry during this glass is swapped between glasses, when the next one is
+        // sent to the stop (`sendToStop`: at once on a conveyor, as this one leaves otherwise), so a change of drink
+        // is one swap, not two.
 
         // Conveyor glasses ride on; the next one is sent down the belt straight away.
         if glasses[i].belt != nil { advanceQueue(events: &events) }
@@ -1149,7 +1262,8 @@ final class GameSession {
                              phase: .arriving, phaseTime: 0, volume: preVolume, foam: 0, pouredIn: 0,
                              patienceLeft: plan.belt == nil ? plan.order.patience : nil,
                              arrivedAt: nil, overflowed: false, result: nil, inBand: false, nearingSent: false,
-                             lastLanding: -10, lineOpacity: 1, lockSent: false, waiting: false)
+                             lastLanding: -10, lineOpacity: 1, lockSent: false, waiting: false, lineClock: 0,
+                             exitWait: 0)
         nextGlassID += 1
         return g
     }
@@ -1207,11 +1321,26 @@ final class GameSession {
         } else if isRush {
             jugLiquid = liquid       // one big shared jug
         } else {
+            // Round 5 (decision 3): refills happen here, between glasses — a jug that ran dry, or one that would run
+            // short of this glass's drink.
             let current: Liquid = pendingLiquid ?? jugLiquid
+            let currentFill: Double = pendingLiquid != nil ? pendingFill : jugFill
             if current.id != liquid.id {
-                let currentFill: Double = pendingLiquid != nil ? pendingFill : jugFill
                 jugFills[current.id] = currentFill
-                beginSwap(to: liquid, fill: jugFills[liquid.id] ?? startFill, events: &events)
+                jugRanDry = false
+                let stored: Double = jugFills[liquid.id] ?? startFill
+                if jugShort(stored, forGlass: gi) {
+                    let refill: Double = refillFill()
+                    jugFills[liquid.id] = refill
+                    beginRefill(to: liquid, fill: refill, events: &events)
+                } else {
+                    beginSwap(to: liquid, fill: stored, events: &events)
+                }
+            } else if jugRanDry || jugShort(currentFill, forGlass: gi) {
+                jugRanDry = false
+                let refill: Double = max(currentFill, refillFill())
+                jugFills[liquid.id] = refill
+                beginRefill(to: liquid, fill: refill, events: &events)
             }
         }
         let pourFill: Double = pendingLiquid != nil ? pendingFill : jugFill
@@ -1394,12 +1523,11 @@ final class GameSession {
             let foamNow: Double = g.foam + fpv * incoming * factor
             let settle: Double = max(0.05, g.liquid.foamSettle)
             let early: Double = foamNow * exp(-CoreTuning.projectionFoamTime / settle)
-            let late: Double = foamNow * exp(-(CoreTuning.projectionFoamTime + CoreTuning.foamServeGrace) / settle)
-            // Serving waits (up to the grace) for the head to drop below the "settled" height.
+            // Round 5: serving waits for the head to settle and judges at most a settled head (`judgedTop`).
             let liquidTopFinal: Double = Double(GlassMath.height(g.shape, forVolume: CGFloat(liquidFinal)))
             let settledTop: Double = min(interior, liquidTopFinal + CoreTuning.foamSettledFraction * interior)
             let settledFoamVolume: Double = max(0, Double(GlassMath.volume(g.shape, upTo: CGFloat(settledTop))) - liquidFinal)
-            foamFinal = min(early, max(settledFoamVolume, late))
+            foamFinal = min(early, settledFoamVolume)
         }
         let totalFinal: Double = liquidFinal + foamFinal
         var projTop: Double
@@ -1529,8 +1657,8 @@ final class GameSession {
     // MARK: - Flat gate
 
     /// Re-arm the flat gate (call on resume, and after anything that let the hinge move unobserved): no outflow and
-    /// an upright jug until the lid tilt has been inside the dead zone once. No-op on phones without a fold and in
-    /// practice. `snapshot.needsFlat` turns true at once; `.flatArmed` fires when it opens again.
+    /// an upright jug until the lid tilt has read flat once (`Rules.readsFlat`: 0…`Rules.flatGateTilt`, round 5).
+    /// No-op on phones without a fold and in practice. `snapshot.needsFlat` turns true at once; `.flatArmed` fires when it opens again.
     ///
     /// Round 3 (pause mid-pour): it also holds the glass under the spout. Whatever is already in the air still lands,
     /// patience is frozen until the gate opens, and the glass is NOT judged by stopping (no `.lockedIn`, no serve)
@@ -1566,9 +1694,10 @@ final class GameSession {
         }
     }
 
-    /// True while stopping must not judge the glass under the spout (gate closed, or held after a resume).
+    /// True while stopping must not judge the glass under the spout (gate closed, held after a resume, or the jug
+    /// ran dry and hasn't been swapped yet).
     private var servingHeld: Bool {
-        return needsFlat || resumeHold != nil
+        return needsFlat || resumeHold != nil || jugRanDry
     }
 
     private func updateResumeHold(_ h: Double) {
@@ -1590,6 +1719,7 @@ final class GameSession {
     func debugSetJugFill(_ fill: Double) {
         jugFill = CoreMath.clamp(fill, 0, 1)
         if isRush { jugDry = false }
+        if !isRush && jugFill >= CoreTuning.jugEmptyFill { jugRanDry = false }
     }
 }
 
