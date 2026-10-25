@@ -16,8 +16,8 @@ founder, designer, developer, with parallel subagents per role and a design-crit
 
 ## Working rules
 - Push straight to `main` (solo project, the founder's standing rule for Squish carries over). No PRs.
-- Repo: https://github.com/pravegm/brim. It is **private**: making it public (free macOS minutes, as Squish
-  does) needs the founder's OK. Keep personal and employer data out of it either way.
+- Repo: https://github.com/pravegm/brim. It is **public** (the founder made it public on 26 Oct, after
+  private-repo Mac minutes ran out). Keep personal and employer data out of it.
 - **No Mac on the Claude side. CI is the compiler.** A Swift change is unverified until a GitHub Actions run passes.
 - This Windows host: Bash ignores `cd`, so use absolute paths and `git -C`. There's no Python; use Node for quick maths.
 
