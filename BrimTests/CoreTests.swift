@@ -872,24 +872,24 @@ struct CoreTests {
         // Round 3: the puddle belongs to that glass. Once it leaves, the puddle shrinks and is gone within ~1.5 s,
         // so the next glass never stands in an old puddle.
         let dt: Double = 1.0 / 60.0
-        var t: Double = 0
+        var dryT: Double = 0
         var leaveT: Double? = nil
         var atLeave: Int = 0
         var midway: Int = -1
-        while t < 6 {
+        while dryT < 6 {
             s.step(dt: dt, tilt: 0)
-            t += dt
+            dryT += dt
             let present: Bool = s.snapshot.glasses.contains(where: { (g: GlassState) -> Bool in
                 g.id == spilledID && g.phase != .leaving
             })
             if leaveT == nil && !present {
-                leaveT = t
+                leaveT = dryT
                 atLeave = s.snapshot.puddles.count
             }
             if let lt = leaveT {
-                if midway < 0 && t >= lt + 0.9 { midway = s.snapshot.puddles.count }
+                if midway < 0 && dryT >= lt + 0.9 { midway = s.snapshot.puddles.count }
                 // (+0.4: the last drops of the stream may still sheet over the rim as it starts to leave.)
-                if t >= lt + CoreTuning.puddleDryTime + 0.4 { break }
+                if dryT >= lt + CoreTuning.puddleDryTime + 0.4 { break }
             }
         }
         #expect(leaveT != nil)
