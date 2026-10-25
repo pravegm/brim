@@ -1,0 +1,388 @@
+import CoreGraphics
+import Foundation
+
+/// All shifts (40 campaign levels + 4 secret Sand Bar levels), venue titles and unlocks, and the Daily Pour.
+///
+/// Difficulty levers (GAME-DESIGN §6, research/03 ramp): jug fill (emptier = steeper tip), glass geometry (straight →
+/// flute/bowl/jar/shot), patience, the Perfect band (±3.5 % → ±1.8 %), behaviour stacking (foam, viscosity), and
+/// curveballs introduced one at a time (prefilled glasses, fading lines). Conveyor belts shrink the time under the
+/// spout from ~4 s to ~1.3 s.
+enum LevelCatalog {
+
+    static let levels: [Level] = LevelCatalog.buildLevels()
+
+    static func level(_ id: String) -> Level? {
+        return levels.first(where: { (l: Level) -> Bool in l.id == id })
+    }
+
+    static func levels(in venue: VenueID) -> [Level] {
+        return levels.filter { (l: Level) -> Bool in l.venue == venue }
+    }
+
+    static func title(of venue: VenueID) -> String {
+        switch venue {
+        case .lemonadeStand: return "Lemonade Stand"
+        case .sodaFountain: return "Soda Fountain"
+        case .milkshakeDiner: return "Milkshake Diner"
+        case .conveyor: return "The Conveyor"
+        case .potionShop: return "Potion Shop"
+        case .sandBar: return "Sand Bar"
+        }
+    }
+
+    /// Total stars needed to open a venue. The Sand Bar needs every campaign shift 3-starred (40 × 3 = 120).
+    static func starsToUnlock(_ venue: VenueID) -> Int {
+        switch venue {
+        case .lemonadeStand: return 0
+        case .sodaFountain: return 8
+        case .milkshakeDiner: return 18
+        case .conveyor: return 30
+        case .potionShop: return 44
+        case .sandBar: return 120
+        }
+    }
+
+    /// Ten seeded orders for a day (the same for everyone). Drinks come from the campaign's own menu.
+    static func dailyOrders(day: Int) -> [GlassOrder] {
+        var rng: CoreRNG = CoreRNG(seed: UInt64(bitPattern: Int64(day)) &* 0x2545_F491_4F6C_DD1D &+ 0xDA11_7C0F_FEE5_0001)
+        let menu: [(String, LiquidID)] = dailyMenu
+        var out: [GlassOrder] = []
+        var lastGlass: String = ""
+        var i: Int = 0
+        while i < 10 {
+            var pair: (String, LiquidID) = menu[rng.int(menu.count)]
+            var tries: Int = 0
+            while pair.0 == lastGlass && tries < 4 {
+                pair = menu[rng.int(menu.count)]
+                tries += 1
+            }
+            lastGlass = pair.0
+            let progress: Double = Double(i) / 9.0
+            var line: Double = rng.range(0.42, 0.88)
+            line = (line * 100).rounded() / 100
+            let patience: Double = (CoreMath.lerp(14, 9, progress) * 2).rounded() / 2
+            var fade: Double? = nil
+            var prefill: Double = 0
+            if i >= 6 && rng.chance(0.3) { fade = 1.5 }
+            if i >= 4 && line >= 0.6 && rng.chance(0.2) {
+                prefill = (rng.range(0.15, 0.3) * 100).rounded() / 100
+            }
+            out.append(GlassOrder(glass: pair.0, liquid: pair.1, line: line, patience: patience,
+                                  lineFadesAfter: fade, prefill: prefill))
+            i += 1
+        }
+        return out
+    }
+
+    /// Days since 2026-01-01 00:00 UTC (UTC calendar, so the Daily Pour rolls over at one moment worldwide).
+    static func dayNumber(for date: Date) -> Int {
+        var cal: Calendar = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC") ?? TimeZone(secondsFromGMT: 0) ?? TimeZone.current
+        var comps: DateComponents = DateComponents()
+        comps.year = 2026
+        comps.month = 1
+        comps.day = 1
+        guard let epoch = cal.date(from: comps) else { return 0 }
+        let a: Date = cal.startOfDay(for: epoch)
+        let b: Date = cal.startOfDay(for: date)
+        return cal.dateComponents([.day], from: a, to: b).day ?? 0
+    }
+
+    // MARK: - Menu for the daily (every glass/drink pair the campaign serves, minus sand), in a stable order.
+
+    static let dailyMenu: [(String, LiquidID)] = {
+        var seen: Set<String> = []
+        var out: [(String, LiquidID)] = []
+        for l in LevelCatalog.levels where l.venue != .sandBar {
+            for o in l.orders {
+                let key: String = o.glass + "|" + o.liquid.rawValue
+                if !seen.contains(key) {
+                    seen.insert(key)
+                    out.append((o.glass, o.liquid))
+                }
+            }
+        }
+        return out
+    }()
+
+    // MARK: - Content
+
+    private static func o(_ glass: String, _ liquid: LiquidID, _ line: Double, p: Double? = nil, fade: Double? = nil,
+                          pre: Double = 0) -> GlassOrder {
+        return GlassOrder(glass: glass, liquid: liquid, line: line, patience: p, lineFadesAfter: fade, prefill: pre)
+    }
+
+    private static func venueNumber(_ v: VenueID) -> Int {
+        var n: Int = 1
+        for c in VenueID.allCases {
+            if c == v { return n }
+            n += 1
+        }
+        return n
+    }
+
+    private static func lv(_ venue: VenueID, _ index: Int, _ title: String, jug: Double, band: Double,
+                           belt: Double? = nil, _ orders: [GlassOrder]) -> Level {
+        return Level(id: "\(venueNumber(venue))-\(index)", venue: venue, index: index, title: title, orders: orders,
+                     jugFill: jug, conveyorSpeed: belt, perfectBand: band)
+    }
+
+    private static func buildLevels() -> [Level] {
+        var all: [Level] = []
+        all.append(contentsOf: lemonadeStand())
+        all.append(contentsOf: sodaFountain())
+        all.append(contentsOf: milkshakeDiner())
+        all.append(contentsOf: conveyorBelt())
+        all.append(contentsOf: potionShop())
+        all.append(contentsOf: sandBar())
+        return all
+    }
+
+    // Venue 1 — basics: water, lemonade, orange juice; tumblers → highballs → a flute. The jug starts emptier
+    // as the venue goes on, so you learn to tip further.
+    private static func lemonadeStand() -> [Level] {
+        let v: VenueID = .lemonadeStand
+        return [
+            lv(v, 1, "Grand Opening", jug: 1.0, band: 0.035, [
+                o("tumbler", .water, 0.6), o("tumbler", .water, 0.7), o("tumbler", .lemonade, 0.65),
+                o("tumbler", .lemonade, 0.75), o("tumbler", .water, 0.55),
+            ]),
+            lv(v, 2, "Squeeze the Day", jug: 1.0, band: 0.032, [
+                o("tumbler", .lemonade, 0.7), o("highball", .lemonade, 0.6), o("tumbler", .lemonade, 0.5),
+                o("highball", .lemonade, 0.75), o("tumbler", .lemonade, 0.8), o("highball", .lemonade, 0.65),
+            ]),
+            lv(v, 3, "Fresh Squeezed", jug: 0.9, band: 0.03, [
+                o("tumbler", .orangeJuice, 0.65, p: 14), o("highball", .orangeJuice, 0.7, p: 14),
+                o("jar", .orangeJuice, 0.6, p: 14), o("tumbler", .orangeJuice, 0.8, p: 14),
+                o("highball", .orangeJuice, 0.55, p: 14), o("jar", .orangeJuice, 0.75, p: 14),
+            ]),
+            lv(v, 4, "Lunch Rush", jug: 0.85, band: 0.03, [
+                o("tumbler", .water, 0.7, p: 11), o("highball", .lemonade, 0.8, p: 11),
+                o("jar", .orangeJuice, 0.55, p: 11), o("tumbler", .lemonade, 0.6, p: 11),
+                o("pint", .water, 0.7, p: 11), o("highball", .orangeJuice, 0.65, p: 11),
+                o("tumbler", .water, 0.85, p: 11),
+            ]),
+            lv(v, 5, "Tall Order", jug: 0.8, band: 0.028, [
+                o("highball", .lemonade, 0.85, p: 13), o("pint", .water, 0.8, p: 13),
+                o("highball", .orangeJuice, 0.9, p: 13), o("pint", .lemonade, 0.85, p: 13),
+                o("highball", .water, 0.8, p: 13), o("pint", .orangeJuice, 0.88, p: 13),
+            ]),
+            lv(v, 6, "Half Measures", jug: 0.6, band: 0.028, [
+                o("jar", .water, 0.4, p: 12), o("pint", .lemonade, 0.35, p: 12), o("mug", .orangeJuice, 0.5, p: 12),
+                o("jar", .lemonade, 0.45, p: 12), o("pint", .water, 0.38, p: 12), o("mug", .water, 0.42, p: 12),
+                o("jar", .orangeJuice, 0.36, p: 12),
+            ]),
+            lv(v, 7, "First Flute", jug: 0.7, band: 0.028, [
+                o("flute", .lemonade, 0.7, p: 13), o("flute", .water, 0.8, p: 13), o("tumbler", .lemonade, 0.6, p: 13),
+                o("flute", .orangeJuice, 0.75, p: 13), o("highball", .lemonade, 0.7, p: 13),
+                o("flute", .lemonade, 0.85, p: 13),
+            ]),
+            lv(v, 8, "Closing Time", jug: 0.6, band: 0.026, [
+                o("tumbler", .lemonade, 0.7, p: 10), o("flute", .water, 0.8, p: 10), o("pint", .orangeJuice, 0.75, p: 10),
+                o("jar", .lemonade, 0.5, p: 10), o("highball", .water, 0.9, p: 10), o("flute", .orangeJuice, 0.65, p: 10),
+                o("mug", .lemonade, 0.6, p: 10), o("tumbler", .water, 0.45, p: 10),
+            ]),
+        ]
+    }
+
+    // Venue 2 — foam: cola, root beer, cream soda. "Pour slow, then top up."
+    private static func sodaFountain() -> [Level] {
+        let v: VenueID = .sodaFountain
+        return [
+            lv(v, 1, "Fizz Ed", jug: 1.0, band: 0.035, [
+                o("highball", .cola, 0.6), o("tumbler", .cola, 0.55), o("highball", .cola, 0.7),
+                o("tumbler", .cola, 0.65), o("highball", .cola, 0.5),
+            ]),
+            lv(v, 2, "Head Start", jug: 1.0, band: 0.032, [
+                o("mug", .rootBeer, 0.6), o("mug", .rootBeer, 0.7), o("pint", .rootBeer, 0.6),
+                o("mug", .rootBeer, 0.65), o("pint", .rootBeer, 0.55), o("mug", .rootBeer, 0.75),
+            ]),
+            lv(v, 3, "Cream of the Crop", jug: 0.9, band: 0.03, [
+                o("tumbler", .creamSoda, 0.7, p: 14), o("highball", .creamSoda, 0.75, p: 14),
+                o("pint", .creamSoda, 0.65, p: 14), o("flute", .creamSoda, 0.7, p: 14),
+                o("tumbler", .creamSoda, 0.8, p: 14), o("highball", .creamSoda, 0.6, p: 14),
+            ]),
+            lv(v, 4, "Pop Quiz", jug: 0.9, band: 0.03, [
+                o("highball", .cola, 0.7, p: 12), o("mug", .rootBeer, 0.65, p: 12), o("pint", .creamSoda, 0.7, p: 12),
+                o("tumbler", .cola, 0.75, p: 12), o("pint", .rootBeer, 0.6, p: 12),
+                o("highball", .creamSoda, 0.8, p: 12), o("mug", .cola, 0.6, p: 12),
+            ]),
+            lv(v, 5, "Fizzy Lifting", jug: 0.85, band: 0.028, [
+                o("flute", .cola, 0.7, p: 14), o("flute", .creamSoda, 0.75, p: 14), o("flute", .rootBeer, 0.6, p: 14),
+                o("flute", .cola, 0.8, p: 14), o("tumbler", .creamSoda, 0.7, p: 14), o("flute", .rootBeer, 0.7, p: 14),
+            ]),
+            lv(v, 6, "Soda Jerk", jug: 0.8, band: 0.028, [
+                o("highball", .cola, 0.75, p: 11, pre: 0.3), o("mug", .rootBeer, 0.7, p: 11, pre: 0.25),
+                o("pint", .creamSoda, 0.8, p: 11, pre: 0.35), o("tumbler", .lemonade, 0.7, p: 11, pre: 0.2),
+                o("pint", .cola, 0.7, p: 11), o("mug", .rootBeer, 0.8, p: 11, pre: 0.3),
+                o("highball", .cola, 0.65, p: 11, pre: 0.2),
+            ]),
+            lv(v, 7, "Root of the Problem", jug: 0.8, band: 0.026, [
+                o("pint", .rootBeer, 0.85, p: 13), o("mug", .rootBeer, 0.88, p: 13), o("highball", .rootBeer, 0.85, p: 13),
+                o("pint", .rootBeer, 0.9, p: 13), o("jar", .rootBeer, 0.8, p: 13), o("mug", .rootBeer, 0.85, p: 13),
+            ]),
+            lv(v, 8, "Fizz Finale", jug: 0.7, band: 0.025, [
+                o("flute", .cola, 0.75, p: 10), o("mug", .rootBeer, 0.7, p: 10), o("pint", .creamSoda, 0.8, p: 10),
+                o("highball", .lemonade, 0.6, p: 10), o("tumbler", .cola, 0.85, p: 10), o("jar", .rootBeer, 0.6, p: 10),
+                o("flute", .creamSoda, 0.7, p: 10), o("pint", .cola, 0.75, p: 10),
+            ]),
+        ]
+    }
+
+    // Venue 3 — viscosity: shakes, honey, maple syrup. It keeps coming after you stop.
+    private static func milkshakeDiner() -> [Level] {
+        let v: VenueID = .milkshakeDiner
+        return [
+            lv(v, 1, "Shake It Easy", jug: 1.0, band: 0.035, [
+                o("tumbler", .milkshake, 0.6), o("sundae", .milkshake, 0.6), o("tumbler", .milkshake, 0.7),
+                o("sundae", .milkshake, 0.7), o("tumbler", .milkshake, 0.55),
+            ]),
+            lv(v, 2, "Thick and Thin", jug: 1.0, band: 0.032, [
+                o("tumbler", .milkshake, 0.65), o("tumbler", .lemonade, 0.65), o("highball", .milkshake, 0.6),
+                o("highball", .water, 0.7), o("sundae", .milkshake, 0.65), o("jar", .lemonade, 0.6),
+            ]),
+            lv(v, 3, "Sweet as Honey", jug: 1.0, band: 0.03, [
+                o("jar", .honey, 0.45, p: 16), o("jar", .honey, 0.55, p: 16), o("shot", .honey, 0.6, p: 16),
+                o("jar", .honey, 0.4, p: 16), o("shot", .honey, 0.7, p: 16), o("jar", .honey, 0.5, p: 16),
+            ]),
+            lv(v, 4, "Short Stack", jug: 0.9, band: 0.03, [
+                o("shot", .mapleSyrup, 0.6, p: 15), o("shot", .mapleSyrup, 0.75, p: 15), o("mug", .mapleSyrup, 0.4, p: 15),
+                o("shot", .mapleSyrup, 0.5, p: 15), o("jar", .mapleSyrup, 0.4, p: 15), o("shot", .mapleSyrup, 0.8, p: 15),
+            ]),
+            lv(v, 5, "Sundae Best", jug: 0.9, band: 0.028, [
+                o("sundae", .milkshake, 0.7, p: 14), o("sundae", .berrySmoothie, 0.75, p: 14),
+                o("bowl", .milkshake, 0.6, p: 14), o("sundae", .berrySmoothie, 0.65, p: 14),
+                o("bowl", .berrySmoothie, 0.7, p: 14), o("sundae", .milkshake, 0.85, p: 14),
+            ]),
+            lv(v, 6, "Smooth Operator", jug: 0.8, band: 0.028, [
+                o("highball", .berrySmoothie, 0.7, p: 13), o("bowl", .berrySmoothie, 0.5, p: 13),
+                o("tumbler", .berrySmoothie, 0.75, p: 13), o("highball", .berrySmoothie, 0.85, p: 13),
+                o("bowl", .berrySmoothie, 0.65, p: 13), o("pint", .berrySmoothie, 0.6, p: 13),
+                o("tumbler", .berrySmoothie, 0.6, p: 13),
+            ]),
+            lv(v, 7, "Sticky Situation", jug: 0.75, band: 0.026, [
+                o("jar", .honey, 0.6, p: 15, pre: 0.25), o("shot", .mapleSyrup, 0.7, p: 15, pre: 0.2),
+                o("mug", .honey, 0.5, p: 15), o("jar", .mapleSyrup, 0.55, p: 15, pre: 0.3),
+                o("shot", .honey, 0.8, p: 15), o("mug", .mapleSyrup, 0.6, p: 15, pre: 0.2),
+            ]),
+            lv(v, 8, "Blue Plate Special", jug: 0.7, band: 0.025, [
+                o("sundae", .milkshake, 0.75, p: 12), o("jar", .honey, 0.5, p: 12), o("highball", .berrySmoothie, 0.7, p: 12),
+                o("shot", .mapleSyrup, 0.65, p: 12), o("tumbler", .lemonade, 0.8, p: 12), o("bowl", .milkshake, 0.6, p: 12),
+                o("mug", .cola, 0.65, p: 12), o("shot", .honey, 0.75, p: 12),
+            ]),
+        ]
+    }
+
+    // Venue 4 — moving glasses: they slide under the spout and keep going; fill inside the window.
+    // Window ≈ 2 × rim half-width / belt speed: ~4 s at the start, ~1.3 s at the end.
+    private static func conveyorBelt() -> [Level] {
+        let v: VenueID = .conveyor
+        return [
+            lv(v, 1, "Belt It Out", jug: 1.0, band: 0.035, belt: 16, [
+                o("tumbler", .water, 0.55), o("tumbler", .lemonade, 0.6), o("tumbler", .water, 0.5),
+                o("mug", .lemonade, 0.45), o("tumbler", .water, 0.6),
+            ]),
+            lv(v, 2, "Moving Day", jug: 1.0, band: 0.032, belt: 18, [
+                o("mug", .lemonade, 0.5), o("tumbler", .lemonade, 0.55), o("bowl", .orangeJuice, 0.5),
+                o("tumbler", .lemonade, 0.6), o("mug", .orangeJuice, 0.55), o("bowl", .lemonade, 0.45),
+            ]),
+            lv(v, 3, "Keep It Rolling", jug: 1.0, band: 0.03, belt: 21, [
+                o("tumbler", .orangeJuice, 0.55), o("mug", .cola, 0.45), o("bowl", .orangeJuice, 0.55),
+                o("tumbler", .cola, 0.5), o("shot", .orangeJuice, 0.6), o("mug", .cola, 0.5),
+            ]),
+            lv(v, 4, "Fizz on the Move", jug: 1.0, band: 0.03, belt: 22, [
+                o("mug", .cola, 0.45), o("bowl", .creamSoda, 0.5), o("mug", .rootBeer, 0.4),
+                o("tumbler", .cola, 0.5), o("shot", .creamSoda, 0.55), o("bowl", .rootBeer, 0.45),
+            ]),
+            lv(v, 5, "Assembly Line", jug: 1.0, band: 0.028, belt: 26, [
+                o("bowl", .water, 0.6), o("shot", .lemonade, 0.6), o("mug", .orangeJuice, 0.5),
+                o("tumbler", .water, 0.55), o("sundae", .lemonade, 0.5), o("shot", .orangeJuice, 0.7),
+                o("mug", .water, 0.55),
+            ]),
+            lv(v, 6, "Slow Pour, Fast Belt", jug: 1.0, band: 0.028, belt: 20, [
+                o("mug", .milkshake, 0.45), o("bowl", .honey, 0.4), o("sundae", .milkshake, 0.5),
+                o("shot", .mapleSyrup, 0.5), o("mug", .berrySmoothie, 0.45), o("shot", .honey, 0.45),
+            ]),
+            lv(v, 7, "Rush Hour", jug: 1.0, band: 0.026, belt: 30, [
+                o("bowl", .cola, 0.5), o("mug", .lemonade, 0.45), o("shot", .orangeJuice, 0.55),
+                o("sundae", .water, 0.55), o("mug", .rootBeer, 0.4), o("bowl", .lemonade, 0.6),
+                o("shot", .water, 0.65),
+            ]),
+            lv(v, 8, "Full Speed Ahead", jug: 1.0, band: 0.025, belt: 36, [
+                o("bowl", .water, 0.55), o("sundae", .lemonade, 0.55), o("mug", .orangeJuice, 0.45),
+                o("bowl", .cola, 0.5), o("shot", .water, 0.5), o("mug", .lemonade, 0.5),
+                o("bowl", .creamSoda, 0.45), o("sundae", .orangeJuice, 0.6),
+            ]),
+        ]
+    }
+
+    // Venue 5 — precision: tiny vials, beakers, lines that fade.
+    private static func potionShop() -> [Level] {
+        let v: VenueID = .potionShop
+        return [
+            lv(v, 1, "Apprentice Hours", jug: 1.0, band: 0.025, [
+                o("beaker", .potionBlue, 0.5), o("beaker", .potionBlue, 0.6), o("vial", .potionBlue, 0.7),
+                o("beaker", .potionBlue, 0.45), o("vial", .potionBlue, 0.6),
+            ]),
+            lv(v, 2, "Love Potion No. 9", jug: 1.0, band: 0.024, [
+                o("vial", .potionPink, 0.65), o("beaker", .potionPink, 0.55), o("vial", .potionPink, 0.8),
+                o("shot", .potionPink, 0.6), o("beaker", .potionPink, 0.7), o("vial", .potionPink, 0.5),
+            ]),
+            lv(v, 3, "Now You See It", jug: 0.9, band: 0.024, [
+                o("beaker", .potionBlue, 0.6, p: 14, fade: 1.5), o("vial", .potionPink, 0.7, p: 14, fade: 1.5),
+                o("flute", .potionBlue, 0.65, p: 14, fade: 1.5), o("beaker", .potionPink, 0.5, p: 14, fade: 1.5),
+                o("vial", .potionBlue, 0.75, p: 14, fade: 1.5), o("flute", .potionPink, 0.7, p: 14, fade: 1.5),
+            ]),
+            lv(v, 4, "Double Trouble", jug: 0.9, band: 0.022, [
+                o("shot", .potionBlue, 0.5, p: 13), o("shot", .potionPink, 0.7, p: 13), o("vial", .potionBlue, 0.6, p: 13),
+                o("shot", .potionPink, 0.55, p: 13), o("beaker", .potionBlue, 0.8, p: 13), o("vial", .potionPink, 0.45, p: 13),
+            ]),
+            lv(v, 5, "Small Doses", jug: 0.8, band: 0.022, [
+                o("vial", .potionBlue, 0.35, p: 13), o("shot", .potionPink, 0.4, p: 13), o("beaker", .potionBlue, 0.32, p: 13),
+                o("vial", .potionPink, 0.4, p: 13), o("shot", .potionBlue, 0.35, p: 13), o("beaker", .potionPink, 0.38, p: 13),
+                o("vial", .potionBlue, 0.45, p: 13),
+            ]),
+            lv(v, 6, "Vanishing Act", jug: 0.8, band: 0.02, [
+                o("flute", .potionPink, 0.75, p: 13, fade: 1.0), o("beaker", .potionBlue, 0.55, p: 13, fade: 1.0),
+                o("vial", .potionPink, 0.65, p: 13, fade: 1.0), o("flute", .potionBlue, 0.8, p: 13, fade: 1.0),
+                o("shot", .potionPink, 0.6, p: 13, fade: 1.0), o("beaker", .potionBlue, 0.7, p: 13, fade: 1.0),
+            ]),
+            lv(v, 7, "Bubble Trouble", jug: 0.75, band: 0.02, [
+                o("beaker", .potionBlue, 0.7, p: 11, pre: 0.3), o("vial", .potionPink, 0.75, p: 11, pre: 0.25),
+                o("flute", .potionBlue, 0.8, p: 11, pre: 0.35), o("beaker", .potionPink, 0.6, p: 11),
+                o("shot", .potionBlue, 0.7, p: 11, pre: 0.3), o("flute", .potionPink, 0.65, p: 11, pre: 0.2),
+                o("vial", .potionBlue, 0.85, p: 11, pre: 0.4),
+            ]),
+            lv(v, 8, "Grand Elixir", jug: 0.7, band: 0.018, [
+                o("vial", .potionBlue, 0.7, p: 11, fade: 1.0), o("beaker", .potionPink, 0.65, p: 11, fade: 1.0),
+                o("flute", .potionBlue, 0.75, p: 11, fade: 1.0), o("shot", .potionPink, 0.55, p: 11, fade: 1.0),
+                o("beaker", .potionBlue, 0.85, p: 11, fade: 1.0, pre: 0.3), o("vial", .potionPink, 0.6, p: 11, fade: 1.0),
+                o("shot", .potionBlue, 0.7, p: 11, fade: 1.0), o("flute", .potionPink, 0.8, p: 11, fade: 1.0),
+            ]),
+        ]
+    }
+
+    // Secret — sand: nothing moves until ~30° of extra tip, then it avalanches.
+    private static func sandBar() -> [Level] {
+        let v: VenueID = .sandBar
+        return [
+            lv(v, 1, "Hourglass Figure", jug: 1.0, band: 0.03, [
+                o("jar", .sand, 0.5), o("beaker", .sand, 0.6), o("jar", .sand, 0.65), o("vial", .sand, 0.7),
+                o("beaker", .sand, 0.5),
+            ]),
+            lv(v, 2, "Grain Check", jug: 0.9, band: 0.028, [
+                o("shot", .sand, 0.6), o("jar", .sand, 0.55), o("bowl", .sand, 0.5), o("vial", .sand, 0.6),
+                o("beaker", .sand, 0.7), o("shot", .sand, 0.75),
+            ]),
+            lv(v, 3, "Shifting Sands", jug: 0.8, band: 0.025, [
+                o("tumbler", .sand, 0.7, p: 14), o("flute", .sand, 0.65, p: 14), o("jar", .sand, 0.6, p: 14, pre: 0.2),
+                o("bowl", .sand, 0.6, p: 14), o("vial", .sand, 0.8, p: 14), o("beaker", .sand, 0.55, p: 14),
+            ]),
+            lv(v, 4, "Sands of Time", jug: 0.7, band: 0.022, [
+                o("beaker", .sand, 0.7, p: 12), o("vial", .sand, 0.65, p: 12), o("flute", .sand, 0.8, p: 12),
+                o("jar", .sand, 0.5, p: 12), o("shot", .sand, 0.6, p: 12), o("bowl", .sand, 0.65, p: 12),
+                o("tumbler", .sand, 0.75, p: 12, pre: 0.25), o("beaker", .sand, 0.85, p: 12),
+            ]),
+        ]
+    }
+}

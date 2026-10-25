@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Brim: Fold to Pour</title>
+<meta name="description" content="A pouring game for iPhone Duo: lift the top half to tip the jug, pour across the fold, stop right on the line. Plays on every iPhone. £1.99, no ads, no in-app purchases.">
+<style>
+  :root { color-scheme: light; --cream:#FFF4E2; --paper:#FFFBF4; --mint:#BFE8D8; --gold:#FFC23D; --terra:#D9825B; --ink:#2B2233; --ink2:#5A4F60; --line:#E9DCC6; }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; background:var(--cream); color:var(--ink); font: 17px/1.55 ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  a { color:var(--ink); text-decoration-color:var(--terra); text-decoration-thickness:2px; text-underline-offset:3px; }
+  .wrap { max-width:760px; margin:0 auto; padding:0 20px; }
+  header.top { padding:20px 0 0; }
+  nav { display:flex; gap:18px; justify-content:flex-end; font-weight:600; font-size:15px; }
+  .hero { display:grid; grid-template-columns: 1fr; gap:20px; padding:28px 0 8px; align-items:center; }
+  @media (min-width:640px) { .hero { grid-template-columns: 1.3fr 1fr; } }
+  h1 { font-size:44px; line-height:1.05; margin:0 0 6px; font-weight:800; letter-spacing:-0.5px; }
+  .sub { font-size:20px; color:var(--ink2); margin:0 0 18px; font-weight:600; }
+  .lead { font-size:19px; margin:0 0 18px; }
+  mark { background:linear-gradient(transparent 55%, var(--gold) 55%); color:inherit; padding:0 2px; }
+  .badge { display:inline-block; background:var(--ink); color:var(--paper); border-radius:14px; padding:12px 18px; font-weight:700; text-decoration:none; }
+  .note { font-size:14px; color:var(--ink2); margin-top:10px; }
+  .art { background:var(--mint); border-radius:28px; padding:18px; }
+  .art svg { width:100%; height:auto; display:block; }
+  section { padding:26px 0; border-top:2px dashed var(--line); }
+  h2 { font-size:26px; margin:0 0 12px; font-weight:800; }
+  h3 { font-size:18px; margin:18px 0 6px; font-weight:800; }
+  .cards { display:grid; grid-template-columns:1fr; gap:14px; }
+  @media (min-width:640px) { .cards { grid-template-columns:1fr 1fr; } }
+  .card { background:var(--paper); border:2px solid var(--line); border-radius:18px; padding:16px 18px; }
+  .card p { margin:6px 0 0; }
+  ul { padding-left:22px; margin:8px 0; }
+  li { margin:4px 0; }
+  table { width:100%; border-collapse:collapse; font-size:15px; background:var(--paper); border-radius:14px; overflow:hidden; }
+  th, td { text-align:left; vertical-align:top; padding:9px 12px; border-bottom:1px solid var(--line); }
+  th { width:34%; font-weight:700; }
+  footer { padding:26px 0 40px; border-top:2px dashed var(--line); font-size:14px; color:var(--ink2); }
+  footer a { margin-right:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <nav><a href="support.html">Support</a><a href="privacy.html">Privacy</a><a href="#press">Press</a></nav>
+  </header>
+
+  <div class="hero">
+    <div>
+      <h1>Brim</h1>
+      <p class="sub">Fold to Pour</p>
+      <p class="lead">Your iPhone&nbsp;Duo is the jug. Lift the top half and it pours across the fold into the glass below. Stop <mark>right on the line</mark>.</p>
+      <span class="badge">On the App Store 17&nbsp;November&nbsp;2026</span>
+      <p class="note">£1.99 / $1.99. No ads. No in-app purchases. No data collected. Rated 4+.</p>
+    </div>
+    <div class="art" aria-hidden="true">
+      <svg viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="300" height="146" rx="18" fill="#FFF4E2"/>
+        <rect x="0" y="154" width="300" height="146" rx="18" fill="#FFF4E2"/>
+        <rect x="0" y="146" width="300" height="8" fill="#E9DCC6"/>
+        <g transform="rotate(38 150 92)">
+          <path d="M120 40 h60 v80 a12 12 0 0 1 -12 12 h-36 a12 12 0 0 1 -12 -12 z" fill="#FFFFFF" stroke="#2B2233" stroke-width="4"/>
+          <path d="M124 78 h52 v40 a8 8 0 0 1 -8 8 h-36 a8 8 0 0 1 -8 -8 z" fill="#FFC23D"/>
+          <path d="M180 52 q22 4 22 28 q0 18 -22 24" fill="none" stroke="#2B2233" stroke-width="4"/>
+        </g>
+        <path d="M113 128 C 112 170, 128 200, 133 236" fill="none" stroke="#FFC23D" stroke-width="7" stroke-linecap="round"/>
+        <path d="M100 200 h70 l-6 84 h-58 z" fill="#FFFFFF" stroke="#2B2233" stroke-width="4"/>
+        <path d="M104 244 h62 l-3 38 h-56 z" fill="#FFC23D"/>
+        <line x1="98" y1="236" x2="172" y2="236" stroke="#2B2233" stroke-width="3" stroke-dasharray="7 5"/>
+        <rect x="70" y="284" width="130" height="8" rx="4" fill="#D9825B"/>
+      </svg>
+    </div>
+  </div>
+
+  <section>
+    <h2>How it plays</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>On iPhone Duo</h3>
+        <p>Lay the Duo open on a table and lift the top half like a laptop lid. The jug drawn on it tips with it, and the stream crosses the fold into a glass on the flat half. Lower it to stop. The stream is still falling, so stop just before the line.</p>
+      </div>
+      <div class="card">
+        <h3>On every other iPhone</h3>
+        <p>Drag up anywhere to tip the jug, and let go to set it upright. Same glasses, same physics, same leaderboards.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pouring that feels true</h2>
+    <ul>
+      <li>The drink in the jug stays level, so a full jug pours with a small lift and a nearly empty one needs a big one.</li>
+      <li>The glass sings higher as it fills, so you can pour by ear.</li>
+      <li>Soda foams up and settles. Milkshakes keep coming after you stop. Potions need a steady hand.</li>
+      <li>Every glass gets a word: Perfect, Great, Good, Short or Spill.</li>
+    </ul>
+    <h3>Three ways to play</h3>
+    <ul>
+      <li><strong>Shifts</strong> across five venues, from the Lemonade Stand to the Potion Shop, and one more for those who three-star everything.</li>
+      <li><strong>Rush</strong>: one big jug, endless glasses, a Perfect streak that climbs to ×5.</li>
+      <li><strong>Daily Pour</strong>: ten glasses, the same for everyone that day, one scored try. Share your row.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Kind to your hinge</h2>
+    <p>Brim plays between flat and upright with slow, gentle lifts. It never asks you to close your phone, fold fast or fold over and over. Nothing real ever goes on the screen.</p>
+  </section>
+
+  <section>
+    <h2>Pay once. That's it.</h2>
+    <p>No ads, no in-app purchases, no accounts, no tracking and no data collected. Your progress stays on your iPhone. Every drink is non-alcoholic. Game Center is optional.</p>
+  </section>
+
+  <section id="press">
+    <h2>Press</h2>
+    <p><strong>One-liner:</strong> Your iPhone Duo is the jug: lift the top half to pour across the fold, and stop right on the line.</p>
+    <table>
+      <tr><th>Name</th><td>Brim (App Store: “Brim: Fold to Pour”)</td></tr>
+      <tr><th>Release</th><td>Tuesday 17 November 2026, worldwide</td></tr>
+      <tr><th>Platform</th><td>iPhone. Designed for iPhone Duo in tabletop pose; drag to play on every other iPhone. iOS 18 or later</td></tr>
+      <tr><th>Price</th><td>£1.99 / $1.99, one-off. No ads, no in-app purchases</td></tr>
+      <tr><th>Rating</th><td>4+</td></tr>
+      <tr><th>Modes</th><td>Shifts (five venues and a secret one), Rush, Daily Pour</td></tr>
+      <tr><th>Game Center</th><td>Two leaderboards, ten achievements (optional)</td></tr>
+      <tr><th>Sound</th><td>Every sound is synthesised in the app</td></tr>
+      <tr><th>Privacy</th><td>Data Not Collected</td></tr>
+      <tr><th>Contact</th><td><a href="mailto:SUPPORT_EMAIL_HERE">SUPPORT_EMAIL_HERE</a></td></tr>
+    </table>
+    <p class="note">No embargo. Screenshots, icon and clips are free to use with a link to the App Store; ask for a promo code or a different format by email.</p>
+  </section>
+
+  <footer>
+    <a href="support.html">Support</a><a href="privacy.html">Privacy Policy</a>
+    <p>Brim, an independent game. iPhone and iPhone Duo are trademarks of Apple Inc., registered in the U.S. and other countries.</p>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,270 @@
+import SwiftUI
+import UIKit
+
+// MARK: - Demo mode (CI screenshots, design review). DEBUG builds only.
+//
+// Launch argument: `-brimDemo "key=value;key;key=value"` (ci/scenarios.txt, ci/duo.sh). Values can't contain `;`.
+// Unknown keys are ignored. Every line CI greps starts with `BRIM-` (CLAUDE.md: never rename them).
+//
+// Keys
+// - `screen=menu|venues|results|settings|game|standup|cover|icon`
+//     menu      home screen over the attract loop (practice + perfect autopilot behind it).
+//     venues    venue / shift select.
+//     results   the results card for `mode` (a fixed demo result: 3 stars for shifts, a share row for daily);
+//               the mode's scene runs idle behind it.
+//     settings  the settings screen.
+//     game      play `mode` (the default when `mode` is given without `screen`).
+//     standup   force the book-pose "Stand me up like a little laptop" card.
+//     cover     force the cover-display card ("Open me to pour").
+//     icon      render AppIconArt with ImageRenderer to Documents/AppIcon-1024.png (logs `BRIM-T icon ok|failed`)
+//               and show it full width on black.
+// - `mode=shift:<id>|rush|daily|practice`   e.g. `mode=shift:1-2`. `daily` = today's Daily Pour.
+// - `autopilot=perfect|great|short|spill`   AutopilotTiltSource plays the run.
+// - `freezeOn=midpour|perfect|spill|finished`
+//     Stops calling GameSession.step (the scene keeps drawing the frozen snapshot) and logs `BRIM-T freeze <reason>`:
+//     midpour   the stream is non-empty and the active glass's visible top is ≥ 55 % of its line.
+//     perfect   0.35 s (session time) after the first Perfect is served.
+//     spill     0.35 s after the first Spill is judged.
+//     finished  when the run finishes; the results card shows at once.
+// - `streak=N`     seeds the HUD's streak / multiplier display (the session's own streak is added on top until the
+//                  first miss). Score and judging are untouched.
+// - `progress=fresh|mid|full`   in-memory progress (demo runs never write UserDefaults). Default fresh.
+// - `hints=fresh|off`           onboarding hints shown from scratch, or never. Default in demo: off.
+// - `orient=portrait`   asks the window scene for portrait (requestGeometryUpdate), re-asking every 2 s, and logs
+//                       `BRIM-T orient portrait ok` once the interface, the window and the screen are all portrait
+//                       (`… failed` after 30 s, `… lost` if it rotates back later).
+// - `duo`        treat the canvas as a Duo (crease band) from the first frame and use the real hinge tilt source
+//                (HingeTiltSource) even in demo. Without `autopilot`/`duo` a demo game uses TouchTiltSource.
+// - `seed=N`     GameSession seed (default: day number for daily, 7 otherwise, so CI frames are stable).
+//
+// Log lines
+// - `BRIM-T demo '<args>' starts` at launch (stdout is line-buffered in demo runs).
+// - `BRIM-T frame 120` after the 120th scene frame (ci/duo.sh waits on it).
+// - `BRIM-T freeze <reason> t=<session s>`, `BRIM-T orient portrait ok|failed|lost`, `BRIM-T icon ok|failed`,
+//   `BRIM-T screen <route>` when the app's screen changes.
+
+enum DemoAutopilot: String, Equatable { case perfect, great, short, spill }
+
+struct DemoConfig: Equatable {
+    enum Screen: String, Equatable { case menu, venues, results, settings, game, standup, cover, icon }
+    enum Freeze: String, Equatable { case midpour, perfect, spill, finished }
+    enum ProgressPreset: String, Equatable { case fresh, mid, full }
+    enum HintsPreset: String, Equatable { case fresh, off }
+
+    var raw: String
+    var screen: Screen?
+    var mode: GameMode?
+    var autopilot: DemoAutopilot?
+    var freezeOn: Freeze?
+    var streak: Int?
+    var progress: ProgressPreset?
+    var hints: HintsPreset?
+    var orientPortrait = false
+    var duo = false
+    var seed: UInt64?
+
+    /// The screen the app opens on.
+    var effectiveScreen: Screen {
+        if let screen { return screen }
+        return mode == nil ? .menu : .game
+    }
+
+    /// Parses `key=value;key` (pure; tested). `today` resolves `mode=daily`.
+    static func parse(_ raw: String, today: Int) -> DemoConfig {
+        var config = DemoConfig(raw: raw)
+        for part in raw.split(separator: ";") {
+            let pieces = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let key = pieces.first, !key.isEmpty else { continue }
+            let value = pieces.count > 1 ? pieces[1] : ""
+            switch key {
+            case "screen": config.screen = Screen(rawValue: value)
+            case "mode": config.mode = parseMode(value, today: today)
+            case "autopilot": config.autopilot = DemoAutopilot(rawValue: value)
+            case "freezeOn": config.freezeOn = Freeze(rawValue: value)
+            case "streak": config.streak = Int(value)
+            case "progress": config.progress = ProgressPreset(rawValue: value)
+            case "hints": config.hints = HintsPreset(rawValue: value)
+            case "orient": config.orientPortrait = value == "portrait"
+            case "duo": config.duo = value.isEmpty || value == "on" || value == "1" || value == "true"
+            case "seed": config.seed = UInt64(value)
+            default: break
+            }
+        }
+        return config
+    }
+
+    static func parseMode(_ value: String, today: Int) -> GameMode? {
+        if value == "rush" { return .rush }
+        if value == "practice" { return .practice }
+        if value == "daily" { return .daily(today) }
+        if value.hasPrefix("daily:"), let day = Int(value.dropFirst(6)) { return .daily(day) }
+        if value.hasPrefix("shift:") {
+            let id = String(value.dropFirst(6))
+            return id.isEmpty ? nil : .shift(id)
+        }
+        return nil
+    }
+
+    /// The scenario for this launch: DEBUG builds with `-brimDemo` only; nil otherwise.
+    static let current: DemoConfig? = {
+        #if DEBUG
+        guard let raw = UserDefaults.standard.string(forKey: "brimDemo") else { return nil }
+        // CI redirects stdout to a file (fully buffered); line-buffer it so the scripts see BRIM- lines on time.
+        setvbuf(stdout, nil, _IOLBF, 0)
+        return DemoConfig.parse(raw, today: LevelCatalog.dayNumber(for: Date()))
+        #else
+        return nil
+        #endif
+    }()
+
+    // MARK: Seeded state
+
+    /// In-memory progress for `progress=`.
+    static func progressData(_ preset: ProgressPreset?) -> ProgressData {
+        var data = ProgressData()
+        switch preset ?? .fresh {
+        case .fresh:
+            return data
+        case .mid:
+            let pattern = [3, 3, 2, 3, 1, 3, 2, 3]
+            for (i, level) in LevelCatalog.levels(in: .lemonadeStand).enumerated() {
+                data.stars[level.id] = pattern[i % pattern.count]
+                data.bestScores[level.id] = 900 + 140 * i
+            }
+            for (i, level) in LevelCatalog.levels(in: .sodaFountain).prefix(3).enumerated() {
+                data.stars[level.id] = [3, 2, 2][i]
+                data.bestScores[level.id] = 1100 + 120 * i
+            }
+            data.rushBest = 2140
+            let today = LevelCatalog.dayNumber(for: Date())
+            data.daily[today - 1] = DailyRecord(score: 1840, judgements: [.perfect, .great, .great, .good, .spill,
+                                                                           .perfect, .great, .perfect, .good, .great],
+                                                perfects: 3)
+            data.stats = LifetimeStats(poured: 498_000, perfects: 37, bestStreak: 11, glasses: 142, runs: 21)
+        case .full:
+            for level in LevelCatalog.levels where level.venue != .sandBar {
+                data.stars[level.id] = 3
+                data.bestScores[level.id] = 1600
+            }
+            data.rushBest = 5320
+            data.stats = LifetimeStats(poured: 2_150_000, perfects: 412, bestStreak: 27, glasses: 980, runs: 160)
+        }
+        return data
+    }
+
+    /// The fixed result `screen=results` shows.
+    func demoResult() -> RunResult {
+        let mode = self.mode ?? .shift(LevelCatalog.levels.first?.id ?? "1-1")
+        switch mode {
+        case .rush:
+            return RunResult(mode: mode, score: 2860, stars: 0, perfects: 9, bestStreak: 7,
+                             judgements: [.perfect, .perfect, .great, .perfect, .perfect, .perfect, .perfect, .perfect,
+                                          .great, .spill, .perfect, .perfect, .good, .spill, .spill],
+                             poured: 52_000, cleared: false)
+        case .daily:
+            return RunResult(mode: mode, score: 1840, stars: 0, perfects: 3, bestStreak: 3,
+                             judgements: [.perfect, .great, .great, .good, .spill, .perfect, .great, .perfect, .good, .great],
+                             poured: 31_000, cleared: true)
+        default:
+            return RunResult(mode: mode, score: 1240, stars: 3, perfects: 4, bestStreak: 4,
+                             judgements: [.perfect, .great, .perfect, .perfect, .perfect, .good],
+                             poured: 18_000, cleared: true)
+        }
+    }
+}
+
+// MARK: - Orientation (Duo simulator starts in book pose; CI asks for the tabletop canvas)
+
+@MainActor
+enum DemoOrientation {
+    private static var started = false
+
+    static func requestPortrait() {
+        guard !started else { return }
+        started = true
+        Task { @MainActor in
+            let start = Date()
+            var reported = false
+            var failedLogged = false
+            var lostLogged = false
+            var lastRequest = Date.distantPast
+            var matchedSince: Date?
+            while Date().timeIntervalSince(start) < 600 {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+                    continue
+                }
+                let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
+                let w = window?.bounds.size ?? .zero
+                let s = scene.screen.bounds.size
+                let portrait = scene.effectiveGeometry.interfaceOrientation.isPortrait
+                    && w.height > w.width && s.height > s.width
+                let shape = "window=\(Int(w.width))x\(Int(w.height)) screen=\(Int(s.width))x\(Int(s.height))"
+                if portrait {
+                    let since = matchedSince ?? Date()
+                    matchedSince = since
+                    if !reported && Date().timeIntervalSince(since) >= 0.8 {
+                        reported = true
+                        lostLogged = false
+                        print("BRIM-T orient portrait ok \(shape)")
+                    }
+                } else {
+                    matchedSince = nil
+                    if reported && !lostLogged {
+                        lostLogged = true
+                        reported = false
+                        print("BRIM-T orient portrait lost \(shape); re-requesting")
+                    }
+                    if Date().timeIntervalSince(lastRequest) >= 2 {
+                        lastRequest = Date()
+                        window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+                        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { error in
+                            print("BRIM-T orient request error: \(error.localizedDescription)")
+                        }
+                    }
+                    if !failedLogged && Date().timeIntervalSince(start) > 30 {
+                        failedLogged = true
+                        print("BRIM-T orient portrait failed after 30s \(shape)")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - App icon render (`screen=icon`)
+
+@MainActor
+enum IconExport {
+    static let side: CGFloat = 1024
+
+    /// Renders AppIconArt at 1024 × 1024 px, opaque, to Documents/AppIcon-1024.png.
+    static func render() {
+        let renderer = ImageRenderer(content: AppIconArt().frame(width: side, height: side))
+        renderer.proposedSize = ProposedViewSize(width: side, height: side)
+        renderer.scale = 1
+        renderer.isOpaque = true
+        guard let cgImage = renderer.cgImage else {
+            print("BRIM-T icon failed: renderer returned no image")
+            return
+        }
+        // Redraw into an opaque 1× context so the PNG carries no alpha channel (App Store requirement).
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            UIImage(cgImage: cgImage).draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
+        guard let data = image.pngData(),
+              let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("BRIM-T icon failed: no PNG data")
+            return
+        }
+        do {
+            try data.write(to: directory.appendingPathComponent("AppIcon-1024.png"))
+            print("BRIM-T icon ok \(cgImage.width)x\(cgImage.height)")
+        } catch {
+            print("BRIM-T icon failed: \(error.localizedDescription)")
+        }
+    }
+}
