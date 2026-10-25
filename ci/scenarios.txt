@@ -17,3 +17,11 @@
 13-daily|mode=daily;autopilot=perfect;freezeOn=midpour|10
 14-icon|screen=icon|6
 15-badges|screen=badges|8
+16-conveyor|mode=shift:4-3;autopilot=perfect;freezeOn=midpour|12
+17-potion|mode=shift:5-2;autopilot=perfect;freezeOn=midpour|12
+18-potion-late|mode=shift:5-7;autopilot=perfect;freezeOn=perfect|16
+19-sand|mode=shift:6-1;autopilot=perfect;freezeOn=midpour|12
+20-rush-late|mode=rush;autopilot=perfect;freezeOn=midpour;streak=18|30
+21-daily-results|mode=daily;screen=results|8
+22-shift-failed|mode=shift:2-4;autopilot=spill;freezeOn=finished|40
+23-venues-full|screen=venues;progress=full|6
