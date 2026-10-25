@@ -20,9 +20,10 @@ private func inputTestGlass(id: Int = 1, phase: GlassPhase, overflowing: Bool = 
 }
 
 private func inputTestSnapshot(glasses: [GlassState], flow: Double = 0, projected: Double = -0.8,
-                               landing: Double? = nil, phase: SessionPhase = .playing) -> GameSnapshot {
+                               landing: Double? = nil, phase: SessionPhase = .playing,
+                               jugFill: Double = 1) -> GameSnapshot {
     let liquid = inputTestLiquid()
-    let jug = JugState(liquid: liquid, angle: 0, fill: 1, outline: [], liquidPolygon: [], lip: .zero, pivot: .zero,
+    let jug = JugState(liquid: liquid, angle: 0, fill: jugFill, outline: [], liquidPolygon: [], lip: .zero, pivot: .zero,
                        flow: flow)
     let telemetry = PourTelemetry(flow: flow, landingRate: landing ?? flow, activeFill: 0.1, distanceToLine: projected,
                                   projectedDistanceToLine: projected, liquid: .water)
@@ -35,6 +36,8 @@ private func inputTestSnapshot(glasses: [GlassState], flow: Double = 0, projecte
 /// the lid tilt past a pour point, rising fast and falling with a lag the projection does not see; the stream falls
 /// `fall` s; the projection counts what is airborne. Live spill judging, serve 0.35 s after the last drop, a 0.3 s hold
 /// and a 0.45 s changeover. Heights are fractions of the interior; the line sits at 0.8 (96 of 120).
+/// Round 5: an optional jug of `jugCapacity` glass heights that runs dry like Core's shift jug (fill 0, the stream
+/// stops) and is swapped for a fresh one once the glass is judged or the jug has been tipped back for 0.4 s.
 @MainActor
 private final class ToyBar {
     let fillPerFlow: Double
@@ -56,15 +59,25 @@ private final class ToyBar {
     var overflowing = false
     var armed: Bool
     var maxTiltWhileFlat = 0.0
-    var finals: [(judgement: Judgement, distance: Double)] = []
+    var finals: [(judgement: Judgement, distance: Double, glass: Int)] = []
     var overflowTimes: [Double] = []
+    let jugCapacity: Double
+    var jugLeft: Double
+    var tippedBack = 0.0
+    var dryTimes: [Double] = []
+    var swapTimes: [Double] = []
+    var dryGlasses = Set<Int>()
+    var tiltLog: [(time: Double, tilt: Double)] = []
 
-    init(fillPerFlow: Double = 0.55, fall: Double = 0.4, decline: Double = 0.12, armAfter: Double = 0) {
+    init(fillPerFlow: Double = 0.55, fall: Double = 0.4, decline: Double = 0.12, armAfter: Double = 0,
+         jugCapacity: Double = Double.infinity) {
         self.fillPerFlow = fillPerFlow
         self.fall = fall
         self.decline = decline
         self.armAfter = armAfter
         self.armed = armAfter <= 0
+        self.jugCapacity = jugCapacity
+        self.jugLeft = jugCapacity
     }
 
     var snapshot: GameSnapshot {
@@ -72,7 +85,9 @@ private final class ToyBar {
         for drop in air { airborne += drop.amount }
         let projected = phase == .filling ? volume + airborne - line : -1
         let glass = inputTestGlass(id: glassID, phase: phase, overflowing: overflowing, result: result)
-        var snap = inputTestSnapshot(glasses: [glass], flow: flow, projected: projected, landing: landing)
+        let jugFill = jugCapacity.isFinite ? jugLeft / jugCapacity : 1
+        var snap = inputTestSnapshot(glasses: [glass], flow: flow, projected: projected, landing: landing,
+                                     jugFill: jugFill)
         snap.needsFlat = !armed
         return snap
     }
@@ -84,11 +99,27 @@ private final class ToyBar {
             maxTiltWhileFlat = max(maxTiltWhileFlat, tilt)
             if time >= armAfter && tilt < 6 { armed = true }
         }
-        let target = armed ? min(max((tilt - pourPoint) / 45, 0), 1) : 0
+        tiltLog.append((time: time, tilt: tilt))
+        if jugLeft <= 0 {
+            tippedBack = tilt < pourPoint ? tippedBack + dt : 0
+            if tippedBack >= 0.4 || result != nil {
+                jugLeft = jugCapacity
+                swapTimes.append(time)
+                tippedBack = 0
+            }
+        }
+        let target = armed && jugLeft > 0 ? min(max((tilt - pourPoint) / 45, 0), 1) : 0
         let tau = target > flow ? 0.05 : decline
         flow += (target - flow) * (1 - exp(-dt / tau))
         if flow < 0.003 && target == 0 { flow = 0 }
-        let emitted = flow * fillPerFlow * dt
+        let emitted = min(flow * fillPerFlow * dt, jugLeft)
+        jugLeft -= emitted
+        if jugCapacity.isFinite && jugLeft <= 1e-9 && emitted > 0 {
+            jugLeft = 0
+            flow = 0
+            dryTimes.append(time)
+            dryGlasses.insert(glassID)
+        }
         if emitted > 0 { air.append((land: time + fall, amount: emitted)) }
         var landed = 0.0
         var aloft: [(land: Double, amount: Double)] = []
@@ -110,7 +141,7 @@ private final class ToyBar {
                     overflowing = true
                     result = .spill
                     overflowTimes.append(time)
-                    finals.append((judgement: .spill, distance: volume - line))
+                    finals.append((judgement: .spill, distance: volume - line, glass: glassID))
                     phaseTime = 0
                 } else if flow < 0.004 && air.isEmpty && volume > 0.05 {
                     idle += dt
@@ -120,7 +151,7 @@ private final class ToyBar {
                         // Round 5: past the Good band with nothing over the rim is `.over`, not `.spill`.
                         let j: Judgement = a <= 0.025 ? .perfect : (a <= 0.06 ? .great : (a <= 0.12 ? .good : (d < 0 ? .short : .over)))
                         result = j
-                        finals.append((judgement: j, distance: d))
+                        finals.append((judgement: j, distance: d, glass: glassID))
                         phaseTime = 0
                     }
                 } else {
@@ -862,6 +893,30 @@ struct InputTests {
         #expect(!bar.overflowTimes.isEmpty)
         #expect(bar.finals.first?.judgement == .spill)
         #expect(!bar.finals.contains { $0.judgement == .over })
+    }
+
+    @Test func autopilotLaysBackWhenTheJugRunsDryAndPoursOnWithAFreshOne() {
+        // Round 5 (decision 3): the jug runs dry mid-glass (fill 0, the stream stops); the fresh jug only comes once
+        // the jug is tipped back for 0.4 s. A jug of 2 glass heights: every third glass runs it dry.
+        let bar = ToyBar(jugCapacity: 2.0)
+        let pilot = AutopilotTiltSource(style: .perfect) { bar.snapshot }
+        _ = runToyBar(bar, pilot, seconds: 30)
+        #expect(!bar.dryTimes.isEmpty)
+        #expect(!bar.swapTimes.isEmpty)
+        #expect(bar.swapTimes.count >= bar.dryTimes.count - 1)
+        #expect(bar.overflowTimes.isEmpty)
+        guard let dry = bar.dryTimes.first, let swap = bar.swapTimes.first else { return }
+        // It lays back promptly, so the fresh jug arrives within a second, and nothing is tipped while it waits.
+        #expect(swap - dry < 1.0)
+        var tippedWhileWaiting = 0.0
+        for entry in bar.tiltLog where entry.time > dry + 0.6 && entry.time < swap {
+            tippedWhileWaiting = max(tippedWhileWaiting, entry.tilt)
+        }
+        #expect(tippedWhileWaiting < 6)
+        // It pours on: every glass that didn't run the jug dry is a genuine Perfect, before and after the swap.
+        #expect(bar.finals.count >= 5)
+        #expect(bar.finals.contains { $0.glass > (bar.dryGlasses.min() ?? 0) && $0.judgement == .perfect })
+        #expect(bar.finals.filter { !bar.dryGlasses.contains($0.glass) }.allSatisfy { $0.judgement == .perfect })
     }
 
     @Test func autopilotOverFillsPastTheGoodBandButNeverOverflows() {

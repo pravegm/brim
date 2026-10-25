@@ -465,41 +465,43 @@ struct FeedbackTests {
     @Test func dryJugWatchFiresOncePerEmptyJug() {
         var watch = DryJugWatch()
         // Never seen a fuller jug (a run that starts empty): nothing.
-        #expect(watch.update(fill: 0.01, jugAngle: 80, live: true) == false)
+        #expect(watch.update(fill: 0.0, jugAngle: 80, live: true) == false)
         // A jug in use arms it; tipped and run dry: the cue, once.
         #expect(watch.update(fill: 0.6, jugAngle: 40, live: true) == false)
         #expect(watch.update(fill: 0.2, jugAngle: 70, live: true) == false)
-        #expect(watch.update(fill: 0.02, jugAngle: 85, live: true))
+        // The last drops still running out: not yet.
+        #expect(watch.update(fill: 0.02, jugAngle: 85, live: true) == false)
+        #expect(watch.update(fill: 0.0, jugAngle: 85, live: true))
         #expect(watch.update(fill: 0.0, jugAngle: 90, live: true) == false)
         #expect(watch.update(fill: 0.0, jugAngle: 0, live: true) == false)
         // Swapped for a full one: armed again. Upright and nearly empty is not "dry while tilted".
         #expect(watch.update(fill: 0.7, jugAngle: 0, live: true) == false)
-        #expect(watch.update(fill: 0.02, jugAngle: 5, live: true) == false)
+        #expect(watch.update(fill: 0.0, jugAngle: 5, live: true) == false)
         // Not live (paused, gated, Rush): it waits, then speaks once play is live.
-        #expect(watch.update(fill: 0.01, jugAngle: 80, live: false) == false)
-        #expect(watch.update(fill: 0.01, jugAngle: 80, live: true))
+        #expect(watch.update(fill: 0.0, jugAngle: 80, live: false) == false)
+        #expect(watch.update(fill: 0.0, jugAngle: 80, live: true))
         // NaN never fires.
         #expect(watch.update(fill: 0.9, jugAngle: 0, live: true) == false)
         #expect(watch.update(fill: Double.nan, jugAngle: 80, live: true) == false)
-        #expect(watch.update(fill: 0.01, jugAngle: Double.nan, live: true) == false)
+        #expect(watch.update(fill: 0.0, jugAngle: Double.nan, live: true) == false)
     }
 
     @Test func dryJugWatchReadsTheSnapshot() {
         var watch = DryJugWatch()
         #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.5, angle: 50), events: [], paused: false) == false)
         // Paused or behind the flat gate: not now.
-        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90), events: [], paused: true) == false)
-        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90, needsFlat: true), events: [],
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.0, angle: 90), events: [], paused: true) == false)
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.0, angle: 90, needsFlat: true), events: [],
                              paused: false) == false)
         // The frame that ends the run on an empty jug has its own cue.
-        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90), events: [.jugEmpty],
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.0, angle: 90), events: [.jugEmpty],
                              paused: false) == false)
-        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90), events: [], paused: false))
+        #expect(watch.update(snapshot: feedbackSnapshot(fill: 0.0, angle: 90), events: [], paused: false))
         // Rush: an empty jug ends the run (`jugEmpty`), never a glug-out.
         var rush = DryJugWatch()
         #expect(rush.update(snapshot: feedbackSnapshot(fill: 0.5, angle: 50, mode: .rush), events: [],
                             paused: false) == false)
-        #expect(rush.update(snapshot: feedbackSnapshot(fill: 0.01, angle: 90, mode: .rush), events: [],
+        #expect(rush.update(snapshot: feedbackSnapshot(fill: 0.0, angle: 90, mode: .rush), events: [],
                             paused: false) == false)
     }
 

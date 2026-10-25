@@ -454,9 +454,10 @@ final class FeedbackDirector: FeedbackSink {
 /// gone (`dryFill`) while it is tipped (`tippedAngle`) in a live run. It fires once, then re-arms only when the jug is
 /// full again (`rearmFill`: a swap or a refill), so holding an empty jug tipped never repeats it. Not in Rush (an empty
 /// jug ends the run, with its own `jugEmpty` cue). Pure, so it is testable.
-struct DryJugWatch {
-    /// "≈ 0": a little above Core's empty-jug threshold (2.5 %), so a stream stopped there still counts.
-    static let dryFill = 0.03
+final class DryJugWatch {
+    /// "≈ 0": Core shows a shift jug that ran dry mid-glass as exactly 0 (and stops the stream there), so the cue
+    /// lands with the stream's end, not on the last drops.
+    static let dryFill = 0.005
     static let rearmFill = 0.08
     /// Jug rotation (degrees) that counts as tipped: well past the dead zone, short of any real pour of a fuller jug.
     static let tippedAngle = 20.0
@@ -467,7 +468,7 @@ struct DryJugWatch {
     init() {}
 
     /// One frame. True when the glug-out should play now.
-    mutating func update(fill: Double, jugAngle: Double, live: Bool) -> Bool {
+    func update(fill: Double, jugAngle: Double, live: Bool) -> Bool {
         guard fill.isFinite, jugAngle.isFinite else { return false }
         if fill >= Self.rearmFill {
             armed = true
@@ -480,7 +481,7 @@ struct DryJugWatch {
 
     /// One frame from the session's snapshot and events. Live = a playing, unpaused, ungated, non-Rush run in which
     /// this frame did not already end the run on an empty jug.
-    mutating func update(snapshot: GameSnapshot, events: [GameEvent], paused: Bool) -> Bool {
+    func update(snapshot: GameSnapshot, events: [GameEvent], paused: Bool) -> Bool {
         var live = !paused && !snapshot.needsFlat && snapshot.phase == .playing
         if case .rush = snapshot.mode { live = false }
         for event in events {
