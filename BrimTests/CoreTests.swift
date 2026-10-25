@@ -353,6 +353,8 @@ struct CoreTests {
         }
         #expect(sawStream)
         #expect(t < 15)
+        // Measure the jug now: once the glass is served, the next order may bring a different drink and a fresh jug.
+        let fillAfterPour: Double = s.snapshot.jug.fill
         run(s, seconds: 3.0, tilt: 0, events: &events)
 
         let judged: [Judgement] = servedJudgements(events)
@@ -360,7 +362,7 @@ struct CoreTests {
         if let j = judged.first {
             #expect(j.isHit, "judged \(j)")
         }
-        #expect(s.snapshot.jug.fill < 0.9)
+        #expect(fillAfterPour < 0.9)
         let pourStarts: Int = count(events) { (e: GameEvent) -> Bool in
             if case .pourStarted = e { return true }
             return false
