@@ -562,13 +562,15 @@ struct DailyAttemptTests {
     @Test func leavingTheScoredAttemptFilesThePourSoFar() {
         // QA-1 P1-2: start, spill twice, leave: that IS the day's score; the next run is practice.
         var data = ProgressData()
-        #expect(data.beginDailyAttempt(day: 298))
+        let hoisted564 = data.beginDailyAttempt(day: 298)
+        #expect(hoisted564)
         data.updateDailyAttempt(day: 298, score: 0, judgements: [.spill, .spill], perfects: 0)
         let filed = data.closeDailyAttempt(day: 298)
         #expect(filed?.judgements == [Judgement.spill, .spill])
         #expect(data.daily[298]?.score == Int(0))
         #expect(data.dailyStarted.isEmpty)
-        #expect(!data.beginDailyAttempt(day: 298))
+        let hoisted570 = data.beginDailyAttempt(day: 298)
+        #expect(!hoisted570)
         // The "retry" is practice: it never replaces the filed score.
         let retry = data.record(run(298, score: 2900, [.perfect, .perfect]), today: 298)
         #expect(!retry.dailyCounted)
@@ -578,16 +580,20 @@ struct DailyAttemptTests {
 
     @Test func leavingBeforeTheFirstServeCostsNothing() {
         var data = ProgressData()
-        #expect(data.beginDailyAttempt(day: 10))
-        #expect(data.closeDailyAttempt(day: 10) == nil)
+        let hoisted580 = data.beginDailyAttempt(day: 10)
+        #expect(hoisted580)
+        let hoisted581 = data.closeDailyAttempt(day: 10)
+        #expect(hoisted581 == nil)
         #expect(data.daily[10] == nil)
-        #expect(data.beginDailyAttempt(day: 10))
+        let hoisted583 = data.beginDailyAttempt(day: 10)
+        #expect(hoisted583)
     }
 
     @Test func finishingTheMarkedAttemptCountsEvenAfterMidnight() {
         // QA-1 P2-1: started on day 100, finished at 00:00:30 on day 101.
         var data = ProgressData()
-        #expect(data.beginDailyAttempt(day: 100))
+        let hoisted589 = data.beginDailyAttempt(day: 100)
+        #expect(hoisted589)
         let outcome = data.record(run(100, score: 1500, [.perfect, .great]), today: 101)
         #expect(outcome.dailyCounted)
         #expect(data.daily[100]?.score == Int(1500))
