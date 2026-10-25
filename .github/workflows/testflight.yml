@@ -14,13 +14,60 @@ on:
         description: "What to test (shown in the run summary)"
         type: string
         default: ""
+      check_only:
+        description: "Only build an unsigned Release archive (no secrets, no upload): catches Release-only errors"
+        type: boolean
+        default: false
 
 concurrency:
   group: testflight
   cancel-in-progress: false
 
 jobs:
+  release-check:
+    if: ${{ inputs.check_only }}
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 27.1
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.1.app
+          xcodebuild -version
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Archive Release (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Brim.xcodeproj -scheme Brim -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Brim.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            2>&1 | tee archive.log | grep -E "error:|warning: .*Brim/|\*\* ARCHIVE" || true
+          grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log
+      - name: Check the archive
+        run: |
+          APP="$RUNNER_TEMP/Brim.xcarchive/Products/Applications/Brim.app"
+          test -f "$APP/PrivacyInfo.xcprivacy" && plutil -lint "$APP/PrivacyInfo.xcprivacy"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" -c "Print :CFBundleShortVersionString" -c "Print :CFBundleVersion" -c "Print :UISupportedInterfaceOrientations" "$APP/Info.plist"
+          test -f "$APP/Assets.car" && echo "asset catalog present"
+          # Demo/CI code must not ship: no BRIM-T demo strings in the Release binary.
+          if strings "$APP/Brim" | grep -q "brimDemo"; then echo "::warning::'brimDemo' string found in the Release binary"; else echo "no demo strings in Release"; fi
+          du -sh "$APP"
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-check-log
+          path: archive.log
+          if-no-files-found: ignore
+
   upload:
+    if: ${{ !inputs.check_only }}
     runs-on: xcode-27
     timeout-minutes: 60
     env:
