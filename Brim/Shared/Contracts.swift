@@ -226,6 +226,9 @@ public struct JugState: Sendable {
     public var pivot: CGPoint
     /// Current outflow, 0…1 of the jug's maximum flow.
     public var flow: Double
+    /// Round 6 (REVIEW-5 §4): sand only: 0…1 as the tip approaches the angle of repose (1 = it slides now), so Scene
+    /// and Feedback can telegraph the avalanche. 0 for liquids.
+    public var reposeProgress: Double = 0
 }
 
 public enum SessionPhase: String, Sendable { case intro, playing, finished }
@@ -251,6 +254,11 @@ public struct GameSnapshot: Sendable {
     /// Round 2: true until the player has laid the phone flat (lid tilt inside the dead zone) once at the start of a
     /// run or after a resume; no outflow while true. The UI shows "Lay it flat to start".
     public var needsFlat: Bool = false
+    /// Round 6 (REVIEW-5 §5): Rush difficulty tier (1…), 0 outside Rush. Changes every 8 glasses.
+    public var rushTier: Int = 0
+    /// Round 6: the venue whose look/props the scene should show right now (Rush travels one venue per tier; shifts
+    /// report their own venue; nil = let the App decide, e.g. Daily/practice).
+    public var venue: VenueID? = nil
 }
 
 /// Continuous values Feedback maps to sound/haptics every frame.

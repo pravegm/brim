@@ -1373,12 +1373,15 @@ struct CoreTests {
                     stopT = t
                 } else {
                     let top: CGFloat = g.liquidHeight + g.foamHeight
-                    if top > interior * 0.8 {
+                    // A careful soda pourer: gentle tip, and pause well before the head nears the rim (the stream
+                    // already in the air keeps feeding foam; at +15° and an 80 % pause the head overflowed, run
+                    // 40244627843, which is the "pour soda slowly" mechanic working, not what this test checks).
+                    if top > interior * 0.62 {
                         pausing = true
-                    } else if top < interior * 0.75 {
+                    } else if top < interior * 0.55 {
                         pausing = false
                     }
-                    if !pausing { tilt = pourLid(fill: max(0.03, s.snapshot.jug.fill)) + 15 }
+                    if !pausing { tilt = pourLid(fill: max(0.03, s.snapshot.jug.fill)) + 7 }
                 }
             }
             let step: [GameEvent] = s.step(dt: 1.0 / 60.0, tilt: tilt)
