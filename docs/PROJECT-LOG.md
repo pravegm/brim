@@ -93,3 +93,11 @@
 - **CI blocked:** the run was refused with "recent account payments have failed or your spending limit needs to be
   increased". Private-repo Mac minutes ran out. The founder must make the repo public or raise the limit
   (`docs/HANDOVER.md` item 0).
+
+## Mon 26 Oct
+- The founder made the repo public, which unblocked CI. CI is green with the two uncompiled fixes: 156/156 tests.
+- The store set was re-shot (run 40234263161) with 0 flagged. P2/D2 are verified clean: no overprint, and the full
+  score shows on 6.1-inch.
+- `testflight.yml` gained `check_only`, an unsigned Release archive: it passes (2.5 MB, privacy manifest OK, no demo
+  code).
+- TestFlight is now blocked only on the founder: the app record and the 4 ASC secrets.

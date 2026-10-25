@@ -49,16 +49,11 @@ jug moves. My own shortlist and an independent concept agent both picked this id
 
 ## What only you can do (about 1 hour total, click-by-click in `docs/LAUNCH-RUNBOOK.md`)
 
-0. **Unblock CI (do this first).** The repo is private, so GitHub bills its Mac build minutes, and today's iterations
-   used up the allowance. The last run failed with "recent account payments have failed or your spending limit needs
-   to be increased". Pick one:
-   - **(recommended)** make `pravegm/brim` public, as Squish is, which makes Mac minutes free and also lets GitHub Pages
-     host the support and privacy pages (runbook §0, Option A);
-   - or raise the Actions spending limit: github.com → Settings → Billing and plans.
-
-   Until then, nothing new can be compiled, including the TestFlight build. One small fix is already committed but
-   not yet compiled; the next CI run will check it. It stops the "×5 STREAK" pop being drawn over the PERFECT stamp
-   in store frame D2.
+0. ~~Unblock CI~~ **Done 26 Oct:** the repo is public.
+   - CI is green again: 156/156 tests.
+   - An unsigned **Release** archive builds cleanly (`testflight.yml` with `check_only`, run 40234316753). It is a
+     2.5 MB app, `com.pravegm.brim` 1.0, with a valid privacy manifest and no demo code in Release.
+   - So TestFlight now needs only items 1 and 2.
 1. **Create the app record** (bundle ID `com.pravegm.brim`, name `Brim: Fold to Pour`). Submit the featuring
    nomination **by Tue 27 Oct**: Apple wants 3 weeks' notice for the proposed **Tue 17 Nov** launch.
 2. **Add the 4 GitHub secrets** to `pravegm/brim`. They are the same Apple key values Squish uses. Then press
@@ -66,14 +61,15 @@ jug moves. My own shortlist and an independent concept agent both picked this id
 3. **Play it on your Duo for 10 minutes** with the checklist in runbook §3 and send me the scores. Hinge feel,
    sound, haptics and the stream crossing a real fold can only be judged on the device. Tuning from your notes is
    quick.
-4. **Decide where the support and privacy pages live.** The repo is private: I wasn't allowed to make it public
-   without you. Then give me a support email.
+4. **Turn on the support and privacy pages.** The repo is public now, so runbook §0 Option A applies:
+   Settings → Pages → Deploy from a branch → `main`, folder `/docs`. Then give me a support email: the pages say
+   `SUPPORT_EMAIL_HERE` until then.
 5. **Paste the listing** (`docs/appstore/`) and press Submit.
 
 ## The store screenshots
 
 They're ready, captioned and at the exact slot sizes, in the artifacts of the **App Store screenshots** run
-https://github.com/pravegm/brim/actions/runs/40219538257:
+https://github.com/pravegm/brim/actions/runs/40234263161 (final, 26 Oct):
 
 - `store-69` (6.9-inch);
 - `store-61` (6.1-inch);
@@ -83,10 +79,8 @@ Each set has a `MANIFEST.txt` (0 flagged). GitHub keeps artifacts for 90 days.
 
 The critic's final sign-off (`design/REVIEW-4-SIGNOFF.md`) is **launch "yes", 8.7/10**, with these upload rules:
 
-- **Re-shoot P2 in all three sets** (69-P2, 61-P2, D2) after the CI unblock: run **Actions → App Store screenshots**
-  once. The two fixes they need are committed but not yet compiled:
-  - the streak pop drawn over PERFECT;
-  - the score cut off on 6.1-inch phones.
+- **P2 re-shot and checked (26 Oct):** PERFECT is clean, with no streak pop over it, and the 6.1-inch score shows
+  in full with the streak pill under it.
 - **Drop D6** (Venues on the Duo: shown flat, the gap left around the fold looks broken).
 - **Upload order:** phones P1 → P2 → P3 → P4 → P5; Duo D1 → D2 → D4 → D5 → D3.
 - **Submit with manual release.** The real-Duo TestFlight session (runbook §3) decides the release day.
