@@ -73,7 +73,7 @@
 
 Click **Create**.
 
-**1c.** On the new app's **App Information** page, find **Apple ID** (a long number). Send it to Claude: it makes the App Store link `https://apps.apple.com/app/id<that number>`.
+**1c.** ✅ Done 26 Oct: Apple ID `6826940959`, so the App Store link is `https://apps.apple.com/app/id6826940959` (it works from launch morning).
 
 **1d. Turn on Game Center:** in the app, open **Services** (in some layouts **Features**) → **Game Center** → turn it on. You'll add the leaderboards and achievements in §4.6.
 

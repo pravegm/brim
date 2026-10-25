@@ -2,7 +2,7 @@
 
 *For the founder to post by hand from their own accounts. Tone: warm, a little smug, precise ("right on the line"). Never alcohol jokes ("pour one out", "bottoms up", "last orders", beer, shots). Never suggest closing the phone fast, flapping it, or putting anything real on it.*
 
-**Links to fill in:** `[App Store link]` = `https://apps.apple.com/app/id<Apple ID>` (App Store Connect → App Information → Apple ID; exists once the record is created, live on launch day). `[site]` = `<SITE>` from runbook §4.0. `[clip]` = the 15 s teaser (§3A).
+**Links to fill in:** `https://apps.apple.com/app/id6826940959` = `https://apps.apple.com/app/id6826940959` (App Store Connect → App Information → Apple ID; exists once the record is created, live on launch day). `[site]` = `<SITE>` from runbook §4.0. `[clip]` = the 15 s teaser (§3A).
 
 ---
 
@@ -32,7 +32,7 @@ Counted by script with the link filled in (X and Mastodon count a link as 23; Bl
 > Lift the top half of your iPhone Duo and the jug on it pours across the fold. Stop right on the line.
 >
 > £1.99 / $1.99 · no ads · no IAP · plays on every iPhone (drag up)
-> [App Store link]
+> https://apps.apple.com/app/id6826940959
 
 *Alt text:* An iPhone Duo lying open on a wooden table. A hand slowly lifts the top half like a laptop lid; the jug drawn on it tips, and a stream of yellow lemonade pours across the fold into a glass on the bottom half, stopping right at a dashed line. A sparkle ring and the word PERFECT appear.
 
@@ -43,7 +43,7 @@ Counted by script with the link filled in (X and Mastodon count a link as 23; Bl
 >
 > Five venues, Rush, a Daily Pour. No ads, no IAP.
 >
-> [App Store link]
+> https://apps.apple.com/app/id6826940959
 
 ### Mastodon (attach the clip)
 > Brim is out. 🥤
@@ -54,11 +54,11 @@ Counted by script with the link filled in (X and Mastodon count a link as 23; Bl
 >
 > £1.99 / $1.99, no ads, no IAP, no tracking.
 >
-> [App Store link]
+> https://apps.apple.com/app/id6826940959
 > #iPhoneDuo #iOSDev #IndieDev
 
 ### Threads (attach the clip)
-> Made a game where your iPhone Duo is a jug. Lift the top half, pour across the fold, stop exactly on the line. Brim is out today: [App Store link]
+> Made a game where your iPhone Duo is a jug. Lift the top half, pour across the fold, stop exactly on the line. Brim is out today: https://apps.apple.com/app/id6826940959
 
 ### r/iPhoneDuo (only if the rules allow a launch post; otherwise the megathread)
 **Title:** [Dev] I made the Duo's hinge into a pouring jug: Brim is out
@@ -70,7 +70,7 @@ Counted by script with the link filled in (X and Mastodon count a link as 23; Bl
 
 ### Daily Pour post format (any day)
 > Brim · Daily #[n] · ⭐⭐🟩⭐🟨⭐🟥⭐⭐🟩 · [score]
-> [App Store link]
+> https://apps.apple.com/app/id6826940959
 
 The row is whatever the app's Share button produces; never type one by hand. **Emoji key** (from the bible; confirm against the build): ⭐ Perfect · 🟩 Great · 🟨 Good · ⬜ Short · 🟥 Spill. Add the key as a reply the first time, for people who can't tell the colours apart.
 

@@ -32,7 +32,7 @@
 | **Privacy** | Data Not Collected. No accounts, no tracking, no third-party SDKs |
 | **Languages** | English |
 | **Size** | ~[XX] MB (fill in from App Store Connect after processing) |
-| **Links** | App Store: [App Store link] · Site: `<SITE>` · Support: `<SITE>support.html` |
+| **Links** | App Store: https://apps.apple.com/app/id6826940959 · Site: `<SITE>` · Support: `<SITE>support.html` |
 | **Press contact** | `SUPPORT_EMAIL_HERE` (the dedicated support address; runbook §0) |
 
 ---
@@ -78,7 +78,7 @@ Put these in one public folder (a shared iCloud Drive or Google Drive folder, or
 
 ## Pitch emails
 
-Plain text, under 150 words, clip link in the first two lines, never attach video, one outlet per email (never CC). Fill in only `[your name]`, `[App Store link]` (once the record is live: App Store Connect → App Information → Apple ID → `https://apps.apple.com/app/id<Apple ID>`), `[clip link]`, `[TestFlight link]`, `[promo code]`, `[expiry]`. Check every address on the outlet's own contact page first. The send dates are in `social-launch.md` §4.
+Plain text, under 150 words, clip link in the first two lines, never attach video, one outlet per email (never CC). Fill in only `[your name]`, `https://apps.apple.com/app/id6826940959` (once the record is live: App Store Connect → App Information → Apple ID → `https://apps.apple.com/app/id6826940959`), `[clip link]`, `[TestFlight link]`, `[promo code]`, `[expiry]`. Check every address on the outlet's own contact page first. The send dates are in `social-launch.md` §4.
 
 ### 1. Tip line (MacRumors, 9to5Mac, TechCrunch)
 
@@ -164,7 +164,7 @@ Plain text, under 150 words, clip link in the first two lines, never attach vide
 
 ### 6. Launch-day note (reply in each earlier thread)
 
-> Brim is out today: [App Store link]. The iPhone Duo's hinge is the jug; on other iPhones you drag up. £1.99/$1.99, no ads, no IAP, no data collected. Everything in [press folder] is free to use. Promo code on request.
+> Brim is out today: https://apps.apple.com/app/id6826940959. The iPhone Duo's hinge is the jug; on other iPhones you drag up. £1.99/$1.99, no ads, no IAP, no data collected. Everything in [press folder] is free to use. Promo code on request.
 >
 > [your name]
 
