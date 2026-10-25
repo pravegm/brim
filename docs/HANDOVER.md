@@ -79,8 +79,17 @@ https://github.com/pravegm/brim/actions/runs/40219538257:
 - `store-61` (6.1-inch);
 - `store-duo` (iPhone Duo inner display).
 
-Each set has a `MANIFEST.txt` (0 flagged). D2 needs one re-shoot after the CI unblock: run
-**Actions → App Store screenshots** again. GitHub keeps artifacts for 90 days.
+Each set has a `MANIFEST.txt` (0 flagged). GitHub keeps artifacts for 90 days.
+
+The critic's final sign-off (`design/REVIEW-4-SIGNOFF.md`) is **launch "yes", 8.7/10**, with these upload rules:
+
+- **Re-shoot P2 in all three sets** (69-P2, 61-P2, D2) after the CI unblock: run **Actions → App Store screenshots**
+  once. The two fixes they need are committed but not yet compiled:
+  - the streak pop drawn over PERFECT;
+  - the score cut off on 6.1-inch phones.
+- **Drop D6** (Venues on the Duo: shown flat, the gap left around the fold looks broken).
+- **Upload order:** phones P1 → P2 → P3 → P4 → P5; Duo D1 → D2 → D4 → D5 → D3.
+- **Submit with manual release.** The real-Duo TestFlight session (runbook §3) decides the release day.
 
 ## Where everything is
 

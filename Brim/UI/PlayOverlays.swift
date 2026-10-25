@@ -55,24 +55,30 @@ struct HUDView: View {
             }
             .frame(maxWidth: info.size.width * 0.48, alignment: .leading)
             Spacer(minLength: 4)
-            if hud.streak > 0 {
-                streakPill
-                    .fixedSize()
-                    .layoutPriority(1)
-                    .transition(.scale(scale: 0.6, anchor: .trailing).combined(with: .opacity))
-            }
-            if !isPractice {
-                Text(ShareText.grouped(hud.score))
-                    .font(BrimTheme.number(info.isCompact ? 28 : 32))
-                    .foregroundStyle(BrimTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .contentTransition(.numericText())
-                    .animation(reduceMotion ? nil : Animation.snappy(duration: 0.25), value: hud.score)
-                    .scaleEffect(bump ? 1.14 : 1, anchor: .trailing)
-                    .shadow(color: BrimTheme.cream.opacity(0.9), radius: 3)
-                    .layoutPriority(1)
-                    .accessibilityLabel("Score \(hud.score)")
+            if narrow {
+                // REVIEW-4 P1-A: on 393–440 pt phones the pill + score + pause didn't fit beside the left block and the
+                // score was cut ("8…"). There the streak pill sits under the score instead, and the score never yields.
+                VStack(alignment: .trailing, spacing: 1) {
+                    if !isPractice { scoreText(size: 26) }
+                    if hud.streak > 0 {
+                        streakPill
+                            .fixedSize()
+                            .transition(.scale(scale: 0.6, anchor: .trailing).combined(with: .opacity))
+                    }
+                }
+                .fixedSize()
+                .layoutPriority(2)
+            } else {
+                if hud.streak > 0 {
+                    streakPill
+                        .fixedSize()
+                        .layoutPriority(1)
+                        .transition(.scale(scale: 0.6, anchor: .trailing).combined(with: .opacity))
+                }
+                if !isPractice {
+                    scoreText(size: info.isCompact ? 28 : 32)
+                        .layoutPriority(1)
+                }
             }
             RoundIconButton(systemName: "pause.fill", size: 44, accessibility: "Pause", action: onPause)
         }
@@ -90,6 +96,22 @@ struct HUDView: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) { bump = false }
             }
         }
+    }
+
+    /// Phones without a fold (every one is < 440 pt wide; the Duo's inner canvas is 669).
+    private var narrow: Bool { info.size.width < 440 }
+
+    private func scoreText(size: CGFloat) -> some View {
+        Text(ShareText.grouped(hud.score))
+            .font(BrimTheme.number(size))
+            .foregroundStyle(BrimTheme.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .contentTransition(.numericText())
+            .animation(reduceMotion ? nil : Animation.snappy(duration: 0.25), value: hud.score)
+            .scaleEffect(bump ? 1.14 : 1, anchor: .trailing)
+            .shadow(color: BrimTheme.cream.opacity(0.9), radius: 3)
+            .accessibilityLabel("Score \(hud.score)")
     }
 
     /// "×3 · 🔥7": the multiplier, then the streak with a flame (★ means stars earned everywhere else, P2-4).
