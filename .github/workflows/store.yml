@@ -1,0 +1,273 @@
+name: App Store screenshots
+
+# The App Store screenshot sets (docs/appstore/screenshots.md), manual only. Frames come from
+# ci/store-scenarios.txt; ci/store-set.sh captions each one with ci/store-frame.swift and writes <set>/store/ with a
+# MANIFEST.txt (each frame, its size, whether it matches the slot size, and the app-log checks).
+#  • phones: builds the app and captures P1–P5 on the iPhone 18 Pro Max (6.9", 1320 × 2868) and on a 6.1-inch class
+#    simulator (screen 1179 × 2556 or 1170 × 2532, newest available) falling back to the iPhone 18 Pro (6.3",
+#    1206 × 2622) when the image has none; the MANIFEST header says which. Artifacts store-69, store-61.
+#  • duo: the iPhone Duo (iOS 27.1 runtime, same setup as duo.yml) store pass, D1–D6 on the tabletop inner canvas
+#    (2007 × 2853). Artifact store-duo.
+# One bad frame never fails the run: it is listed in its MANIFEST (and in the run summary) as MISSING or FLAGGED.
+on:
+  workflow_dispatch:
+    inputs:
+      phones:
+        description: "Capture the iPhone 6.9-inch and 6.1-inch sets"
+        type: boolean
+        default: true
+      duo:
+        description: "Capture the iPhone Duo set (slow: ~8 GB runtime download)"
+        type: boolean
+        default: true
+      device_69:
+        description: "6.9-inch simulator candidates, tried in order (ci/screenshots.sh DEVICE syntax)"
+        type: string
+        default: "iPhone 18 Pro Max|auto:Pro Max"
+      device_61:
+        description: "6.1-inch class candidates, tried in order (screen:<WxH,…> = by pixel size)"
+        type: string
+        default: "screen:1179x2556,1170x2532|iPhone 18 Pro"
+      phone_filter:
+        description: "Regex of ci/store-scenarios.txt names for the phone sets"
+        type: string
+        default: "^P[0-9]"
+      duo_filter:
+        description: "Regex of ci/store-scenarios.txt names for the Duo set"
+        type: string
+        default: "^D[0-9]"
+
+concurrency:
+  group: store-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phones:
+    if: ${{ inputs.phones }}
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.1
+        timeout-minutes: 10
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.1.app
+          xcodebuild -version
+          command -v gtimeout >/dev/null || brew install coreutils
+          # For the record: the iPhone device types and simulators this image has.
+          xcrun simctl list devicetypes | grep -i "iphone" || true
+          xcrun simctl list devices available | grep -i "iphone" || true
+
+      - name: Generate project
+        timeout-minutes: 10
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        id: build
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          gtimeout 1700 xcodebuild build \
+            -project Brim.xcodeproj -scheme Brim \
+            -destination "platform=iOS Simulator,name=iPhone 18 Pro" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E "error:|warning: .*Brim/|\*\* " || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
+
+      - name: Capture the 6.9-inch set
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          DEVICE: ${{ inputs.device_69 }}
+          OUT: store-69
+          SCENARIOS: ci/store-scenarios.txt
+          SCENARIO_FILTER: ${{ inputs.phone_filter }}
+          EXPECT_SIZE: "1320x2868"
+          WAIT_FREEZE: "1"
+        run: bash ci/screenshots.sh
+
+      - name: Caption the 6.9-inch set
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          STORE_RADIUS: "0.11"
+          FILTER: ${{ inputs.phone_filter }}
+        run: bash ci/store-set.sh store-69 'iPhone 6.9-inch' "1320x2868" ci/store-scenarios.txt "$FILTER"
+
+      - name: Capture the 6.1-inch set
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          DEVICE: ${{ inputs.device_61 }}
+          OUT: store-61
+          SCENARIOS: ci/store-scenarios.txt
+          SCENARIO_FILTER: ${{ inputs.phone_filter }}
+          EXPECT_SIZE: "1179x2556 1170x2532 1206x2622"
+          WAIT_FREEZE: "1"
+        run: |
+          gtimeout 120 xcrun simctl shutdown all || true
+          bash ci/screenshots.sh
+
+      # 1179 × 2556 and 1206 × 2622 go in App Store Connect's 6.3-inch slot, 1170 × 2532 in the 6.1-inch slot.
+      - name: Caption the 6.1-inch set
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          STORE_RADIUS: "0.11"
+          FILTER: ${{ inputs.phone_filter }}
+        run: bash ci/store-set.sh store-61 'iPhone 6.1-inch class' "1179x2556 1170x2532 1206x2622" ci/store-scenarios.txt "$FILTER"
+
+      - name: Upload the 6.9-inch set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-69
+          path: store-69/
+          if-no-files-found: ignore
+
+      - name: Upload the 6.1-inch set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-61
+          path: store-61/
+          if-no-files-found: ignore
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-phones-build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Shut down
+        if: always()
+        continue-on-error: true
+        run: xcrun simctl shutdown all || true
+
+  duo:
+    if: ${{ inputs.duo }}
+    runs-on: xcode-27
+    timeout-minutes: 120
+    env:
+      XCODE_APP: /Applications/Xcode_27.1.app
+      RUNTIME_ID: com.apple.CoreSimulator.SimRuntime.iOS-27-1
+      DUO_TYPE_FALLBACK: com.apple.CoreSimulator.SimDeviceType.iPhone-Duo
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runtime, simulator and hinge steps are copied from duo.yml (keep them in step).
+      - name: Select Xcode 27.1
+        timeout-minutes: 8
+        run: |
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+          xcrun simctl list runtimes
+          command -v gtimeout >/dev/null || brew install coreutils
+
+      - name: Install the iOS 27.1 runtime
+        timeout-minutes: 30
+        run: |
+          installed() {
+            xcrun simctl list runtimes -j | python3 -c "import json,sys,os; sys.exit(0 if any(r['identifier']==os.environ['RUNTIME_ID'] and r.get('isAvailable') for r in json.load(sys.stdin)['runtimes']) else 1)"
+          }
+          if installed; then echo "already installed"; exit 0; fi
+          for attempt in 1 2 3; do
+            gtimeout 1500 xcodebuild -downloadPlatform iOS 2>&1 | grep -v "Downloading iOS" | tail -20 || true
+            installed && break
+            sleep 15
+          done
+          installed || { echo "::error::iOS 27.1 runtime not installed"; exit 1; }
+
+      - name: Create and boot the iPhone Duo
+        id: sim
+        timeout-minutes: 10
+        run: |
+          type=$(xcrun simctl list devicetypes -j | python3 -c "import json,sys; print(next((d['identifier'] for d in json.load(sys.stdin)['devicetypes'] if d['name']=='iPhone Duo'), ''))")
+          type="${type:-$DUO_TYPE_FALLBACK}"
+          udid=$(gtimeout 120 xcrun simctl create "Brim Duo" "$type" "$RUNTIME_ID")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          gtimeout 300 xcrun simctl boot "$udid" || echo "::warning::simctl boot returned non-zero (bootstatus waits later)"
+
+      - name: Install the hinge tool
+        timeout-minutes: 10
+        continue-on-error: true
+        run: gtimeout 300 brew install artemnovichkov/tap/hinge || echo "::warning::hinge install failed"
+
+      - name: Generate project
+        timeout-minutes: 10
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for the Duo
+        id: build
+        timeout-minutes: 30
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -o pipefail
+          gtimeout 1700 xcodebuild build -project Brim.xcodeproj -scheme Brim -destination "id=$UDID" \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E "error:|\*\* " || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
+
+      - name: Wait for boot, warm up the hinge helper
+        timeout-minutes: 15
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          gtimeout 840 xcrun simctl bootstatus "$UDID" -b
+          if command -v hinge >/dev/null; then gtimeout 120 hinge -d "$UDID" get || true; fi
+          gtimeout 30 xcrun simctl io "$UDID" enumerate || true
+
+      - name: Capture the Duo store pass
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 40
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          PASSES: store
+          OUT: duo-screens
+          STORE_LIST: ci/store-scenarios.txt
+          STORE_FILTER: ${{ inputs.duo_filter }}
+        run: bash ci/duo.sh
+
+      - name: Caption the Duo set
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          STORE_RADIUS: "0.05"
+          FILTER: ${{ inputs.duo_filter }}
+          REQUIRE_LOG: "BRIM-T orient portrait ok"
+        run: bash ci/store-set.sh duo-screens 'iPhone Duo inner display' "2007x2853" ci/store-scenarios.txt "$FILTER" store-
+
+      - name: Upload the Duo set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-duo
+          path: |
+            duo-screens/
+            build.log
+          if-no-files-found: ignore
+
+      - name: Shut down
+        if: always()
+        continue-on-error: true
+        run: xcrun simctl shutdown all || true

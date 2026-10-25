@@ -43,3 +43,17 @@
   - **Flat rest pose** with a "lay it flat to start" gate.
   - Bigger hero objects.
   - All three orientations declared.
+
+## Round 2 result (25 Oct, evening)
+- 104/104 tests green after one test fix: the test, not the game, was wrong.
+- **First real Duo game frames.** The orientation fix worked: the inner display is 2007 × 2853 portrait, and the flat
+  gate shows at 120°. A hinge lift from 179° to 140° produced a stream crossing the fold into the glass, with 113
+  `BRIM-H` samples.
+- Visible wins:
+  - venue identity: lemon jug with an awning, a neon DINER sign, a coiling milkshake stream;
+  - Perfect fireworks with a streak pop, and a dramatic live spill with a puddle;
+  - "Fill to here" and in-pour hints, and a results recap.
+- Known leftovers:
+  - the jug lid is drawn as an open white oval;
+  - the Duo Home right-column buttons overlap the glass;
+  - the glass sits right of centre.

@@ -1,0 +1,35 @@
+# Brim App Store frames (docs/appstore/screenshots.md). Run by .github/workflows/store.yml:
+#   P*  iPhone 6.9" and 6.1"/6.3" sets: ci/screenshots.sh (SCENARIOS=this file, SCENARIO_FILTER='^P[0-9]')
+#   D*  iPhone Duo inner display: ci/duo.sh store pass (STORE_LIST=this file, STORE_FILTER='^D[0-9]'), which adds
+#       `;orient=portrait` (tabletop canvas, 669 x 951 pt) and holds the hinge at 150 degrees
+#   R*/DR*  reserves: not captured by default; run them with a filter like '^(P[0-9]|R[0-9])'.
+# Then ci/store-set.sh frames each one under its caption (ci/store-frame.swift) and writes <set>/store/MANIFEST.txt.
+#
+# name|demo args (Brim/App/DemoMode.swift)|seconds to wait|caption: headline / sub-line|expect (optional extra regex)
+#  - wait: a freezeOn scenario waits for the app's "BRIM-T freeze <x>" line instead (at least this long, max 60 s).
+#  - caption: `*word*` is the ONE gold-swash word; " / " starts the sub-line. Seven words max per headline. No "|".
+#  - checks (ci/store-set.sh, against logs/<name>.at-capture.txt): the "BRIM-T demo '…' starts" line, "BRIM-T freeze
+#    <x>" for freezeOn=<x>, "BRIM-T streak seeded <n> (asked <n>)" for streak=<n>, the expect regex if given, and on
+#    the Duo "BRIM-T orient portrait ok". A frame that fails one is written to store/_flagged/, never store/.
+# Truthfulness: every caption must be true of the build (×5 = Rules.multiplier at streak 10; venues = 5 + a locked "?").
+
+# ---- iPhone 6.9" (1320 x 2868) and 6.1"/6.3" (1179 x 2556 / 1206 x 2622): five frames -------------------------------
+P1-hero-pour|mode=shift:1-1;autopilot=perfect;freezeOn=midpour|10|Tip the jug. Stop on the *line*. / Drag up to pour, on any iPhone.|
+P2-perfect-streak|mode=shift:1-4;autopilot=perfect;freezeOn=perfect;streak=4|14|Right on the line. *Perfect.* / Then do it again.|
+P3-soda-foam|mode=shift:2-1;autopilot=perfect;freezeOn=midpour|10|Soda *foams*. Pour slowly. / Then top it up.|
+P4-rush|mode=rush;autopilot=perfect;freezeOn=midpour;streak=7|12|Rush: keep the *streak* alive. / Perfects refill the jug. Up to ×5.|
+P5-venues|screen=venues;progress=mid|6|Five venues. One *secret*. / No ads. No in-app purchases.|
+# reserves (phone)
+R1-daily|mode=daily;autopilot=perfect;freezeOn=midpour|10|One *Daily Pour*. Same for everyone. / Ten glasses. One try. Share your row.|
+R2-shake|mode=shift:3-1;autopilot=perfect;freezeOn=midpour|10|Thick shakes *keep* coming. / Stop early.|
+R3-spill|mode=shift:1-3;autopilot=spill;freezeOn=spill|14|Too far? *Splash.* / Spills cost a strike.|
+
+# ---- iPhone Duo inner display (2007 x 2853): six frames ---------------------------------------------------------------
+D1-hero-pour|mode=shift:1-2;autopilot=perfect;freezeOn=midpour|6|Lift the lid. *Pour.* / The fold is the jug.|
+D2-perfect-streak|mode=shift:1-4;autopilot=perfect;freezeOn=perfect;streak=4|10|Stop *right* on the line. / Perfect: a ting, a sparkle, a streak.|
+D3-rush|mode=rush;autopilot=perfect;freezeOn=midpour;streak=9|8|Rush: keep the *streak* alive. / Perfects refill the jug. Up to ×5.|
+D4-soda-foam|mode=shift:2-2;autopilot=perfect;freezeOn=midpour|6|Soda *foams*. Pour slowly. / Then top it up.|
+D5-shake|mode=shift:3-2;autopilot=perfect;freezeOn=midpour|6|Thick shakes *keep* coming. / Stop early.|
+D6-venues|screen=venues;progress=mid;duo|6|Five venues. One *secret*. / No ads. No in-app purchases.|
+# reserve (Duo)
+DR-spill|mode=shift:1-3;autopilot=spill;freezeOn=spill|10|Too far? *Splash.* / Spills cost a strike.|

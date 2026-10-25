@@ -1,61 +1,73 @@
 # Brim: App Store screenshot plan (v1.0)
 
-*Owner: CI captures, the launch lead writes captions, the founder approves. Every frame is the app's own rendering, captured by our CI from demo scenarios (`ci/scenarios.txt`, `ci/duo.sh`). Captions are added afterwards. The App Preview and the social clip storyboards are in `social-launch.md` §3.*
+*Owner: CI captures and captions, the launch lead writes captions, the founder approves. Every frame is the app's own rendering, captured by our CI from demo scenarios and captioned on the Mac runner: one workflow, `store.yml`, does all three sets (below). The scenarios and captions live in **`ci/store-scenarios.txt`**, which is the source of truth: change a caption there, not only here. The App Preview and the social clip storyboards are in `social-launch.md` §3.*
 
 ## Sets and sizes
 
-| Set | Pixels (portrait) | Frames | Captured by | Upload |
-|---|---|---|---|---|
-| **iPhone Duo, inner display** (the hero set) | **2007 × 2853** (the 669 × 951 pt tabletop canvas at 3×) | **6** | `duo.yml` → `ci/duo.sh`, passes `store` + `ui`, artifact `duo-screens` | By hand in the web UI, **if** App Store Connect shows an iPhone Duo slot (`DECISIONS.md` #13) |
-| **iPhone 6.9"** | **1320 × 2868** | **5** | `ci/screenshots.sh` with `DEVICE="iPhone 18 Pro Max"` | Web UI, "6.9-inch Display" |
-| **iPhone 6.1"** | **1206 × 2622** | **5** | `ci/screenshots.sh` with `DEVICE="iPhone 18 Pro"` (what `ci.yml` runs today), artifact `screenshots` | Web UI, "6.1-inch Display" (or whichever Dynamic Island medium slot App Store Connect asks for) |
+| Set | Pixels (portrait) | Frames | Captured by (`store.yml`) | Artifact | Upload |
+|---|---|---|---|---|---|
+| **iPhone Duo, inner display** (the hero set) | **2007 × 2853** (the 669 × 951 pt tabletop canvas at 3×) | **6** (D1–D6) | job `duo`: `ci/duo.sh` store pass with `STORE_LIST=ci/store-scenarios.txt` | `store-duo` → `duo-screens/store/` | By hand in the web UI, **if** App Store Connect shows an iPhone Duo slot (`DECISIONS.md` #13) |
+| **iPhone 6.9"** | **1320 × 2868** | **5** (P1–P5) | job `phones`: `ci/screenshots.sh` on the iPhone 18 Pro Max (fallback: newest `… Pro Max`) | `store-69` → `store-69/store/` | Web UI, "6.9-inch Display" |
+| **iPhone 6.1" class** | **1179 × 2556** (or 1170 × 2532); **1206 × 2622** when the runner has no 6.1-inch simulator | **5** (P1–P5) | job `phones`: `ci/screenshots.sh` on the newest simulator with a 1179 × 2556 / 1170 × 2532 screen, else the iPhone 18 Pro (6.3") | `store-61` → `store-61/store/` | Web UI: 1179 × 2556 and 1206 × 2622 go in the **6.3-inch** slot, 1170 × 2532 in the **6.1-inch** slot. The MANIFEST header names the device used |
 
 Rules: PNG or JPEG, **no alpha channel**, 1–10 per size. The first three frames of each set appear in search results, so **frames 1–3 must each sell the game alone**.
 
-**Two CI gaps (engineering, not founder; `DECISIONS.md` §3):**
-1. `ci.yml` always captures on the iPhone 18 Pro. The 6.9" set needs one extra run with `DEVICE="iPhone 18 Pro Max"` (a workflow input or a small `store.yml`), plus a size check that fails if the frame isn't exactly 1320 × 2868 / 1206 × 2622 / 2007 × 2853.
-2. Brim has no caption renderer yet. Port Squish's `ci/store-frame.swift` approach (caption band drawn on the Mac runner). **Fallback:** Apple accepts uncaptioned screenshots, so if captions aren't ready by code freeze, upload the raw frames in the order below; they still sell, because the pour itself is the picture.
+## Pipeline (`store.yml`, manual)
 
-## Caption style
+```bash
+gh workflow run store.yml -R pravegm/brim --ref main                       # all three sets
+gh workflow run store.yml -R pravegm/brim -f duo=false                      # phones only (no 8 GB runtime download)
+gh run download <id> -R pravegm/brim -n store-69 -D <empty folder>          # or -n store-61 / -n store-duo
+```
 
-- **Band:** the top ~18% of the frame, over the back-bar wall, so the jug, the stream, the crease band and the glass stay clear. On Duo frames the caption must **never cross the crease band** (the middle ~4% of the height).
-- **Type:** SF Pro Rounded Heavy, ink `#2B2233` on cream `#FFF4E2`, headline cap height ≥ 4% of the image height. **One** highlighted word, shown *in italics here*, drawn in ink on a brim-gold `#FFC23D` marker swash (gold text on cream is only 1.48:1, so never gold letters). Optional sub-line in SF Pro Rounded Medium at ~45% size.
-- **Seven words maximum** per headline. No logo on frames 2–6.
+1. **Capture.** `ci/screenshots.sh` (phones) and `ci/duo.sh` (Duo, `PASSES=store`) launch each scenario with its demo keys; a `freezeOn=` scenario waits for the app's `BRIM-T freeze <x>` line before the screenshot. The app log at the moment of capture is kept as `logs/<name>.at-capture.txt`. Every simulator call has a timeout; a failed launch or screenshot is retried once and then skipped.
+2. **Check.** `ci/store-set.sh` checks each capture against that log: the demo-starts line, the freeze line, `BRIM-T streak seeded n (asked m)` with n ≥ m, the optional `expect` regex, and on the Duo `BRIM-T orient portrait ok`. The raw capture must already be a slot size (a landscape Duo canvas or the wrong simulator is never letterboxed into a frame).
+3. **Caption.** `ci/store-frame.swift` (compiled with `xcrun swiftc`, else run with `xcrun swift`) draws the frame at the exact slot size: brand background, caption on top, the screenshot inset below. Opaque sRGB PNG, no alpha.
+4. **MANIFEST.** `<set>/store/MANIFEST.txt` lists every frame: output size, whether it matches the slot size, alpha, status (OK / FLAGGED / MISSING / FAILED), the caption, the cap height used and the app's freeze/streak lines. **Clean frames are in `store/`; a frame that failed a check is in `store/_flagged/`** (still framed, for review). The manifests are also in the run summary. One bad frame never fails the run.
+
+**Fallback:** Apple accepts uncaptioned screenshots. If a captioned set is unusable, upload the raw captures (`<set>/<name>.png`, which are exact slot sizes) in the same order.
+
+## Caption style (what `ci/store-frame.swift` draws)
+
+- **Layout:** cream `#FFF4E2` → peach sweep with a soft gold glow. Caption band: the top 3–26% of the frame. Below it the **screenshot itself, unaltered**, scaled to fit (about 69% of the frame height), rounded corners, hairline edge, soft shadow. Because the caption sits above the screenshot, it can never cover the jug, the stream, the line, the glass or the Duo's crease band.
+- **No device frame** is drawn on any set: a phone frame is never shown folded, and a Duo frame is a flat picture of its inner display.
+- **Type:** SF Pro Rounded Heavy (the system font with the rounded design; plain system Heavy if unavailable, which the MANIFEST reports as `rounded=no`), ink `#2B2233`. Headline cap height starts at 4.6% of the image height and shrinks in 5% steps until it fits the band in ≤ 3 balanced lines (floor 3.0%; the MANIFEST prints the `cap=` used, so check it is ≥ 4%). **One** highlighted word, written `*word*` in `ci/store-scenarios.txt` (*in italics here*), drawn in ink on a brim-gold `#FFC23D` marker swash (gold text on cream is only 1.48:1, so never gold letters). Optional sub-line after ` / ` in SF Pro Rounded Semibold at ~46% (down to 36% to stay on one line), ink `#544760`.
+- **Seven words maximum** per headline. No logo on any frame.
 
 ## A. iPhone Duo, inner display (2007 × 2853): 6 frames
 
-Raw files are at `duo-screens/<name>.png` in the `duo-screens` artifact (`gh run download <id> -R pravegm/brim -D <empty folder>`).
+Captioned frames: `duo-screens/store/<name>.png` in the `store-duo` artifact; raw captures `duo-screens/store-<name>.png`. Captured on the tabletop canvas (`;orient=portrait` added, hinge held at 150°).
 
-| # | In-game moment | Caption: headline / sub-line | Scenario (`ci/duo.sh`) → file |
+| # | In-game moment | Caption: headline / sub-line | Scenario (`ci/store-scenarios.txt`) |
 |---|---|---|---|
-| **D1** | Lemonade Stand, shift 1-2: the jug tipped on the top half, the stream **crossing the fold**, glass ~60% to the line. The magic frame | **Lift the lid. *Pour.*** / *The fold is the jug.* | `store` pass `s1-midpour` (`mode=shift:1-2;autopilot=perfect;freezeOn=midpour`) → `store-s1-midpour.png` |
-| **D2** | The glass judged Perfect: sparkle ring, PERFECT stamp, streak 4 | **Stop *right* on the line.** / *Perfect: a ting, a sparkle, a streak.* | `s2-perfect` (`mode=shift:1-4;…;freezeOn=perfect;streak=4`) → `store-s2-perfect.png` |
-| **D3** | Rush mid-pour, streak 9, multiplier showing | **Rush: keep the *streak* alive.** / *Perfects refill the jug. Up to ×5.* | `s5-rush` (`mode=rush;…;streak=9`) → `store-s5-rush.png` |
-| **D4** | Soda Fountain: cola with a foam head climbing above the liquid | **Soda *foams*. Pour slowly.** / *Then top it up.* | `s3-soda` (`mode=shift:2-2;…;freezeOn=midpour`) → `store-s3-soda.png` |
-| **D5** | Milkshake Diner: a thick shake stream, still coming | **Thick shakes *keep* coming.** / *Stop early.* | `s4-shake` (`mode=shift:3-2;…;freezeOn=midpour`) → `store-s4-shake.png` |
-| **D6** | Venues screen, mid progress: five venues, the sixth locked as "?" | **Five venues. One *secret*.** / *No ads. No in-app purchases.* | `ui` pass `ui-venues` (`screen=venues;progress=mid;orient=portrait;duo`) → `duo-ui-venues.png` |
+| **D1** | Lemonade Stand, shift 1-2: the jug tipped on the top half, the stream **crossing the fold**, glass ~60% to the line. The magic frame | **Lift the lid. *Pour.*** / *The fold is the jug.* | `D1-hero-pour` (`mode=shift:1-2;autopilot=perfect;freezeOn=midpour`) |
+| **D2** | The glass judged Perfect: sparkle ring, PERFECT stamp, streak 4+ | **Stop *right* on the line.** / *Perfect: a ting, a sparkle, a streak.* | `D2-perfect-streak` (`mode=shift:1-4;…;freezeOn=perfect;streak=4`) |
+| **D3** | Rush mid-pour, streak 9, multiplier showing | **Rush: keep the *streak* alive.** / *Perfects refill the jug. Up to ×5.* | `D3-rush` (`mode=rush;…;streak=9`) |
+| **D4** | Soda Fountain: cola with a foam head climbing above the liquid | **Soda *foams*. Pour slowly.** / *Then top it up.* | `D4-soda-foam` (`mode=shift:2-2;…;freezeOn=midpour`) |
+| **D5** | Milkshake Diner: a thick shake stream, still coming | **Thick shakes *keep* coming.** / *Stop early.* | `D5-shake` (`mode=shift:3-2;…;freezeOn=midpour`) |
+| **D6** | Venues screen, mid progress: five venues, the sixth locked as "?" | **Five venues. One *secret*.** / *No ads. No in-app purchases.* | `D6-venues` (`screen=venues;progress=mid;duo`) |
 
-Reserve (not uploaded unless one above fails): `store-s6-spill.png`, **Too far? *Splash.*** / *Spills cost a strike.*
+Reserve (not captured by default; `duo_filter: ^D` adds it): `DR-spill`, **Too far? *Splash.*** / *Spills cost a strike.*
 
-**Never upload from `duo-screens/`:** `duo-01…06` (hinge-pass test frames, some taken mid-sweep), `duo-05-closed` / `duo-ui-cover` (outer display, wrong size), `duo-ui-book` (landscape), anything in `raw/`.
+**Never upload from `duo-screens/`:** anything outside `store/` (raw captures, `raw/` panel probes), anything in `store/_flagged/` until reviewed. `duo.yml`'s own frames (`duo-01…06`, `duo-ui-cover`, `duo-ui-book`) are test frames.
 
 **Optional later (1.0.1):** a 3D "store shot" of the Duo standing in tabletop pose with frame D1 on its screens, like Squish's `FoldStoreShot`, or a real photo of the Duo on a table. A flat inner frame shows the screen, not the lifted lid; the caption carries that until then.
 
-## B. iPhone 6.9" (1320 × 2868) and 6.1" (1206 × 2622): 5 frames each
+## B. iPhone 6.9" (1320 × 2868) and 6.1" class (1179 × 2556 / 1206 × 2622): 5 frames each
 
-Same frames and captions at both sizes. Files from `ci/screenshots.sh`: `<OUT>/<name>.png` (artifact `screenshots` for the 6.1" run).
+Same frames and captions at both sizes. Captioned frames: `store-69/store/<name>.png`, `store-61/store/<name>.png`.
 
-| # | In-game moment | Caption: headline / sub-line | Scenario (`ci/scenarios.txt`) |
+| # | In-game moment | Caption: headline / sub-line | Scenario (`ci/store-scenarios.txt`) |
 |---|---|---|---|
-| **P1** | Lemonade Stand mid-pour: jug tipped, stream falling, glass ~60% | **Tip the jug. Stop on the *line*.** / *Drag up to pour, on any iPhone.* | `02-midpour` |
-| **P2** | Perfect: sparkle ring and stamp | **Right on the line. *Perfect.*** / *Then do it again.* | `03-perfect` |
-| **P3** | Rush mid-pour, streak 7, ×3 multiplier | **Rush: keep the *streak* alive.** / *Perfects refill the jug. Up to ×5.* | `07-rush` |
-| **P4** | Daily Pour mid-pour | **One *Daily Pour*. Same for everyone.** / *Ten glasses. One try. Share your row.* | `13-daily` |
-| **P5** | Venues screen, mid progress, the secret one locked | **Five venues. One *secret*.** / *No ads. No in-app purchases.* | `09-venues` |
+| **P1** | Lemonade Stand mid-pour: jug tipped, stream falling, glass ~60% | **Tip the jug. Stop on the *line*.** / *Drag up to pour, on any iPhone.* | `P1-hero-pour` (`mode=shift:1-1;autopilot=perfect;freezeOn=midpour`) |
+| **P2** | Perfect with a streak: sparkle ring and stamp, streak 4+ | **Right on the line. *Perfect.*** / *Then do it again.* | `P2-perfect-streak` (`mode=shift:1-4;…;freezeOn=perfect;streak=4`) |
+| **P3** | Soda Fountain mid-pour: cola with a foam head | **Soda *foams*. Pour slowly.** / *Then top it up.* | `P3-soda-foam` (`mode=shift:2-1;…;freezeOn=midpour`) |
+| **P4** | Rush mid-pour, streak 7, ×3 multiplier | **Rush: keep the *streak* alive.** / *Perfects refill the jug. Up to ×5.* | `P4-rush` (`mode=rush;…;streak=7`) |
+| **P5** | Venues screen, mid progress, the secret one locked | **Five venues. One *secret*.** / *No ads. No in-app purchases.* | `P5-venues` (`screen=venues;progress=mid`) |
 
-Reserve: `05-soda-foam` (**Soda *foams*. Pour slowly.**), `06-shake` (**Thick shakes *keep* coming.**), `04-spill` (**Too far? *Splash.***).
+Reserves (not captured by default; `phone_filter: ^(P|R)[0-9]` adds them): `R1-daily` (**One *Daily Pour*. Same for everyone.** / *Ten glasses. One try. Share your row.*), `R2-shake` (**Thick shakes *keep* coming.**), `R3-spill` (**Too far? *Splash.***).
 
-**Never upload:** `01-menu`, `10-settings`, `11-standup`, `12-first-run`, `14-icon` (test and UI-check frames), `08-results` (unless its numbers are reviewed), and nothing from the hinge pass.
+**Never upload:** anything outside `store/`, anything in `store/_flagged/` until reviewed, and nothing from `ci.yml`'s `screenshots` artifact (test and UI-check frames).
 
 ## Truthfulness rules (check every frame before upload)
 

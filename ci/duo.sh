@@ -7,6 +7,10 @@
 #  - Never run `simctl io … screenConfig` on the Duo (SpringBoard crash loop).
 #  - Wait ~2.5 s after a hinge move for the display to settle; `hinge` occasionally fails a move, so retry.
 # Env: UDID, OUT (duo-screens), PASSES ("hinge store ui").
+#      STORE_LIST (optional): a scenario file (ci/store-scenarios.txt format, `name|demo args|wait|caption|expect`)
+#      for the store pass instead of its built-in list; STORE_FILTER (regex on the name, default "."). Each line is
+#      launched with `;orient=portrait` added, waits for its "BRIM-T freeze <x>" line when it has freezeOn=<x>, and is
+#      captured to store-<name>.png with its log snapshot at logs/store-<name>.at-capture.txt (ci/store-set.sh).
 set -uo pipefail
 
 APP="build/Build/Products/Debug-iphonesimulator/Brim.app"
@@ -101,7 +105,35 @@ if [[ " $PASSES " == *" hinge "* ]]; then
 fi
 
 # ---- pass: autopilot frames on the Duo canvas (store set) --------------------------------------------------
-if [[ " $PASSES " == *" store "* ]]; then
+# store_wait <launch name> <demo args> <seconds>: with freezeOn=<x>, wait (up to max(seconds, 45)) for the app's
+# "BRIM-T freeze <x>" line, then 2 s so the frozen frame is on screen; otherwise a plain sleep.
+store_wait() {
+  local f="$OUT_ABS/logs/$1.txt" secs="${3%%.*}" freeze="" t=0 limit
+  [[ "$secs" =~ ^[0-9]+$ ]] || secs=8
+  if [[ "$2" =~ freezeOn=([a-z]+) ]]; then freeze="${BASH_REMATCH[1]}"; fi
+  if [[ -z "$freeze" ]]; then sleep "$secs"; return 0; fi
+  limit=$(( secs > 45 ? secs : 45 ))
+  while (( t < limit )); do grep -q "BRIM-T freeze $freeze" "$f" 2>/dev/null && break; sleep 1; t=$((t+1)); done
+  if grep -q "BRIM-T freeze $freeze" "$f" 2>/dev/null; then
+    log "store $1 froze ($freeze) after ${t}s"; sleep 2
+  else
+    log "WARN store $1: no 'BRIM-T freeze $freeze' line after ${limit}s (capturing anyway)"
+  fi
+}
+
+if [[ " $PASSES " == *" store "* && -n "${STORE_LIST:-}" ]]; then
+  # Store pass from a scenario file (store.yml: ci/store-scenarios.txt, the D* frames).
+  hinge_set 150 || true
+  if [[ ! -f "$STORE_LIST" ]]; then log "WARN STORE_LIST $STORE_LIST not found: store pass skipped"; fi
+  [[ -f "$STORE_LIST" ]] && while IFS='|' read -r -u 3 name args wait _caption _expect; do
+    [[ -z "$name" || "$name" == \#* ]] && continue
+    [[ "$name" =~ ${STORE_FILTER:-.} ]] || continue
+    launch "store-$name" "$args;orient=portrait"
+    store_wait "store-$name" "$args" "${wait:-8}"
+    shoot "store-$name" inner
+    cp "$OUT_ABS/logs/store-$name.txt" "$OUT_ABS/logs/store-$name.at-capture.txt" 2>/dev/null || true
+  done 3< "$STORE_LIST"
+elif [[ " $PASSES " == *" store "* ]]; then
   hinge_set 150 || true
   while IFS='|' read -r name args wait; do
     [[ -z "$name" || "$name" == \#* ]] && continue
