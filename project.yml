@@ -1,0 +1,69 @@
+# XcodeGen spec. Generate the Xcode project on a Mac with:
+#   brew install xcodegen && xcodegen generate
+name: Brim
+options:
+  bundleIdPrefix: com.pravegm
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""   # set in Xcode > Signing & Capabilities, or by testflight.yml
+targets:
+  Brim:
+    type: application
+    platform: iOS
+    sources:
+      - path: Brim
+    info:
+      path: Brim/Info.plist
+      properties:
+        CFBundleDisplayName: Brim
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIStatusBarHidden: true
+        UIRequiresFullScreen: true
+        UIUserInterfaceStyle: Light
+        UIViewControllerBasedStatusBarAppearance: false
+        CADisableMinimumFrameDurationOnPhone: true
+        ITSAppUsesNonExemptEncryption: false
+        GKGameCenterBadgingDisabled: true
+    entitlements:
+      path: Brim/Brim.entitlements
+      properties:
+        com.apple.developer.game-center: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pravegm.brim
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_PREVIEWS: YES
+  BrimTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: BrimTests
+    dependencies:
+      - target: Brim
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Brim:
+    build:
+      targets:
+        Brim: all
+        BrimTests: [test]
+    test:
+      targets:
+        - BrimTests

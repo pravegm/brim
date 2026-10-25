@@ -1,0 +1,18 @@
+# name|demo args (Brim/App/DemoMode.swift)|seconds before the capture
+# The autopilot plays for real (a TiltSource that reads the snapshot); freezeOn pauses the game at a moment so the
+# capture is stable: midpour (stream in the air, glass ~60 % of the line), perfect / spill (0.35 s after that
+# judgement), finished (results card).
+01-menu|screen=menu|6
+02-midpour|mode=shift:1-1;autopilot=perfect;freezeOn=midpour|10
+03-perfect|mode=shift:1-2;autopilot=perfect;freezeOn=perfect|14
+04-spill|mode=shift:1-3;autopilot=spill;freezeOn=spill|14
+05-soda-foam|mode=shift:2-1;autopilot=perfect;freezeOn=midpour|10
+06-shake|mode=shift:3-1;autopilot=perfect;freezeOn=midpour|10
+07-rush|mode=rush;autopilot=perfect;freezeOn=midpour;streak=7|12
+08-results|mode=shift:1-1;screen=results;progress=mid|6
+09-venues|screen=venues;progress=mid|6
+10-settings|screen=settings|5
+11-standup|screen=standup|5
+12-first-run|mode=shift:1-1;hints=fresh|6
+13-daily|mode=daily;autopilot=perfect;freezeOn=midpour|10
+14-icon|screen=icon|6

@@ -1,0 +1,114 @@
+name: Duo
+
+# Runs Brim on a real iPhone Duo simulator (iOS 27.1 runtime, ~7.85 GB download) and drives the hinge with the
+# community `hinge` CLI (artemnovichkov/hinge, private Device Hub HID event). Captures tabletop (portrait) frames of
+# real hinge-driven pours plus autopilot store frames. Script: ci/duo.sh. Manual only (expensive).
+on:
+  workflow_dispatch:
+    inputs:
+      passes:
+        description: "Passes to run: hinge (real hinge pours), store (autopilot frames on the Duo canvas), ui (menus, cover)"
+        type: string
+        default: "hinge store ui"
+
+concurrency:
+  group: duo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  duo:
+    runs-on: xcode-27
+    timeout-minutes: 120
+    env:
+      XCODE_APP: /Applications/Xcode_27.1.app
+      RUNTIME_ID: com.apple.CoreSimulator.SimRuntime.iOS-27-1
+      DUO_TYPE_FALLBACK: com.apple.CoreSimulator.SimDeviceType.iPhone-Duo
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.1
+        timeout-minutes: 8
+        run: |
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+          xcrun simctl list runtimes
+          command -v gtimeout >/dev/null || brew install coreutils
+
+      - name: Install the iOS 27.1 runtime
+        timeout-minutes: 30
+        run: |
+          installed() {
+            xcrun simctl list runtimes -j | python3 -c "import json,sys,os; sys.exit(0 if any(r['identifier']==os.environ['RUNTIME_ID'] and r.get('isAvailable') for r in json.load(sys.stdin)['runtimes']) else 1)"
+          }
+          if installed; then echo "already installed"; exit 0; fi
+          for attempt in 1 2 3; do
+            gtimeout 1500 xcodebuild -downloadPlatform iOS 2>&1 | grep -v "Downloading iOS" | tail -20 || true
+            installed && break
+            sleep 15
+          done
+          installed || { echo "::error::iOS 27.1 runtime not installed"; exit 1; }
+
+      - name: Create and boot the iPhone Duo
+        id: sim
+        timeout-minutes: 10
+        run: |
+          type=$(xcrun simctl list devicetypes -j | python3 -c "import json,sys; print(next((d['identifier'] for d in json.load(sys.stdin)['devicetypes'] if d['name']=='iPhone Duo'), ''))")
+          type="${type:-$DUO_TYPE_FALLBACK}"
+          udid=$(xcrun simctl create "Brim Duo" "$type" "$RUNTIME_ID")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+
+      - name: Install the hinge tool
+        timeout-minutes: 10
+        continue-on-error: true
+        run: gtimeout 300 brew install artemnovichkov/tap/hinge || echo "::warning::hinge install failed"
+
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for the Duo
+        timeout-minutes: 30
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -o pipefail
+          gtimeout 1700 xcodebuild build -project Brim.xcodeproj -scheme Brim -destination "id=$UDID" \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E "error:|\*\* " || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
+
+      - name: Wait for boot, warm up the hinge helper
+        timeout-minutes: 15
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          gtimeout 840 xcrun simctl bootstatus "$UDID" -b
+          if command -v hinge >/dev/null; then gtimeout 120 hinge -d "$UDID" get || true; fi
+          gtimeout 30 xcrun simctl io "$UDID" enumerate || true
+
+      - name: Capture
+        timeout-minutes: 50
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          PASSES: ${{ inputs.passes }}
+          OUT: duo-screens
+        run: bash ci/duo.sh
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: duo-screens
+          path: |
+            duo-screens/
+            build.log
+          if-no-files-found: ignore
+
+      - name: Shut down
+        if: always()
+        continue-on-error: true
+        run: xcrun simctl shutdown all || true
