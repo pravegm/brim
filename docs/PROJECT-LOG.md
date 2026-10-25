@@ -84,3 +84,12 @@
 
 ## Round 4 (final polish): in progress
 - The REVIEW-3 and QA-1 P1s are mandatory (`design/ROUND-4.md`).
+- **Round 4 result:** 156/156 tests green after hoisting mutating calls out of `#expect`.
+  - The final Duo run passed `CLOSE-GUARD` again.
+  - The final store set came out as 16 captioned frames: 6.9", 6.1" and Duo, at slot sizes, 0 flagged.
+  - 10 achievement badges were rendered.
+  - One overprint was found in D2: the streak pop sat on the PERFECT stamp because the stamp was measured at its
+    pop-in scale. The fix is committed but **not compiled**.
+- **CI blocked:** the run was refused with "recent account payments have failed or your spending limit needs to be
+  increased". Private-repo Mac minutes ran out. The founder must make the repo public or raise the limit
+  (`docs/HANDOVER.md` item 0).

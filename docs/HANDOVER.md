@@ -49,6 +49,16 @@ jug moves. My own shortlist and an independent concept agent both picked this id
 
 ## What only you can do (about 1 hour total, click-by-click in `docs/LAUNCH-RUNBOOK.md`)
 
+0. **Unblock CI (do this first).** The repo is private, so GitHub bills its Mac build minutes, and today's iterations
+   used up the allowance. The last run failed with "recent account payments have failed or your spending limit needs
+   to be increased". Pick one:
+   - **(recommended)** make `pravegm/brim` public, as Squish is, which makes Mac minutes free and also lets GitHub Pages
+     host the support and privacy pages (runbook §0, Option A);
+   - or raise the Actions spending limit: github.com → Settings → Billing and plans.
+
+   Until then, nothing new can be compiled, including the TestFlight build. One small fix is already committed but
+   not yet compiled; the next CI run will check it. It stops the "×5 STREAK" pop being drawn over the PERFECT stamp
+   in store frame D2.
 1. **Create the app record** (bundle ID `com.pravegm.brim`, name `Brim: Fold to Pour`). Submit the featuring
    nomination **by Tue 27 Oct**: Apple wants 3 weeks' notice for the proposed **Tue 17 Nov** launch.
 2. **Add the 4 GitHub secrets** to `pravegm/brim`. They are the same Apple key values Squish uses. Then press
@@ -59,6 +69,18 @@ jug moves. My own shortlist and an independent concept agent both picked this id
 4. **Decide where the support and privacy pages live.** The repo is private: I wasn't allowed to make it public
    without you. Then give me a support email.
 5. **Paste the listing** (`docs/appstore/`) and press Submit.
+
+## The store screenshots
+
+They're ready, captioned and at the exact slot sizes, in the artifacts of the **App Store screenshots** run
+https://github.com/pravegm/brim/actions/runs/40219538257:
+
+- `store-69` (6.9-inch);
+- `store-61` (6.1-inch);
+- `store-duo` (iPhone Duo inner display).
+
+Each set has a `MANIFEST.txt` (0 flagged). D2 needs one re-shoot after the CI unblock: run
+**Actions → App Store screenshots** again. GitHub keeps artifacts for 90 days.
 
 ## Where everything is
 
