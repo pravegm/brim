@@ -123,11 +123,27 @@ enum OrientationLock {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: asked)) { error in
                 #if DEBUG
                 print("BRIM-T orient request error: \(error.localizedDescription)")
+                Task { @MainActor in logMasks(scene) }
                 #endif
                 Task { @MainActor in requestFailed(asked) }
             }
         }
     }
+
+    #if DEBUG
+    /// Where an upside-down refusal comes from: the plist, the app delegate, the root controller, or the system.
+    static func logMasks(_ scene: UIWindowScene) {
+        let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
+        let plist = (Bundle.main.object(forInfoDictionaryKey: "UISupportedInterfaceOrientations") as? [String]) ?? []
+        let app = window.map { UIApplication.shared.supportedInterfaceOrientations(for: $0).rawValue } ?? 0
+        let root = window?.rootViewController?.supportedInterfaceOrientations.rawValue ?? 0
+        let rootClass = window?.rootViewController.map { NSStringFromClass(type(of: $0)).prefix(40) } ?? "none"
+        print("BRIM-T masks plist=\(plist.map { $0.replacingOccurrences(of: "UIInterfaceOrientation", with: "") }) "
+              + "app=\(app) root=\(root) rootClass=\(rootClass) windows=\(scene.windows.count) "
+              + "idiom=\(UIDevice.current.userInterfaceIdiom.rawValue) (upside down = 4, landscapes = 24)")
+        fflush(stdout)
+    }
+    #endif
 
     // MARK: - The root controller's own mask
 

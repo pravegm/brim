@@ -348,7 +348,10 @@ enum DemoOrientation {
                         let asked = OrientationLock.tabletop
                         scene.requestGeometryUpdate(.iOS(interfaceOrientations: asked)) { error in
                             print("BRIM-T orient request error: \(error.localizedDescription)")
-                            Task { @MainActor in OrientationLock.requestFailed(asked) }
+                            Task { @MainActor in
+                                OrientationLock.logMasks(scene)
+                                OrientationLock.requestFailed(asked)
+                            }
                         }
                     }
                     if !failedLogged && Date().timeIntervalSince(start) > 30 {
