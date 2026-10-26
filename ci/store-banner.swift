@@ -196,9 +196,9 @@ struct Camera {
 }
 
 let degrees = CGFloat.pi / 180
-let tilt = num("tilt", kind == "header" ? 16 : 17) * degrees      // the raised half leans back this far from vertical
-let elevation = num("elev", kind == "header" ? 26 : 30) * degrees
-let yaw = num("yaw", kind == "header" ? 10 : 7) * degrees          // + = camera to the device's right
+let tilt = num("tilt", kind == "header" ? 16 : 15) * degrees      // the raised half leans back this far from vertical
+let elevation = num("elev", kind == "header" ? 26 : 34) * degrees
+let yaw = num("yaw", kind == "header" ? 10 : 6) * degrees          // + = camera to the device's right
 let camera = Camera(target: V3(x: 0, y: 150, z: 120), distance: num("distance", 2900),
                     elevation: elevation, yaw: yaw)
 
