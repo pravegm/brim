@@ -123,8 +123,10 @@ struct ResultsView: View {
     }
 
     /// Round 6 (decision 4): what's left to chase on a cleared shift. Under 3★: what 3★ needs, against what this run
-    /// did ("3★ needs every glass a hit and 5 of 8 Perfect. You had 3 Perfect, 1 miss."). At 3★ without the crown:
-    /// the Flawless crown's rule. nil for a crowned shift, a failed shift (it has its coaching tip) and other modes. Pure.
+    /// did ("3★ needs every glass a hit. You had 1 miss."). At 3★ without the crown: the Flawless crown's rule. nil for
+    /// a crowned shift, a failed shift (it has its coaching tip) and other modes. Pure.
+    /// Round 7 (QA-3 P1-2): the star rule is now 3★ = cleared with no misses, 2★ = one miss, 1★ = cleared
+    /// (`Rules.stars`); Perfects only count toward the crown, so the line names the misses alone.
     static func chaseLine(for result: RunResult, hasCrown: Bool) -> String? {
         guard case let .shift(id) = result.mode, result.cleared,
               let total = LevelCatalog.level(id)?.orders.count, total > 0 else { return nil }
@@ -133,13 +135,11 @@ struct ResultsView: View {
             if hasCrown { return nil }
             return "Flawless crown: every glass Perfect. You had \(perfects) of \(total)."
         }
-        // Rules.stars: 3★ = every glass a hit (so no spills) and ≥ 60 % Perfect.
-        let need = (total * 6 + 9) / 10
+        // A miss = a glass that wasn't a hit (short, over or spill), as Rules.stars counts them.
         let hits = result.judgements.filter { $0.isHit }.count
         let misses = max(total - hits, 0)
-        var had = ["\(perfects) Perfect"]
-        if misses > 0 { had.append("\(misses) miss\(misses == 1 ? "" : "es")") }
-        return "3★ needs every glass a hit and \(need) of \(total) Perfect. You had \(had.joined(separator: ", "))."
+        guard misses > 0 else { return nil }
+        return "3★ needs every glass a hit. You had \(misses) miss\(misses == 1 ? "" : "es")."
     }
 
     /// Round 6 (decision 5): the Daily card's lead line. Pure.
@@ -399,7 +399,8 @@ struct ResultsView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let shareText {
+            // QA-3 P2-15: SE-size phones (667 pt) have no room for the preview; the Share button stays.
+            if let shareText, !info.isCompact {
                 // Round 6 (decision 5, REVIEW-5 §6 P2): exactly what Share posts.
                 Label {
                     Text(shareText)

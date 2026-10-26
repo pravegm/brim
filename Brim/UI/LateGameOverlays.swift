@@ -25,6 +25,13 @@ enum VenueIntroCard {
         }
     }
 
+    /// QA-3 P2-10: the card waits while the Duo's flat gate is closed, not only while the gate's card shows (that card
+    /// is delayed 0.35 s, so the intro card used to pop in and then vanish under it). Pure.
+    static func isVisible(hint: HintKind?, gateClosed: Bool, showFlatGate: Bool) -> Bool {
+        guard let hint, hint.isVenueIntro else { return false }
+        return !gateClosed && !showFlatGate
+    }
+
     static func title(for hint: HintKind) -> String {
         guard let venue = hint.introVenue else { return "" }
         return LevelCatalog.title(of: venue)
@@ -53,7 +60,8 @@ enum VenueIntroCard {
 }
 
 /// The intro card over the play scene. Only the card takes touches (a tap dismisses it); a drag anywhere else pours,
-/// and the first pour dismisses it too (GameController). Hidden while the Duo's flat gate card is up.
+/// and the first pour dismisses it too (GameController). Hidden while the Duo's flat gate is closed (QA-3 P2-10). While
+/// it is up the run holds (`GameSession.setStartHold`, QA-3 P1-3): no belt, patience or line fade under the card.
 struct VenueIntroOverlay: View {
     @ObservedObject var hud: HUDState
     let hint: HintKind?
@@ -66,7 +74,7 @@ struct VenueIntroOverlay: View {
         ZStack {
             Color.clear
                 .allowsHitTesting(false)
-            if let hint, hint.isVenueIntro, !hud.showFlatGate {
+            if let hint, VenueIntroCard.isVisible(hint: hint, gateClosed: hud.gateClosed, showFlatGate: hud.showFlatGate) {
                 let spot = VenueIntroCard.spot(anchors: hud.anchors, info: info)
                 Button {
                     FeedbackDirector.shared.uiTap()
@@ -84,6 +92,7 @@ struct VenueIntroOverlay: View {
         .frame(width: info.size.width, height: info.size.height)
         .animation(BrimTheme.pop(reduceMotion), value: hint)
         .animation(BrimTheme.pop(reduceMotion), value: hud.showFlatGate)
+        .animation(BrimTheme.pop(reduceMotion), value: hud.gateClosed)
     }
 }
 

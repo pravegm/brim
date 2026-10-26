@@ -120,3 +120,16 @@
   - achievements fire on clear.
 - In parallel: the balance engineer (simulated novice, casual and expert players over all levels) and the critic
   (REVIEW-5: late venues and day-7 fun).
+- **Round 5 landed green** (191/191 tests, run 40245461314). A foam test's simulated pourer was too fast for soda:
+  that's the "pour slowly" mechanic working, so the test now pours like a careful player.
+- **REVIEW-5** (late game): about 7.0, against 8.7 for the first hour. The special mechanics are never taught or
+  signalled, and there's nothing to chase after 3★. It became round 6 (`design/ROUND-6.md`):
+  - venue intro cards, and shift and tier banners;
+  - Rush travels a venue per 12-glass tier;
+  - Flawless crowns;
+  - a Daily streak and week strip;
+  - conveyor pour zone and belt queue, a potion ghost line, a real Sand Bar with a slide telegraph, an hourglass glass.
+- **Balance harness:** simulated novice, casual and expert players. Rush was found too short and was rebalanced:
+  bigger refills, and only rim spills strike in Rush. `serveIdle` went to 0.5 s so players can top up. Level 2-7 was
+  rebuilt (it was a wall). `balance.yml` runs the full sweep.
+- Round 6 compiled first try: 219/220 tests, with one stale test value fixed.

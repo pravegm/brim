@@ -53,7 +53,10 @@ final class GameScene: SKScene {
     }
 
     /// Round 6 (REVIEW-5 §2): the next orders on a conveyor, nearest first, drawn as empty glasses riding in on the
-    /// belt behind the one being poured. nil = derive them from the shift's level (Rush: set them if known).
+    /// belt behind the one being poured. Shifts derive them from the level (which wins). Round 7 (QA-3 P2-1): Rush has
+    /// no list and `GameSnapshot` carries none, so the App sets this to what Core knows of the orders after every glass
+    /// on the counter (`[session.upcomingOrder]`, nil/empty when unknown); set it only when it changes. In Rush only
+    /// belt orders (no patience) are drawn.
     var upcomingOrders: [GlassOrder]?
 
     let layout: WorldLayout
@@ -390,6 +393,7 @@ final class GameScene: SKScene {
         bellRing.isHidden = true
         backdropFade.removeAllActions()
         backdropFade.isHidden = true
+        prewarmedTier = 0
         jug.root.removeAction(forKey: "vesselFade")
         jug.root.alpha = 1
         spillColor = SceneColor.opaque(snapshot.jug.liquid.top.skColor)
@@ -533,6 +537,10 @@ final class GameScene: SKScene {
             // Decision 4: when a glass starts to leave, the puddle under it starts drying.
             if let prev = lastPhase[g.id], prev != g.phase, g.phase == .leaving {
                 fx.dryPuddles(nearX: g.x, halfWidth: view.baseOuterHalfWidth + 40)
+                // Conveyor: a glass that rode the belt rides off — the bell on the shelf flicks and rings. Only one
+                // that really rode it (moved while served), whatever the room is now: not the last Soda glass as Rush
+                // turns into the Conveyor, and still the last belt glass as it turns into the Diner (QA-3 P2-4).
+                if prev == .served, view.rodeBelt, let j = g.result { ringBell(judgement: j) }
             }
             lastPhase[g.id] = g.phase
             // Overflow / wet drips.
@@ -558,15 +566,33 @@ final class GameScene: SKScene {
         }
         if waitingID == nil { waitingGlassWorldFrame = nil }
 
+        // The bell and the belt slats belong to the Conveyor's room: they fade in and out with the backdrop's
+        // cross-fade, so the last belt glass of Rush's Conveyor tier still rides out on moving slats and flicks the
+        // bell as it goes, while the room turns into the Diner (QA-3 P2-2 / P2-4).
+        let lookTarget: CGFloat = palette.venue == .conveyor ? 1 : 0
+        if dt > 0 {
+            let step = dt / GameScene.bellFade
+            bellAlpha = lookTarget > bellAlpha ? min(lookTarget, bellAlpha + step) : max(lookTarget, bellAlpha - step)
+        } else if !advanced {
+            bellAlpha = lookTarget
+        }
+
         updateCoaster(s, dt: dt)
         updateSlotCoaster(s, waitingID: waitingID, dt: dt)
         updateBelt(s, dt: dt)
         updateBeltQueue(s, lead: lead, dt: dt, advanced: advanced)
         updatePourZone(s, lead: lead, dt: dt, advanced: advanced)
-        bell.isHidden = palette.venue != .conveyor
+        bell.alpha = bellAlpha
+        bell.isHidden = bellAlpha < 0.01
         if bell.isHidden { bellRing.isHidden = true }
         fx.syncPuddles(s.puddles, counterY: cy, color: spillColor)
+        if advanced { prewarmNextRushLook(s) }
     }
+
+    /// The Conveyor props' (bell, belt slats) fade with a venue change (the backdrop's cross-fade is 0.8 s).
+    static let bellFade: CGFloat = 0.8
+    /// 0…1: how much of the Conveyor's props show (1 in the Conveyor, 0 elsewhere, between while the room changes).
+    private var bellAlpha: CGFloat = 0
 
     // MARK: Conveyor (round 6, REVIEW-5 §2)
 
@@ -650,11 +676,21 @@ final class GameScene: SKScene {
         return s.ordersDone + unserved
     }
 
-    /// The `offset`-th upcoming order (0 = next): `upcomingOrders` if set, else the shift's own list.
+    /// The `offset`-th upcoming order (0 = next) that rides the belt: the shift's own list (complete, so it wins), else
+    /// `upcomingOrders` (Rush: the App publishes what Core knows of the next glasses; the snapshot carries none). In
+    /// Rush only the Conveyor tier's orders ride (Core gives them a belt and no patience; every other tier's glass has
+    /// patience), so the queue ends at the tier's last belt glass instead of showing a Diner glass on the belt.
     private func upcomingOrder(base: Int, offset: Int) -> GlassOrder? {
-        if let given = upcomingOrders { return offset < given.count ? given[offset] : nil }
-        let k = base + offset
-        return k >= 0 && k < shiftOrders.count ? shiftOrders[k] : nil
+        var order: GlassOrder?
+        if !shiftOrders.isEmpty {
+            let k = base + offset
+            order = k >= 0 && k < shiftOrders.count ? shiftOrders[k] : nil
+        } else if let given = upcomingOrders {
+            order = offset >= 0 && offset < given.count ? given[offset] : nil
+        }
+        guard let o = order else { return nil }
+        if case .rush? = lastMode, o.patience != nil { return nil }
+        return o
     }
 
     /// Spacing between a belt glass and the one riding in behind it: where Core will park the next one when this one
@@ -921,11 +957,13 @@ final class GameScene: SKScene {
 
     /// Conveyor: the belt slats move with whatever glass is riding it.
     private func updateBelt(_ s: GameSnapshot, dt: CGFloat) {
-        guard palette.venue == .conveyor else {
+        // `bellAlpha`: the Conveyor look's share (fades with a venue change, see `render`).
+        guard bellAlpha > 0.01 else {
             beltSlats.isHidden = true
             return
         }
         beltSlats.isHidden = false
+        beltSlats.alpha = bellAlpha
         var speed: CGFloat = 0
         for g in s.glasses {
             if let v = glasses[g.id], abs(v.velocityX) > abs(speed) { speed = v.velocityX }
@@ -973,11 +1011,8 @@ final class GameScene: SKScene {
                 glasses[glassID]?.slosh(2)
             case let .served(glassID, judgement, _):
                 lastServedGlass = glassID
-                // Conveyor: the glass leaves the window — the bell on the shelf flicks and rings.
-                for g in s.glasses where g.id == glassID {
-                    if isBelt(g) { ringBell(judgement: judgement) }
-                    break
-                }
+                // Conveyor: the bell flicks as a belt glass rides off (`render`, on `.served` → `.leaving`), the same
+                // moment and rule as Feel's ring (QA-3 P2-4).
                 guard let v = glasses[glassID] else { break }
                 if judgement == .perfect {
                     v.celebrate()
@@ -1130,6 +1165,12 @@ final class GameScene: SKScene {
             jug.root.run(SKAction.fadeIn(withDuration: 0.45), withKey: "vesselFade")
         }
         palette = p
+        if !animated {
+            // A look set from outside a run (the App's venue, a reset): the bell is there or not at once.
+            bellAlpha = p.venue == .conveyor ? 1 : 0
+            bell.alpha = bellAlpha
+            bell.isHidden = bellAlpha < 0.01
+        }
         applyPaletteToNodes()
         if backdropScale > 0 { buildBackdrop(scale: backdropScale) }
         if animated && changedVenue, let old = oldTexture, old !== backdrop.texture {
@@ -1159,22 +1200,80 @@ final class GameScene: SKScene {
     }
 
     private func buildBackdrop(scale: CGFloat) {
-        let dailyKey = effectiveDaily.map { String($0) } ?? "-"
-        let key = "\(effectiveVenue.rawValue)-\(effectiveRush ? "dusk" : "day")-\(dailyKey)@\(Int(scale * 10))"
-        let tex: SKTexture
-        if let t = backdropCache[key] {
-            tex = t
-        } else {
-            tex = SceneArt.backdrop(layout: layout, palette: palette, dailyNumber: effectiveDaily, scale: scale)
-            // ~23 MB per full-canvas texture at 3×: keep at most two looks (QA-1 P2-13).
-            if backdropCache.count >= 2 { backdropCache.removeAll() }
-            backdropCache[key] = tex
-        }
+        let tex = backdropTexture(venue: effectiveVenue, palette: palette, scale: scale)
         backdropScale = scale
         backdrop.texture = tex
         backdrop.color = .white
         backdrop.colorBlendFactor = 0
         backdrop.size = layout.size
+    }
+
+    // MARK: Backdrop cache (round 7, QA-3 P2-5)
+    //
+    // One look per venue (+ dusk/day + Daily number + scale), least recently used dropped first. Rush travels through
+    // a venue per tier, so a Rush tier change used to repaint a full-canvas texture (~23 MB at 3×) on the main thread
+    // at the very moment the next glass slides in. Now Rush looks are painted at 2× (~10 MB; soft painted art, and the
+    // glasses, jug and stream are drawn live at full resolution over it), the next tier's look is painted ahead, at a
+    // quiet moment late in the current tier (`prewarmNextRushLook`), and the cache keeps three Rush looks (previous,
+    // current, next): the tier change itself is a cache hit. Outside Rush it keeps two (QA-1 P2-13).
+
+    /// Rush backdrops are painted at most at this scale.
+    static let rushBackdropScale: CGFloat = 2
+    /// Paint the next Rush tier's look once this many glasses of the current tier are done and nothing is pouring…
+    static let prewarmFromGlass = CoreTuning.rushTierEvery - 4
+    /// …or at this many regardless (still well before the change).
+    static let prewarmForcedFromGlass = CoreTuning.rushTierEvery - 2
+    /// Tests: full-canvas backdrops painted since the scene was made.
+    private(set) var backdropRenderCount = 0
+    /// Tests: how many looks the cache holds.
+    var cachedLookCount: Int { backdropCache.count }
+    /// Least recently used first.
+    private var backdropOrder: [String] = []
+    /// The Rush tier whose successor's look has been painted (0 = none yet).
+    private var prewarmedTier = 0
+
+    private var backdropCacheCapacity: Int { effectiveRush ? 3 : 2 }
+
+    private func lookKey(_ venue: VenueID, rush: Bool, daily: Int?, scale: CGFloat) -> String {
+        let dailyKey = daily.map { String($0) } ?? "-"
+        return "\(venue.rawValue)-\(rush ? "dusk" : "day")-\(dailyKey)@\(Int(scale * 10))"
+    }
+
+    /// The look for `venue` in `palette` (cached), painted at `scale` (capped for Rush).
+    private func backdropTexture(venue: VenueID, palette pal: ScenePalette, scale: CGFloat) -> SKTexture {
+        let rush = effectiveRush
+        let s = rush ? min(scale, GameScene.rushBackdropScale) : scale
+        let key = lookKey(venue, rush: rush, daily: effectiveDaily, scale: s)
+        if let t = backdropCache[key] {
+            if backdropOrder.last != key, let i = backdropOrder.firstIndex(of: key) {
+                backdropOrder.remove(at: i)
+                backdropOrder.append(key)
+            }
+            return t
+        }
+        let tex = SceneArt.backdrop(layout: layout, palette: pal, dailyNumber: effectiveDaily, scale: s)
+        backdropRenderCount += 1
+        while backdropOrder.count >= backdropCacheCapacity && !backdropOrder.isEmpty {
+            let oldest = backdropOrder.removeFirst()
+            backdropCache[oldest] = nil
+        }
+        backdropCache[key] = tex
+        backdropOrder.append(key)
+        return tex
+    }
+
+    /// Rush: paint the next tier's look ahead of the change (once per tier), so the change is a cache hit.
+    private func prewarmNextRushLook(_ s: GameSnapshot) {
+        guard case .rush = s.mode, s.rushTier >= 1, s.rushTier != prewarmedTier, backdropScale > 0,
+              s.phase == .playing else { return }
+        let into = s.ordersDone - (s.rushTier - 1) * CoreTuning.rushTierEvery
+        let quiet = s.stream.isEmpty && s.jug.flow < 0.01
+        guard into >= GameScene.prewarmForcedFromGlass || (into >= GameScene.prewarmFromGlass && quiet) else { return }
+        prewarmedTier = s.rushTier
+        let next = Rules.rushVenue(tier: s.rushTier + 1)
+        var p = ScenePalette.forVenue(next)
+        if effectiveRush { p = p.duskified() }
+        _ = backdropTexture(venue: next, palette: p, scale: backdropScale)
     }
 }
 

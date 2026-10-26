@@ -76,6 +76,9 @@ final class HUDState: ObservableObject {
     @Published var gateAfterPause = false
     /// ROUND-5 decision 1: the gate has held for `GameController.touchOfferDelay` s: the card offers "Use touch instead".
     @Published var offerTouch = false
+    /// QA-3 P2-10: the Duo's flat gate is closed right now (its card may still be waiting `gateCardDelay`). The venue
+    /// intro card waits for it to open, so it never pops in and then vanishes under the gate card.
+    @Published var gateClosed = false
     /// Where the jug and the glass under the spout are (world), for hints and the "Fill to here" callout.
     @Published var anchors: PlayAnchors?
     /// REVIEW-3 P1-4 fallback (phones): the next order's drink colour when no waiting glass fits on screen; the HUD
@@ -138,7 +141,13 @@ final class GameController: ObservableObject, SceneDriver {
     /// The run paused itself because the phone was closing (hinge < 70°) or shut: the calm "Open me up" card.
     @Published private(set) var isClosedPaused = false
     @Published private(set) var summary: ResultSummary?
-    @Published private(set) var activeHint: HintKind?
+    /// QA-3 P1-3: while a venue intro card is up the run holds (`GameSession.setStartHold`), so "Pour to start" is true:
+    /// no belt, patience or line fade runs under the card. Any change of hint (dismiss, first pour, a new run) re-syncs.
+    @Published private(set) var activeHint: HintKind? {
+        didSet {
+            if activeHint != oldValue { syncStartHold() }
+        }
+    }
     /// A hinge has reported this launch (or on an earlier launch of this device), or demo `duo`.
     @Published private(set) var hingeSeen: Bool
     /// The lid is shut (hinge ≤ 15°, released at ≥ 20°).
@@ -147,8 +156,9 @@ final class GameController: ObservableObject, SceneDriver {
     @Published private(set) var usesTouch = true
     /// Book pose: the player chose "Play with touch instead"; the game runs in a portrait column.
     @Published private(set) var bookTouchOverride = false
-    /// ROUND-5 decision 1: the player tapped "Use touch instead" on the flat gate. This run only; nothing is stored, and
-    /// the next run (start, restart, next shift, menu) is back on the hinge.
+    /// ROUND-5 decision 1: the player tapped "Use touch instead" on the flat gate. Round 7 (QA-3 P2-11): remembered for
+    /// the app session (Next shift, Retry and the menu keep it) until the app relaunches or the hinge pours again (laid
+    /// flat, then lifted: `hingePoursAgain`); then the next run is back on the hinge. Nothing is stored.
     @Published private(set) var runTouchOverride = false
     /// QA-1 P1-2: this run is today's one scored Daily attempt (the pause card has no Restart).
     @Published private(set) var isScoredDaily = false
@@ -204,6 +214,13 @@ final class GameController: ObservableObject, SceneDriver {
     private var attractFrozeOnce = false
     /// What we last told `FeedbackDirector.setIdle` (nil = never).
     private var feedbackIdle: Bool?
+    /// QA-3 P2-11: while the touch override is on, the hinge has read flat / has poured again since.
+    private var touchOverrideSawFlat = false
+    private var touchOverrideHingePoured = false
+    /// QA-3 P1-3: what we last told `GameSession.setStartHold` (a new session starts unheld; see `buildSession`).
+    private var startHeld = false
+    /// Demo `freezeOn=tier`: session-sim time of the tier change being waited on (QA-3 P1-1, frame 26).
+    private var tierChangedAt: Double?
 
     // Round 6: banners, the Rush tier, the venue look
     /// The banner of this run (shown until `bannerUntil`, session time; a shift banner also holds while the start gate
@@ -337,6 +354,22 @@ final class GameController: ObservableObject, SceneDriver {
         return "TIER \(tier) · \(word)"
     }
 
+    /// QA-3 P2-12: a venue's intro card is only for players new to it. TestFlight 1.0 (2) saves have no venue hint keys,
+    /// so a veteran with stars there would be taught foam on a replay; any star in the venue counts as learned. Pure.
+    static func showsVenueIntro(starsInVenue: Int) -> Bool {
+        starsInVenue <= 0
+    }
+
+    /// QA-3 P2-1 (ROUND-7 App row): the belt queue the scene draws behind the lead glass in Rush, which has no shift
+    /// list. The next order (`GameSession.upcomingOrder`, plan number `nextIndex` from 0) rides in on the belt only when
+    /// it was drawn for a conveyor tier (`Rules.rushVenue`, a tier every `CoreTuning.rushTierEvery` glasses); a glass
+    /// waiting in the slot is never a belt glass. Empty = no queue. Pure.
+    static func rushBeltQueue(next: GlassOrder?, nextIndex: Int, slotGlassWaiting: Bool) -> [GlassOrder] {
+        guard let next, !slotGlassWaiting, nextIndex >= 0 else { return [] }
+        let tier = nextIndex / max(CoreTuning.rushTierEvery, 1) + 1
+        return Rules.rushVenue(tier: tier) == .conveyor ? [next] : []
+    }
+
     /// How long (session seconds) the shift banner stays up, and the tier banner after a change.
     static let shiftBannerSeconds = 1.6
     static let tierBannerSeconds = 1.6
@@ -463,6 +496,7 @@ final class GameController: ObservableObject, SceneDriver {
         } else if angle <= 15 {
             isShut = true
         }
+        trackHingePourUnderTouch(angle: angle)
         // ROUND-3 decision 1: closing never pours. Below 70° the run pauses (no step, so nothing is judged); open
         // past 100° again and it resumes behind the flat gate.
         guard closingGuardActive else { return }
@@ -529,24 +563,61 @@ final class GameController: ObservableObject, SceneDriver {
         refreshInputMode()
     }
 
-    /// ROUND-5 decision 1 (QA-2 P0-suspect): "Use touch instead" on the flat gate. The rest of this run pours by drag
-    /// (the touch source reads 0 until a drag, so the gate opens on the next step); nothing is persisted.
+    /// ROUND-5 decision 1 (QA-2 P0-suspect): "Use touch instead" on the flat gate. From now on the game pours by drag
+    /// (the touch source reads 0 until a drag, so the gate opens on the next step); nothing is persisted. Round 7 (QA-3
+    /// P2-11): it lasts until the app relaunches or the hinge pours again (`hingePoursAgain`), so a Duo whose hinge can't
+    /// reach flat isn't sent back to a 6 s gate at every Next shift and Retry.
     func useTouchForThisRun() {
         guard route == .playing, !isAttract, !runTouchOverride else { return }
         runTouchOverride = true
+        touchOverrideSawFlat = false
+        touchOverrideHingePoured = false
         touch.cancelled()
         refreshInputMode()
         flatSince = nil
         if hud.showFlatGate { hud.showFlatGate = false }
         if hud.offerTouch { hud.offerTouch = false }
+        if hud.gateClosed { hud.gateClosed = false }
         trace("BRIM-T touch for this run")
     }
 
-    /// Ends the run-only touch override (a new run or the menu).
+    /// Ends the touch override (the hinge poured again; see `trackHingePourUnderTouch`).
     private func clearRunTouchOverride() {
+        touchOverrideSawFlat = false
+        touchOverrideHingePoured = false
         guard runTouchOverride else { return }
         runTouchOverride = false
         refreshInputMode()
+    }
+
+    /// A new run or the menu: the touch override carries on unless the hinge has poured again since it was chosen.
+    private func endTouchOverrideIfHingePoured() {
+        if touchOverrideHingePoured { clearRunTouchOverride() }
+    }
+
+    /// Round 7 (QA-3 P2-11): lid tilt (degrees) a hinge must lift to, after reading flat, to count as pouring again.
+    static let hingePourTilt = 20.0
+
+    /// Round 7 (QA-3 P2-11): one hinge sample while "Use touch instead" is on. The hinge counts as pouring again once it
+    /// has read flat (`Rules.readsFlat`) and then lifts past `hingePourTilt`. Returns the new `sawFlat` and whether it
+    /// poured. Pure.
+    static func hingePoursAgain(sawFlat: Bool, hingeAngle: Double) -> (sawFlat: Bool, poured: Bool) {
+        let lid = HingeTiltSource.lidTilt(forHingeAngle: hingeAngle)
+        if Rules.readsFlat(lidTilt: lid) { return (sawFlat: true, poured: false) }
+        if sawFlat && lid >= hingePourTilt { return (sawFlat: false, poured: true) }
+        return (sawFlat: sawFlat, poured: false)
+    }
+
+    /// Watches the hinge while the touch override is on. A pour mid-run never swaps the input under the player: the
+    /// override ends at the next run (or at once when no run is live: menus, results).
+    private func trackHingePourUnderTouch(angle: Double) {
+        guard runTouchOverride, !touchOverrideHingePoured else { return }
+        let step = Self.hingePoursAgain(sawFlat: touchOverrideSawFlat, hingeAngle: angle)
+        touchOverrideSawFlat = step.sawFlat
+        guard step.poured else { return }
+        touchOverrideHingePoured = true
+        trace("BRIM-T touch override ends: the hinge poured")
+        if !isLiveRun { clearRunTouchOverride() }
     }
 
     /// The canvas went back to portrait: the book-pose touch column is no longer needed.
@@ -562,7 +633,7 @@ final class GameController: ObservableObject, SceneDriver {
         resultsTask?.cancel()
         closeOutRushRun()
         closeOutDailyAttempt()
-        clearRunTouchOverride()
+        endTouchOverrideIfHingePoured()
         isAttract = false
         self.mode = mode
         summary = nil
@@ -660,11 +731,22 @@ final class GameController: ObservableObject, SceneDriver {
         start(mode: .daily(LevelCatalog.dayNumber(for: Date())))
     }
 
-    /// Marks the active hint learned and clears it. Also the venue intro card's tap.
+    /// Marks the active hint learned and clears it. Also the venue intro card's tap (which releases the start hold).
     func dismissHint() {
         if let hint = activeHint { store.markHintSeen(hint.rawValue) }
         hintTask?.cancel()
         activeHint = nil
+    }
+
+    /// QA-3 P1-3: hold the run while a venue intro card is up; release it with the card (tap, first pour, a new run).
+    /// Core also releases it by itself on `.pourStarted`.
+    private func syncStartHold() {
+        guard let session else { return }
+        let on = !isAttract && activeHint?.isVenueIntro == true
+        guard on != startHeld else { return }
+        startHeld = on
+        session.setStartHold(on)
+        trace("BRIM-T start hold \(on ? 1 : 0)")
     }
 
     // MARK: - SceneDriver
@@ -701,6 +783,7 @@ final class GameController: ObservableObject, SceneDriver {
         process(events, snapshot: snapshot)
         armDailyIfReady(snapshot)
         syncLook(snapshot)
+        syncBeltQueue(snapshot)
         trackRushTier(snapshot)
         publishHUD(snapshot, now: now, force: false)
         checkFreeze(snapshot, events: events, now: now)
@@ -805,7 +888,7 @@ final class GameController: ObservableObject, SceneDriver {
         resultsTask?.cancel()
         closeOutRushRun()
         closeOutDailyAttempt()
-        clearRunTouchOverride()
+        endTouchOverrideIfHingePoured()
         if isPracticeDaily { isPracticeDaily = false }
         isAttract = true
         mode = .practice
@@ -873,6 +956,27 @@ final class GameController: ObservableObject, SceneDriver {
         if hud.darkBackdrop != dark { hud.darkBackdrop = dark }
     }
 
+    /// QA-3 P2-1: Rush tells the scene which order rides in on the belt next (shifts leave it nil: the scene reads the
+    /// level's own list). The scene is reused across runs, so every run sets it.
+    private func syncBeltQueue(_ s: GameSnapshot) {
+        guard let scene else { return }
+        var orders: [GlassOrder]? = nil
+        if !isAttract, case .rush = mode, let session {
+            var onCounter = 0
+            var waiting = false
+            for g in s.glasses {
+                if g.isWaitingInSlot {
+                    waiting = true
+                } else if g.result == nil && g.phase != .leaving {
+                    onCounter += 1
+                }
+            }
+            orders = Self.rushBeltQueue(next: session.upcomingOrder, nextIndex: s.ordersDone + onCounter,
+                                        slotGlassWaiting: waiting)
+        }
+        if scene.upcomingOrders != orders { scene.upcomingOrders = orders }
+    }
+
     /// Round 6 (decision 2): a Rush tier change puts up "TIER n · …" for `tierBannerSeconds` (Feel plays the chord).
     private func trackRushTier(_ s: GameSnapshot) {
         guard !isAttract, case .rush = mode, s.rushTier != lastRushTier else { return }
@@ -901,6 +1005,8 @@ final class GameController: ObservableObject, SceneDriver {
         if scene == nil { makeScene(layout) }
         let newSession = GameSession(mode: mode, layout: layout, seed: seed(for: mode))
         session = newSession
+        startHeld = false               // a new session starts unheld; the intro card below holds it again
+        tierChangedAt = nil
         // After the session exists, so the look follows its snapshot (round 6), never the run being replaced.
         applySceneLook()
         frozen = false
@@ -928,11 +1034,21 @@ final class GameController: ObservableObject, SceneDriver {
             if let last = progress.recap.last { hud.lastJudgement = last.judgement }
         }
         syncLook(newSession.snapshot)
+        syncBeltQueue(newSession.snapshot)
         scene?.reset(for: newSession.snapshot)
         if !isAttract && hintsEnabled && servedCount == 0 {
             // Round 6: a venue's one-time intro card comes first (a player who reached it has poured before);
             // otherwise the very first run's lift hint.
-            if let intro = HintKind.venueIntro(for: currentLevel?.venue), !store.hasSeenHint(intro.rawValue) {
+            let venue = currentLevel?.venue
+            var intro = HintKind.venueIntro(for: venue)
+            if let card = intro, let venue, !store.hasSeenHint(card.rawValue),
+               !Self.showsVenueIntro(starsInVenue: store.data.starsEarned(in: venue)) {
+                // QA-3 P2-12: a TestFlight 1.0 (2) player who already has stars here knows the venue: learned.
+                store.markHintSeen(card.rawValue)
+                trace("BRIM-T intro card skipped \(card.rawValue)")
+                intro = nil
+            }
+            if let intro, !store.hasSeenHint(intro.rawValue) {
                 activeHint = intro
                 trace("BRIM-T intro card \(intro.rawValue)")
             } else if !store.hasSeenHint(HintKind.lift.rawValue) {
@@ -1053,7 +1169,9 @@ final class GameController: ObservableObject, SceneDriver {
         // flashes.
         var gate = false
         var offer = false
-        if s.needsFlat && !isAttract && !usesTouch && s.phase != .finished {
+        let gateClosed = s.needsFlat && !isAttract && !usesTouch && s.phase != .finished
+        if hud.gateClosed != gateClosed { hud.gateClosed = gateClosed }
+        if gateClosed {
             let since = flatSince ?? now
             flatSince = since
             gate = now - since >= Self.gateCardDelay
@@ -1196,12 +1314,31 @@ final class GameController: ObservableObject, SceneDriver {
             // Round 6: during the intro phase (shift banner, venue intro card).
             if s.time >= 0.5 { freeze("intro", snapshot: s, now: now) }
         case .tier:
-            // Round 6: just after a Rush tier change (the banner is up).
+            // Round 6: just after a Rush tier change (the banner is up). Round 7 (QA-3 P1-1, frame 26): once the old
+            // glass has left too (it slides off for `leaveDuration` after the change), so the frame shows the new
+            // tier's glass on its own; never later than `tierFreezeLatest` (the banner is up for 1.6 s).
             if tierFreezePending {
                 tierFreezePending = false
-                freezeAt = simTime + 0.35
+                tierChangedAt = simTime
+            }
+            if let since = tierChangedAt,
+               Self.tierFreezeReady(sinceChange: simTime - since,
+                                    oldGlassLeaving: s.glasses.contains(where: { $0.phase == .leaving })) {
+                tierChangedAt = nil
+                freeze(target.rawValue, snapshot: s, now: now)
             }
         }
+    }
+
+    /// Demo `freezeOn=tier` (QA-3 P1-1): at least this long after the tier change, and once no glass is leaving…
+    static let tierFreezeEarliest = 0.35
+    /// …but never later than this (session seconds after the change; the tier banner is up for 1.6 s).
+    static let tierFreezeLatest = 1.2
+
+    /// Pure: whether the `freezeOn=tier` capture may happen now.
+    static func tierFreezeReady(sinceChange: Double, oldGlassLeaving: Bool) -> Bool {
+        if sinceChange >= tierFreezeLatest { return true }
+        return sinceChange >= tierFreezeEarliest && !oldGlassLeaving
     }
 
     private func freeze(_ reason: String, snapshot: GameSnapshot, now: TimeInterval) {

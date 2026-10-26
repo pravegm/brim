@@ -54,7 +54,7 @@ Paid, one time (£1.99 / $1.99 tier), no ads, no in-app purchases, no data colle
 
 ## 6. Modes
 
-1. **Shifts (campaign).** Venues of 8 shifts each; each shift is 5–8 glasses, earns 1–3 stars (by Perfects, no spills). Stars unlock the next venue.
+1. **Shifts (campaign).** Venues of 8 shifts each; each shift is 5–8 glasses, earns 1–3 stars (3★ = no misses, 2★ = one miss, 1★ = cleared; a Flawless crown for all Perfect: BALANCE.md §9). Stars unlock the next venue.
    | Venue | Teaches |
    |---|---|
    | 1. **Lemonade Stand** | Basics: water, lemonade, orange juice; straight tumblers → highballs → a flute. Jug empties across the shift so you must tip further. |

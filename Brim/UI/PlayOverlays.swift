@@ -269,7 +269,9 @@ struct HintsOverlay: View {
     private func hintCard(_ hint: HintKind) -> some View {
         let height: CGFloat = hint == .lift ? 104 : 96
         let size = CGSize(width: cardWidth, height: height)
-        let spot = HintSpot.place(size: size, anchors: hud.anchors, info: info)
+        // QA-3 P2-14: keep the banner's lane free while a shift / tier banner is up (wide phones, the first run).
+        let gap: CGFloat = hud.banner != nil ? VenueIntroCard.bannerLane : 8
+        let spot = HintSpot.place(size: size, anchors: hud.anchors, info: info, topGap: gap)
         let symbol = glyph(for: hint)
         let lift: CGFloat = bob ? (hint == .stop ? 6 : -8) : 0
         let message = Text(Self.text(for: hint, touch: touch))
@@ -414,8 +416,9 @@ struct FillToHereCallout: View {
 
 /// "Lay it flat to start": shown while the session waits for the lid to lie flat (`snapshot.needsFlat`, Duo only),
 /// beside the jug like the hints. ROUND-5 decision 1: after `GameController.touchOfferDelay` s stuck on the gate, a quiet
-/// "Use touch instead" button switches this run (only) to touch. Only the card takes touches; the rest of the overlay
-/// lets them through.
+/// "Use touch instead" button switches to touch. Round 7 (QA-3 P2-11): remembered until the app relaunches or the hinge
+/// pours again (laid flat, then lifted); see `GameController.useTouchForThisRun`. Only the card takes touches; the rest
+/// of the overlay lets them through.
 struct FlatGateOverlay: View {
     @ObservedObject var hud: HUDState
     let info: CanvasInfo
@@ -460,7 +463,7 @@ struct FlatGateOverlay: View {
                                 .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityHint("Drag up to pour for the rest of this run")
+                        .accessibilityHint("Drag up to pour instead of tilting")
                         .transition(.opacity)
                     }
                 }

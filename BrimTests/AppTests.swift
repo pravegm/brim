@@ -1014,8 +1014,9 @@ struct Round5AppTests {
         #expect(GameController.bestPerfectStreak([]) == 0)
     }
 
-    // ROUND-5 decision 1: after 6 s stuck on the flat gate, "Use touch instead" switches this run to touch only.
-    @Test func stuckOnTheGateOffersTouchForThisRunOnly() {
+    // ROUND-5 decision 1: after 6 s stuck on the flat gate, "Use touch instead" switches to touch. Round 7 (QA-3
+    // P2-11): it is remembered across runs until the hinge pours again (flat, then lifted) or the app relaunches.
+    @Test func stuckOnTheGateOffersTouchUntilTheHingePoursAgain() {
         let settings = SettingsStore(defaults: nil)
         let c = makeController("mode=shift:1-1;duo", settings: settings)
         c.start(mode: .shift("1-1"))
@@ -1044,11 +1045,45 @@ struct Round5AppTests {
         now += 1.0 / 60.0
         last = c.advance(dt: 1.0 / 60.0, now: now)?.0
         #expect(last?.needsFlat == false)
-        // Nothing persisted: the setting is untouched and the next run is back on the hinge.
+        // Nothing persisted: the setting is untouched.
         #expect(!settings.touchOnDuo)
+        // Retry and Next shift keep touch (no second 6 s on the gate).
+        c.restart()
+        #expect(c.runTouchOverride)
+        #expect(c.usesTouch)
+        c.start(mode: .shift("1-2"))
+        #expect(c.usesTouch)
+        now += 1.0 / 60.0
+        last = c.advance(dt: 1.0 / 60.0, now: now)?.0
+        #expect(last?.needsFlat == false)
+        #expect(!c.hud.showFlatGate)
+        // Lifting without having been flat is not a hinge pour.
+        now += 0.1
+        c.hingeSample(angle: 130, time: now)
+        c.restart()
+        #expect(c.runTouchOverride)
+        // Flat, then lifted mid-run: the input never swaps under the player; the next run is back on the hinge.
+        now += 0.1
+        c.hingeSample(angle: 180, time: now)
+        now += 0.1
+        c.hingeSample(angle: 150, time: now)
+        #expect(c.runTouchOverride)
+        #expect(c.usesTouch)
         c.restart()
         #expect(!c.runTouchOverride)
         #expect(!c.usesTouch)
+    }
+
+    // QA-3 P2-11: what counts as the hinge pouring again. Pure.
+    @Test func hingePoursAgainAfterReadingFlat() {
+        let flat = GameController.hingePoursAgain(sawFlat: false, hingeAngle: 179)
+        #expect(flat.sawFlat && !flat.poured)
+        let liftedFirst = GameController.hingePoursAgain(sawFlat: false, hingeAngle: 120)
+        #expect(!liftedFirst.sawFlat && !liftedFirst.poured)
+        let nudge = GameController.hingePoursAgain(sawFlat: true, hingeAngle: 180 - GameController.hingePourTilt + 5)
+        #expect(nudge.sawFlat && !nudge.poured)
+        let pour = GameController.hingePoursAgain(sawFlat: true, hingeAngle: 180 - GameController.hingePourTilt - 1)
+        #expect(pour.poured)
     }
 
     // QA-2 P2-9: the Home gesture waits for a second swipe while a run is live.
@@ -1154,16 +1189,34 @@ struct Round6AppTests {
     }
 
     // Results: under 3★ say what 3★ needs; at 3★ name the crown; nothing once crowned or on a fail.
+    // Round 7 (QA-3 P1-2): the decided rule is 3★ = no misses, 2★ = one miss, 1★ = cleared; Perfects only crown.
     @Test func resultsSayWhatIsLeftToChase() throws {
         let level = try #require(LevelCatalog.levels(in: .lemonadeStand).first)
         let total = level.orders.count
-        let need = (total * 6 + 9) / 10
-        var twoStar = Array(repeating: Judgement.great, count: total)
-        twoStar[0] = .perfect
-        twoStar[1] = .spill
-        let line = try #require(ResultsView.chaseLine(for: shiftResult(level, twoStar, stars: 2), hasCrown: false))
-        #expect(line.hasPrefix("3★ needs every glass a hit and \(need) of \(total) Perfect."))
-        #expect(line.contains("You had 1 Perfect, 1 miss."))
+        try #require(total >= 3)
+        // QA-3's repro: one Short and the rest Perfect is 2★, and the reason is the miss, not the Perfects.
+        var oneShort = Array(repeating: Judgement.perfect, count: total)
+        oneShort[0] = .short
+        let oneShortStars = Rules.stars(perfects: total - 1, hits: total - 1, spills: 0, total: total)
+        #expect(oneShortStars == 2)
+        let line = try #require(ResultsView.chaseLine(for: shiftResult(level, oneShort, stars: oneShortStars),
+                                                      hasCrown: false))
+        #expect(line == "3★ needs every glass a hit. You had 1 miss.")
+        #expect(!line.contains("Perfect"))
+        // Two misses (a spill and an over) with no Perfects at all: 1★, plural.
+        var twoMisses = Array(repeating: Judgement.great, count: total)
+        twoMisses[0] = .spill
+        twoMisses[1] = .over
+        let twoMissStars = Rules.stars(perfects: 0, hits: total - 2, spills: 1, total: total)
+        #expect(twoMissStars == 1)
+        let plural = ResultsView.chaseLine(for: shiftResult(level, twoMisses, stars: twoMissStars), hasCrown: false)
+        #expect(plural == "3★ needs every glass a hit. You had 2 misses.")
+        // Every glass a hit with no Perfect is 3★ now: the crown line, not a 3★ line.
+        let allGreat = Array(repeating: Judgement.great, count: total)
+        let allGreatStars = Rules.stars(perfects: 0, hits: total, spills: 0, total: total)
+        #expect(allGreatStars == 3)
+        let greatLine = ResultsView.chaseLine(for: shiftResult(level, allGreat, stars: allGreatStars), hasCrown: false)
+        #expect(greatLine == "Flawless crown: every glass Perfect. You had 0 of \(total).")
         let threeStar = Array(repeating: Judgement.perfect, count: total - 1) + [Judgement.great]
         let crownLine = ResultsView.chaseLine(for: shiftResult(level, threeStar, stars: 3), hasCrown: false)
         #expect(crownLine == "Flawless crown: every glass Perfect. You had \(total - 1) of \(total).")
@@ -1301,5 +1354,142 @@ struct Round6AppTests {
     @Test func demoParsesTheRound6FreezeKeys() {
         #expect(DemoConfig.parse("mode=shift:4-1;freezeOn=intro", today: 1).freezeOn == DemoConfig.Freeze.intro)
         #expect(DemoConfig.parse("mode=rush;freezeOn=tier", today: 1).freezeOn == DemoConfig.Freeze.tier)
+    }
+}
+
+// MARK: - Round 7: QA-3 fixes (ROUND-7 App row)
+
+@MainActor
+struct Round7AppTests {
+    private let phone = CGSize(width: 402, height: 874)
+
+    private func makeController(_ args: String, canvas: CGSize = CGSize(width: 669, height: 951), fold: Bool = true,
+                                store: ProgressStore? = nil) -> GameController {
+        let c = GameController(store: store ?? ProgressStore(inMemory: ProgressData()),
+                               settings: SettingsStore(defaults: nil),
+                               demo: DemoConfig.parse(args, today: 33))
+        c.updateCanvas(canvas, hasFold: fold)
+        return c
+    }
+
+    /// Steps the controller `seconds` at 60 Hz from frame clock `start`; returns the last snapshot and the clock.
+    private func run(_ c: GameController, seconds: Double, from start: TimeInterval) -> (GameSnapshot?, TimeInterval) {
+        var now = start
+        var last: GameSnapshot?
+        let frames = Int(seconds * 60)
+        for _ in 0..<frames {
+            now += 1.0 / 60.0
+            if let step = c.advance(dt: 1.0 / 60.0, now: now) { last = step.0 }
+        }
+        return (last, now)
+    }
+
+    // P1-3: the conveyor card says "Pour to start", so the belt waits under it (GameSession.setStartHold), and a tap
+    // on the card lets it ride.
+    @Test func theBeltWaitsUnderTheIntroCard() throws {
+        let level = try #require(LevelCatalog.level("4-1"))
+        try #require(level.venue == .conveyor)
+        let c = makeController("mode=shift:4-1;hints=fresh", canvas: phone, fold: false)
+        c.start(mode: .shift("4-1"))
+        #expect(c.activeHint == HintKind.belt)
+        // Well past glass 1's window on a running belt (about 5 s after the intro), with nothing poured.
+        let first = run(c, seconds: 8, from: CACurrentMediaTime())
+        let heldSnap = try #require(first.0)
+        let heldGlass = try #require(GameController.activeGlass(heldSnap))
+        let second = run(c, seconds: 4, from: first.1)
+        let laterSnap = try #require(second.0)
+        let laterGlass = try #require(GameController.activeGlass(laterSnap))
+        #expect(laterSnap.ordersDone == 0)
+        #expect(laterGlass.id == heldGlass.id)
+        #expect(abs(laterGlass.x - heldGlass.x) < 0.5)
+        #expect(laterGlass.result == nil)
+        #expect(c.activeHint == HintKind.belt)
+        c.dismissHint()
+        #expect(c.activeHint == nil)
+        let third = run(c, seconds: 2, from: second.1)
+        let movingSnap = try #require(third.0)
+        let moved = try #require(movingSnap.glasses.first(where: { $0.id == heldGlass.id }))
+        #expect(moved.x > heldGlass.x + 5)
+    }
+
+    // P2-10: on a Duo the intro card waits while the flat gate is closed, even before the gate's own card shows.
+    @Test func theIntroCardWaitsForTheFlatGate() {
+        #expect(!VenueIntroCard.isVisible(hint: .belt, gateClosed: true, showFlatGate: false))
+        #expect(!VenueIntroCard.isVisible(hint: .belt, gateClosed: false, showFlatGate: true))
+        #expect(VenueIntroCard.isVisible(hint: .belt, gateClosed: false, showFlatGate: false))
+        #expect(!VenueIntroCard.isVisible(hint: .lift, gateClosed: false, showFlatGate: false))
+        #expect(!VenueIntroCard.isVisible(hint: nil, gateClosed: false, showFlatGate: false))
+        let c = makeController("mode=shift:4-1;hints=fresh;duo")
+        c.start(mode: .shift("4-1"))
+        #expect(c.activeHint == HintKind.belt)
+        let t0 = CACurrentMediaTime()
+        c.hingeSample(angle: 140, time: t0)
+        // Inside the gate card's 0.35 s delay: closed, no gate card yet, and no intro card either.
+        let early = run(c, seconds: 0.15, from: t0)
+        #expect(early.0?.needsFlat == true)
+        #expect(c.hud.gateClosed)
+        #expect(!c.hud.showFlatGate)
+        let earlyVisible = VenueIntroCard.isVisible(hint: c.activeHint, gateClosed: c.hud.gateClosed,
+                                                    showFlatGate: c.hud.showFlatGate)
+        #expect(!earlyVisible)
+        // Laid flat: the gate opens and the card shows (nothing poured, so it is still up).
+        var now = early.1
+        var flatSnap: GameSnapshot?
+        for _ in 0..<90 {
+            now += 1.0 / 60.0
+            c.hingeSample(angle: 180, time: now)
+            if let step = c.advance(dt: 1.0 / 60.0, now: now) { flatSnap = step.0 }
+        }
+        #expect(flatSnap?.needsFlat == false)
+        #expect(!c.hud.gateClosed)
+        #expect(c.activeHint == HintKind.belt)
+        let flatVisible = VenueIntroCard.isVisible(hint: c.activeHint, gateClosed: c.hud.gateClosed,
+                                                   showFlatGate: c.hud.showFlatGate)
+        #expect(flatVisible)
+    }
+
+    // P2-12: a TestFlight 1.0 (2) player with stars in a venue isn't taught it again.
+    @Test func veteransWithStarsInAVenueSkipItsIntroCard() throws {
+        #expect(GameController.showsVenueIntro(starsInVenue: 0))
+        #expect(!GameController.showsVenueIntro(starsInVenue: 1))
+        let belt = try #require(LevelCatalog.levels(in: .conveyor).first)
+        var data = ProgressData()
+        data.stars[belt.id] = 2
+        let store = ProgressStore(inMemory: data)
+        let c = makeController("mode=shift:\(belt.id);hints=fresh", canvas: phone, fold: false, store: store)
+        c.start(mode: .shift(belt.id))
+        #expect(c.activeHint != HintKind.belt)
+        #expect(store.hasSeenHint("belt"))
+        // The banner still announces the shift.
+        #expect(c.hud.banner?.kind == PlayBanner.Kind.shift)
+    }
+
+    // P2-1: Rush has no shift list, so the App tells the scene what rides the belt (conveyor tiers only).
+    @Test func rushTellsTheSceneWhatRidesTheBelt() throws {
+        let every = CoreTuning.rushTierEvery
+        let order = try #require(LevelCatalog.levels(in: .conveyor).first?.orders.first)
+        #expect(GameController.rushBeltQueue(next: order, nextIndex: 2 * every, slotGlassWaiting: false) == [order])
+        #expect(GameController.rushBeltQueue(next: order, nextIndex: 3 * every - 1, slotGlassWaiting: false) == [order])
+        #expect(GameController.rushBeltQueue(next: order, nextIndex: 3 * every, slotGlassWaiting: false).isEmpty)
+        #expect(GameController.rushBeltQueue(next: order, nextIndex: every, slotGlassWaiting: false).isEmpty)
+        #expect(GameController.rushBeltQueue(next: order, nextIndex: 2 * every, slotGlassWaiting: true).isEmpty)
+        #expect(GameController.rushBeltQueue(next: nil, nextIndex: 2 * every, slotGlassWaiting: false).isEmpty)
+        let c = makeController("mode=rush", canvas: phone, fold: false)
+        c.start(mode: .rush)
+        #expect(c.scene != nil)
+        #expect(c.scene?.upcomingOrders?.isEmpty == true)
+        // The scene is reused: a shift afterwards goes back to its own list.
+        c.start(mode: .shift("4-1"))
+        #expect(c.scene != nil)
+        #expect(c.scene?.upcomingOrders == nil)
+    }
+
+    // P1-1 (frame 26): `freezeOn=tier` waits for the old glass to leave, within the banner's time.
+    @Test func theTierFrameWaitsForTheOldGlassToLeave() {
+        #expect(!GameController.tierFreezeReady(sinceChange: 0.2, oldGlassLeaving: false))
+        #expect(!GameController.tierFreezeReady(sinceChange: 0.4, oldGlassLeaving: true))
+        #expect(GameController.tierFreezeReady(sinceChange: 0.5, oldGlassLeaving: false))
+        #expect(GameController.tierFreezeReady(sinceChange: GameController.tierFreezeLatest, oldGlassLeaving: true))
+        #expect(GameController.tierFreezeLatest < GameController.tierBannerSeconds)
     }
 }

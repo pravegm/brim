@@ -708,14 +708,21 @@ final class SceneTests: XCTestCase {
         let glass = SceneGlass(id: 4, darkBackdrop: false)
         glass.update(glassState(hourglass, .sand, phase: .filling, h: 50), frame(layout, time: 1))
         XCTAssertTrue(glass.hasWoodFrame)
-        XCTAssertGreaterThan(glass.worldFrame.width, (46 + 4) * 2 + 10)
+        // Round 7 (QA-3 P2-16): plinth and posts stay inside the body half-width Core's slot contract plans for.
+        XCTAssertEqual(glass.worldFrame.width, CGFloat(NextGlassSlot.bodyHalfWidth(hourglass)) * 2, accuracy: 0.01)
+        XCTAssertGreaterThan(glass.woodReach, 40)
+        XCTAssertLessThanOrEqual(glass.woodReach, CGFloat(NextGlassSlot.bodyHalfWidth(hourglass)) + 0.01)
         let jar = SceneGlass(id: 5, darkBackdrop: false)
         jar.update(glassState(GlassCatalog.shape("jar"), .sand, phase: .filling, h: 50), frame(layout, time: 1))
         XCTAssertFalse(jar.hasWoodFrame)
+        XCTAssertEqual(jar.woodReach, 0)
         if GlassCatalog.all.contains(where: { $0.id == "hourglass" }) {
+            let shape = GlassCatalog.shape("hourglass")
             let real = SceneGlass(id: 6, darkBackdrop: false)
-            real.update(glassState(GlassCatalog.shape("hourglass"), .sand, phase: .filling, h: 30), frame(layout, time: 1))
+            real.update(glassState(shape, .sand, phase: .filling, h: 30), frame(layout, time: 1))
             XCTAssertTrue(real.hasWoodFrame)
+            XCTAssertLessThanOrEqual(real.woodReach, CGFloat(NextGlassSlot.bodyHalfWidth(shape)) + 0.01)
+            XCTAssertEqual(real.worldFrame.width, CGFloat(NextGlassSlot.bodyHalfWidth(shape)) * 2, accuracy: 0.01)
         }
     }
 
@@ -799,6 +806,202 @@ final class SceneTests: XCTestCase {
         scene.rushLook = true
         scene.dailyNumber = 297
         XCTAssertNil(scene.driver)
+    }
+
+    // MARK: Round 7 (QA-3)
+
+    /// QA-3 P1-1 (CI frame 26): once its glass leaves, the stamp rides out with it (no safe-area clamp pinning it over
+    /// the next glass) and fades within ~0.15 s.
+    @MainActor
+    func testStampRidesOutWithItsLeavingGlass() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 402, height: 874), hasFold: false)
+        let shape = GlassCatalog.all[0]
+        let glass = SceneGlass(id: 12, darkBackdrop: true)
+        var state = GlassState(id: 12, shape: shape, liquid: LiquidCatalog.liquid(.lemonade), x: 335, phase: .served,
+                               liquidHeight: shape.interiorHeight * 0.7, foamHeight: 0,
+                               lineHeight: shape.interiorHeight * 0.7, lineOpacity: 1, inPerfectBand: true,
+                               overflowing: false, patienceLeft: nil, patienceTotal: nil, result: .perfect)
+        var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: false, tail: nil,
+                           advanced: true, reduceMotion: false, band: 0.025, projected: nil, safeX: 130...540,
+                           keepOutTop: layout.creaseMinY - 8)
+        for k in 0..<12 {
+            f.time = 1 + Double(k) / 60
+            glass.update(state, f)
+        }
+        guard let x0 = glass.stampWorldX else { return XCTFail("the verdict shows a stamp") }
+        XCTAssertEqual(glass.stampLeaveAlpha, 1, accuracy: 0.0001)
+        let local = x0 - state.x
+        // A frozen frame (dt 0) holds it.
+        f.dt = 0
+        state.phase = .leaving
+        glass.update(state, f)
+        XCTAssertEqual(glass.stampLeaveAlpha, 1, accuracy: 0.0001)
+        f.dt = 1.0 / 60.0
+        var last = x0
+        var hiddenAt: Int?
+        for k in 1...20 {
+            state.x = 335 + CGFloat(k) * 18            // the leave slide (~465 pt in 0.45 s)
+            f.time += 1.0 / 60.0
+            glass.update(state, f)
+            if let sx = glass.stampWorldX {
+                XCTAssertEqual(sx - state.x, local, accuracy: 0.01, "rides at its last spot on the glass")
+                XCTAssertGreaterThan(sx, last)
+                last = sx
+            } else if hiddenAt == nil {
+                hiddenAt = k
+            }
+        }
+        XCTAssertNotNil(hiddenAt)
+        XCTAssertLessThanOrEqual(hiddenAt ?? 99, 9, "gone in ~0.15 s")
+        XCTAssertEqual(glass.stampLeaveAlpha, 0, accuracy: 0.0001)
+        XCTAssertNil(glass.stampReachWorld)
+    }
+
+    /// A served Rush/Conveyor glass for the scripted scene tests below.
+    @MainActor
+    private func scriptedRush(venue: VenueID, upcoming: [GlassOrder]? = nil)
+        -> (scene: GameScene, driver: ScriptedSceneDriver)? {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .rush, layout: layout, seed: 4)
+        var snap = session.snapshot
+        guard var g = snap.glasses.first else { return nil }
+        g.phase = .filling
+        g.result = nil
+        g.patienceLeft = nil
+        g.patienceTotal = nil
+        g.lineOpacity = 1
+        g.x = 300
+        snap.glasses = [g]
+        snap.phase = .playing
+        snap.venue = venue
+        snap.rushTier = 3
+        let scene = GameScene(layout: layout)
+        scene.upcomingOrders = upcoming
+        let driver = ScriptedSceneDriver(snap)
+        scene.driver = driver
+        scene.reset(for: snap)
+        return (scene, driver)
+    }
+
+    @MainActor
+    private func drive(_ scene: GameScene, _ driver: ScriptedSceneDriver, frames: Int, dx: CGFloat, t: inout TimeInterval) {
+        for _ in 0..<frames {
+            t += 1.0 / 60.0
+            driver.snapshot.time += 1.0 / 60.0
+            for i in driver.snapshot.glasses.indices { driver.snapshot.glasses[i].x += dx }
+            scene.update(t)
+        }
+    }
+
+    /// QA-3 P2-4: the bell flicks as a glass that really rode the belt rides off (not at the verdict, never for a glass
+    /// that stood still while served), and the last belt glass still flicks it as Rush's room turns into the Diner.
+    @MainActor
+    func testBellFlicksOnlyForAGlassThatRodeTheBelt() {
+        XCTAssertEqual(SceneGlass.rideThreshold, ConveyorBellWatch.rideThreshold, "Scene and Feel use one rule")
+        var t: TimeInterval = 5
+        // Rode the belt.
+        guard let a = scriptedRush(venue: .conveyor) else { return XCTFail("no glass") }
+        drive(a.scene, a.driver, frames: 5, dx: 0.5, t: &t)
+        a.driver.snapshot.glasses[0].phase = .served
+        a.driver.snapshot.glasses[0].result = .great
+        drive(a.scene, a.driver, frames: 18, dx: 0.5, t: &t)
+        XCTAssertEqual(a.scene.bellRingCount, 0, "not at the verdict: as it rides off")
+        a.driver.snapshot.glasses[0].phase = .leaving
+        drive(a.scene, a.driver, frames: 3, dx: 12, t: &t)
+        XCTAssertEqual(a.scene.bellRingCount, 1)
+
+        // Stood still while served (a counter glass): no bell, even in the Conveyor's room.
+        guard let b = scriptedRush(venue: .conveyor) else { return XCTFail("no glass") }
+        b.driver.snapshot.glasses[0].phase = .served
+        b.driver.snapshot.glasses[0].result = .perfect
+        drive(b.scene, b.driver, frames: 18, dx: 0, t: &t)
+        b.driver.snapshot.glasses[0].phase = .leaving
+        drive(b.scene, b.driver, frames: 3, dx: 12, t: &t)
+        XCTAssertEqual(b.scene.bellRingCount, 0)
+
+        // Tier 3→4: the room turns into the Diner at the last belt glass's verdict; it still flicks the (fading) bell.
+        guard let c = scriptedRush(venue: .conveyor) else { return XCTFail("no glass") }
+        drive(c.scene, c.driver, frames: 5, dx: 0.5, t: &t)
+        c.driver.snapshot.glasses[0].phase = .served
+        c.driver.snapshot.glasses[0].result = .perfect
+        c.driver.snapshot.venue = .milkshakeDiner
+        c.driver.snapshot.rushTier = 4
+        drive(c.scene, c.driver, frames: 18, dx: 0.5, t: &t)
+        c.driver.snapshot.glasses[0].phase = .leaving
+        drive(c.scene, c.driver, frames: 3, dx: 12, t: &t)
+        XCTAssertEqual(c.scene.shownVenue, .milkshakeDiner)
+        XCTAssertEqual(c.scene.bellRingCount, 1)
+    }
+
+    /// QA-3 P2-1: Rush's Conveyor tier shows the belt queue from what the App publishes (the snapshot has none), and
+    /// only belt orders ride: a next glass with patience (the Diner's, after the tier) is not drawn on the belt.
+    @MainActor
+    func testRushConveyorTierShowsTheBeltQueue() {
+        var t: TimeInterval = 5
+        let belt = GlassOrder(glass: "tumbler", liquid: .orangeJuice, line: 0.5)
+        guard let a = scriptedRush(venue: .conveyor, upcoming: [belt]) else { return XCTFail("no glass") }
+        drive(a.scene, a.driver, frames: 10, dx: 0.5, t: &t)
+        XCTAssertEqual(a.scene.beltQueueKeys.count, 1, "the next glass rides in on the belt")
+
+        let diner = GlassOrder(glass: "tumbler", liquid: .lemonade, line: 0.6, patience: 8)
+        guard let b = scriptedRush(venue: .conveyor, upcoming: [diner]) else { return XCTFail("no glass") }
+        drive(b.scene, b.driver, frames: 10, dx: 0.5, t: &t)
+        XCTAssertTrue(b.scene.beltQueueKeys.isEmpty, "a counter glass never rides the belt")
+
+        guard let c = scriptedRush(venue: .conveyor) else { return XCTFail("no glass") }
+        drive(c.scene, c.driver, frames: 10, dx: 0.5, t: &t)
+        XCTAssertTrue(c.scene.beltQueueKeys.isEmpty, "nothing known, nothing drawn")
+    }
+
+    /// QA-3 P2-5: Rush paints the next tier's look ahead, once, at a quiet moment late in the tier (or regardless near
+    /// its end), so the tier change itself repaints nothing; the cache stays at three looks.
+    @MainActor
+    func testRushPaintsTheNextTiersLookAhead() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .rush, layout: layout, seed: 4)
+        var snap = session.snapshot
+        let every = CoreTuning.rushTierEvery
+        snap.phase = .playing
+        snap.rushTier = 2
+        snap.venue = Rules.rushVenue(tier: 2)
+        snap.ordersDone = every + 3
+        snap.stream = []
+        snap.jug.flow = 0
+        let scene = GameScene(layout: layout)
+        let driver = ScriptedSceneDriver(snap)
+        scene.driver = driver
+        scene.reset(for: snap)
+        var t: TimeInterval = 5
+        drive(scene, driver, frames: 2, dx: 0, t: &t)
+        let painted = scene.backdropRenderCount
+        XCTAssertGreaterThanOrEqual(painted, 1)
+        drive(scene, driver, frames: 5, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted, "too early in the tier")
+
+        driver.snapshot.ordersDone = every + GameScene.prewarmFromGlass
+        drive(scene, driver, frames: 2, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 1, "the next look is painted ahead")
+        drive(scene, driver, frames: 5, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 1, "once per tier")
+
+        // The tier change: a cross-fade to a look already painted.
+        driver.snapshot.rushTier = 3
+        driver.snapshot.venue = Rules.rushVenue(tier: 3)
+        driver.snapshot.ordersDone = 2 * every
+        drive(scene, driver, frames: 3, dx: 0, t: &t)
+        XCTAssertEqual(scene.shownVenue, Rules.rushVenue(tier: 3))
+        XCTAssertEqual(scene.lookCrossFadeCount, 1)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 1, "no repaint at the tier change")
+
+        // Pouring through the end of a tier: painted anyway, two glasses before the change.
+        driver.snapshot.jug.flow = 0.5
+        driver.snapshot.ordersDone = 2 * every + GameScene.prewarmFromGlass
+        drive(scene, driver, frames: 2, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 1, "waits for a quiet moment")
+        driver.snapshot.ordersDone = 2 * every + GameScene.prewarmForcedFromGlass
+        drive(scene, driver, frames: 2, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 2)
+        XCTAssertLessThanOrEqual(scene.cachedLookCount, 3)
     }
 }
 

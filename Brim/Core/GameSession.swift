@@ -29,6 +29,10 @@ final class GameSession {
         return nil
     }
 
+    /// Round 7 (QA-3 P1-3): true while the App holds the run behind a venue intro card (`setStartHold(_:)`). Belts,
+    /// patience and line-fade clocks are frozen exactly as behind the flat gate; pouring is allowed and releases it.
+    private(set) var isStartHeld: Bool = false
+
     // MARK: - Internal types
 
     private struct Particle {
@@ -109,6 +113,9 @@ final class GameSession {
         var exitWait: Double
         /// Round 6: the Rush tier of its order (0 outside Rush).
         var tier: Int
+        /// Round 7 (QA-3 P2-2): a belt glass whose successor stands still (Rush Conveyor → Diner): the next glass is
+        /// sent when this one starts leaving, as between non-belt glasses, not at its serve.
+        var sendNextOnLeave: Bool
     }
 
     // MARK: - Configuration
@@ -200,6 +207,14 @@ final class GameSession {
     private var rushTierNow: Int = 0
     /// Set by `requireFlat()` (seconds spent flat since): no judgement by stopping until the player pours again.
     private var resumeHold: Double? = nil
+    /// Round 7 (QA-3 P2-7): how long `resumeHold` lasts: `resumeServeIdle` after a resume, `dryRefillServeHold` after
+    /// a dry jug's refill.
+    private var resumeHoldLimit: Double = CoreTuning.resumeServeIdle
+    /// Round 7 (QA-3 P2-7): the jug ran dry over a glass that is already a hit and was laid back: it is served as it
+    /// stands (no refill for it; the next glass brings the refill).
+    private var dryServeNow: Bool = false
+    /// Round 7 (QA-3 P2-3): Rush's next drink, waiting for the stream to stop (and land) before the jug takes it.
+    private var pendingRushLiquid: Liquid? = nil
 
     // Score
     private var score: Int = 0
@@ -330,6 +345,11 @@ final class GameSession {
                 }
                 pendingLiquid = nil
             }
+        }
+        // Rush: the jug takes the next glass's drink once the stream has stopped and landed (round 7, QA-3 P2-3).
+        if let next = pendingRushLiquid, outflow <= 0 && particles.isEmpty {
+            jugLiquid = next
+            pendingRushLiquid = nil
         }
 
         commandAngle = angle
@@ -527,6 +547,8 @@ final class GameSession {
         if !pouring && f > CoreTuning.pourOnFlow {
             pouring = true
             glugPhase = 0.65
+            // Round 7 (QA-3 P1-3): pouring starts the run (the intro card's "Pour to start").
+            isStartHeld = false
             events.append(.pourStarted)
         } else if pouring && f < CoreTuning.pourOffFlow {
             pouring = false
@@ -573,19 +595,31 @@ final class GameSession {
         }
         // Shifts / Daily (round 5, founder decision 3): never refill mid-pour.
         if jugRanDry {
-            if swapTimer > 0 || pendingFinish != nil { return }
+            if swapTimer > 0 || pendingFinish != nil || dryServeNow { return }
             dryTipBack = commandAngle < dryRefillAngle ? dryTipBack + h : 0
             if dryTipBack >= CoreTuning.jugDryTipBackTime {
-                refillDryJug(events: &events)
-                // The glass under the spout waits for the player to pour again (like a resume), so tipping back for
-                // a fresh jug doesn't get it judged as it stands.
-                if activeGlassIndex() != nil { resumeHold = 0 }
+                if let gi = activeGlassIndex(), dryGlassIsAHit(gi) {
+                    // Round 7 (QA-3 P2-7): already a hit: laying back is "done". No refill for it (the next glass
+                    // brings one, so a change of drink stays one swap): lock-in now, the verdict `serveIdle` later.
+                    dryServeNow = true
+                    idleTime = 0
+                } else {
+                    refillDryJug(events: &events)
+                    // The glass under the spout waits briefly for the player to pour again (the swap), so tipping back
+                    // for a fresh jug doesn't get it judged as it stands; then lock-in and the verdict `serveIdle`
+                    // later (round 7, QA-3 P2-7: was the full `resumeServeIdle`, ~5 s of dead air).
+                    if activeGlassIndex() != nil {
+                        resumeHold = 0
+                        resumeHoldLimit = CoreTuning.dryRefillServeHold
+                    }
+                }
             }
             return
         }
         if jugFill >= CoreTuning.jugEmptyFill || swapTimer > 0 { return }
         // Ran dry (only happens while pouring): the stream stops at the lip and the jug shows empty (fill 0).
         jugRanDry = true
+        dryServeNow = false
         jugFill = 0
         outflow = 0
         sandFlowing = false
@@ -614,6 +648,16 @@ final class GameSession {
         beginSwap(to: liquid, fill: fill, events: &events)
         let limit: Double = pourHoldAngle(liquid: liquid, fill: fill)
         tipBackLimit = commandAngle > limit ? limit : nil
+    }
+
+    /// Round 7 (QA-3 P2-7): would glass `gi` be a hit if it were judged as it stands (and can it be served by
+    /// stopping)?
+    private func dryGlassIsAHit(_ gi: Int) -> Bool {
+        let g: Glass = glasses[gi]
+        if g.pouredIn < CoreTuning.minServeVolume { return false }
+        let j: Judgement = Rules.judge(top: CGFloat(judgedTop(g)), line: CGFloat(g.order.line * g.interior),
+                                       interior: CGFloat(g.interior), overflowed: g.overflowed, perfectBand: g.band)
+        return j.isHit
     }
 
     private func refillDryJug(events: inout [GameEvent]) {
@@ -987,8 +1031,9 @@ final class GameSession {
                 }
             case .filling:
                 // The belt waits behind the flat gate, like patience does.
-                // Round 5 (QA-2 P2-3): nor during the intro (nothing can pour yet).
-                if let belt = glasses[i].belt, !needsFlat, phase != .intro { glasses[i].x += belt * h }
+                // Round 5 (QA-2 P2-3): nor during the intro (nothing can pour yet). Round 7 (QA-3 P1-3): nor behind
+                // the App's start hold (a venue intro card).
+                if let belt = glasses[i].belt, !clocksHeld, phase != .intro { glasses[i].x += belt * h }
                 updateFilling(i, h, events: &events)
             case .served:
                 if let belt = glasses[i].belt { glasses[i].x += belt * h }
@@ -998,7 +1043,10 @@ final class GameSession {
                     glasses[i].phase = .leaving
                     glasses[i].phaseTime = 0
                     glasses[i].startX = glasses[i].x
-                    if glasses[i].belt == nil { advanceQueue(events: &events) }
+                    if glasses[i].belt == nil || glasses[i].sendNextOnLeave {
+                        glasses[i].sendNextOnLeave = false
+                        advanceQueue(events: &events)
+                    }
                 }
             case .leaving:
                 let u: Double = CoreMath.clamp(glasses[i].phaseTime / CoreTuning.leaveDuration, 0, 1)
@@ -1018,7 +1066,7 @@ final class GameSession {
     private func updateFilling(_ i: Int, _ h: Double, events: inout [GameEvent]) {
         // Line fade ("line fades" orders): reveal again once served. Round 5 (QA-2 P2-1): its clock runs only while
         // playing with the flat gate open, like patience, so the line can't fade before the player can pour.
-        if phase == .playing && !needsFlat { glasses[i].lineClock += h }
+        if phase == .playing && !clocksHeld { glasses[i].lineClock += h }
         if let fade = glasses[i].order.lineFadesAfter {
             let t: Double = glasses[i].lineClock - fade
             glasses[i].lineOpacity = 1 - CoreMath.clamp(t / CoreTuning.lineFadeDuration, 0, 1)
@@ -1070,7 +1118,7 @@ final class GameSession {
             return
         }
 
-        if let p = glasses[i].patienceLeft, !needsFlat {
+        if let p = glasses[i].patienceLeft, !clocksHeld {
             let left: Double = p - h
             glasses[i].patienceLeft = max(0, left)
             if left <= 0 {
@@ -1182,8 +1230,25 @@ final class GameSession {
         // sent to the stop (`sendToStop`: at once on a conveyor, as this one leaves otherwise), so a change of drink
         // is one swap, not two.
 
-        // Conveyor glasses ride on; the next one is sent down the belt straight away.
-        if glasses[i].belt != nil { advanceQueue(events: &events) }
+        // Conveyor glasses ride on; the next one is sent down the belt straight away. Round 7 (QA-3 P2-2): unless the
+        // next glass stands still (Rush's Conveyor → Diner tier change): it would slide in on top of this one while it
+        // still rides, so it is sent as this one starts leaving, like any non-belt changeover.
+        if glasses[i].belt != nil {
+            if pendingFinish == nil && phase != .finished && nextGlassLeavesTheBelt() {
+                glasses[i].sendNextOnLeave = true
+            } else {
+                advanceQueue(events: &events)
+            }
+        }
+    }
+
+    /// Round 7 (QA-3 P2-2): is the glass after the current one a non-belt glass (the waiting one's, else the next
+    /// plan's, peeked without consuming it)?
+    private func nextGlassLeavesTheBelt() -> Bool {
+        if isRush && jugDry { return false }
+        if let wi = waitingIndex() { return glasses[wi].belt == nil }
+        guard let p = peekPlan() else { return false }
+        return p.belt == nil
     }
 
     private func finish(events: inout [GameEvent]) {
@@ -1277,7 +1342,7 @@ final class GameSession {
                              patienceLeft: plan.belt == nil ? plan.order.patience : nil,
                              arrivedAt: nil, overflowed: false, result: nil, inBand: false, nearingSent: false,
                              lastLanding: -10, lineOpacity: 1, lockSent: false, waiting: false, lineClock: 0,
-                             exitWait: 0, tier: plan.tier)
+                             exitWait: 0, tier: plan.tier, sendNextOnLeave: false)
         nextGlassID += 1
         return g
     }
@@ -1333,7 +1398,15 @@ final class GameSession {
             jugFill = startFill
             jugFills[liquid.id] = startFill
         } else if isRush {
-            jugLiquid = liquid       // one big shared jug
+            // One big shared jug. Round 7 (QA-3 P2-3): a belt serve sends the next glass mid-pour, so the change of
+            // drink waits until the stream has stopped and landed (`substep`); the stream never changes colour or body
+            // under the player's hand.
+            if outflow > 0 || !particles.isEmpty {
+                pendingRushLiquid = liquid
+            } else {
+                jugLiquid = liquid
+                pendingRushLiquid = nil
+            }
         } else {
             // Round 5 (decision 3): refills happen here, between glasses — a jug that ran dry, or one that would run
             // short of this glass's drink.
@@ -1733,6 +1806,7 @@ final class GameSession {
         if !usesFlatGate || phase == .finished { return }
         needsFlat = true
         resumeHold = 0
+        resumeHoldLimit = CoreTuning.resumeServeIdle
         // The jug is upright behind the gate: the spout rope is cut now (it would otherwise read as a fresh pour).
         outflow = 0
         headlessTime = CoreTuning.ropeMaxTime
@@ -1759,10 +1833,24 @@ final class GameSession {
         }
     }
 
-    /// True while stopping must not judge the glass under the spout (gate closed, held after a resume, or the jug
-    /// ran dry and hasn't been swapped yet).
+    /// Round 7 (QA-3 P1-3): hold the run while the App shows a venue intro card ("Pour to start"). While held, belts,
+    /// patience and line-fade clocks stand still and nothing is judged by stopping, exactly as behind the flat gate,
+    /// but the jug works: the first `.pourStarted` releases the hold by itself. The App sets it with the card and
+    /// clears it when the card is dismissed. Ignored once the run has finished. Independent of the flat gate.
+    func setStartHold(_ on: Bool) {
+        if on && phase == .finished { return }
+        isStartHeld = on
+    }
+
+    /// Belts, patience and line-fade clocks stand still (flat gate closed, or the App's start hold).
+    private var clocksHeld: Bool {
+        return needsFlat || isStartHeld
+    }
+
+    /// True while stopping must not judge the glass under the spout (gate closed, start hold, held after a resume, or
+    /// the jug ran dry and hasn't been swapped yet, unless it is being served as it stands).
     private var servingHeld: Bool {
-        return needsFlat || resumeHold != nil || jugRanDry
+        return clocksHeld || resumeHold != nil || (jugRanDry && !dryServeNow)
     }
 
     private func updateResumeHold(_ h: Double) {
@@ -1770,7 +1858,7 @@ final class GameSession {
         if needsFlat { return }                 // the clock starts once the phone is flat again
         if outflow > 0 {
             resumeHold = nil                    // pouring again: the normal "stop to serve" rule takes over
-        } else if held + h >= CoreTuning.resumeServeIdle {
+        } else if held + h >= resumeHoldLimit {
             resumeHold = nil
             idleTime = 0                        // lock-in, then the verdict ~serveIdle later
         } else {

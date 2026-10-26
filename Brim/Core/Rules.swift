@@ -73,12 +73,16 @@ enum Rules {
         return cycle[(tier - 2) % cycle.count]
     }
 
-    /// For a cleared shift: 3 = every glass a hit, ≥ 60 % Perfect and no spills; 2 = ≥ 80 % hits; else 1.
-    /// (A shift that struck out is not cleared and earns 0; the session handles that.)
+    /// For a cleared shift, by misses (glasses that weren't a hit: short, over or spill):
+    /// 3 = no miss, 2 = one miss, 1 = cleared with more. (A shift that struck out is not cleared and earns 0; the
+    /// session handles that.) Round 6 balance pass (founder decision, design/BALANCE.md): stars count clean pours,
+    /// not Perfects. The Flawless crown (every glass Perfect) is the mastery goal. `perfects` and `spills` stay in
+    /// the signature for its callers; a spill is a miss, so it is already counted through `hits`.
     static func stars(perfects: Int, hits: Int, spills: Int, total: Int) -> Int {
         if total <= 0 { return 0 }
-        if hits >= total && spills == 0 && perfects * 10 >= total * 6 { return 3 }
-        if hits * 10 >= total * 8 { return 2 }
+        let misses: Int = max(0, total - hits)
+        if misses == 0 && spills == 0 { return 3 }
+        if misses <= 1 { return 2 }
         return 1
     }
 }

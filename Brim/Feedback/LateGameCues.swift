@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // Round 6 (ROUND-6 "Feel", REVIEW-5 §2–§5): the late game's cues, read from the snapshot. Each watcher is a small pure
@@ -101,30 +102,84 @@ final class LowJugWatch {
     }
 }
 
-/// Conveyor: a served glass starts to ride off (its phase goes `.served` → `.leaving`) on a conveyor venue. Reports
-/// the best hit leaving this frame (misses leave quietly: a bell on a spill would be cheering it). Phases are kept
-/// per glass id for one frame only, so ids that restart with every run never confuse it.
+/// Conveyor: a served glass starts to ride off (its phase goes `.served` → `.leaving`). Reports the best hit leaving
+/// this frame (misses leave quietly: a bell on a spill would be cheering it). Glasses are tracked by id for one frame
+/// only, so ids that restart with every run never confuse it.
+///
+/// Round 7 (QA-3 P2-4): the director asks `rideOff(snapshot:)`, which rings only for a glass that really rode a belt:
+/// it moved while `.served` (Core carries a served belt glass on with the belt for `resultHold`; a counter glass
+/// stands still until it leaves). That is the Scene's rule too (`SceneGlass.rodeBelt`), so the bell's sound and its
+/// flick agree, and neither depends on the venue at that instant: at Rush's tier 2→3 change the last Soda glass
+/// leaves silently, and at 3→4 the last belt glass still rings although the room is already turning into the Diner.
 final class ConveyorBellWatch {
-    private var phases: [Int: GlassPhase] = [:]
+    /// A served glass that has moved more than this (pt) rode a belt.
+    static let rideThreshold: CGFloat = 0.5
 
-    init() {}
+    private struct Track {
+        var id: Int
+        var phase: GlassPhase
+        /// x when it was first seen `.served` (nil before).
+        var servedX: CGFloat?
+        var rode: Bool
+    }
 
-    /// One frame. Call it every frame (it tracks the phases even when `conveyor` is false).
+    /// Last frame's glasses, and a second buffer swapped in each frame (no per-frame allocation once they have held
+    /// the few glasses on the counter).
+    private var tracks: [Track] = []
+    private var scratch: [Track] = []
+
+    init() {
+        tracks.reserveCapacity(8)
+        scratch.reserveCapacity(8)
+    }
+
+    /// One frame. Call it every frame (it tracks the glasses even when `conveyor` is false). `conveyor`: the glasses
+    /// are on a conveyor venue, so any served glass counts (the round-6 rule, kept for callers that know the venue).
     func update(glasses: [GlassState], conveyor: Bool) -> Judgement? {
-        var next: [Int: GlassPhase] = [:]
+        return step(glasses, gate: conveyor, needsRide: false)
+    }
+
+    /// The round-6 rule, from the snapshot's venue.
+    func update(snapshot: GameSnapshot) -> Judgement? {
+        return update(glasses: snapshot.glasses, conveyor: snapshot.venue == .conveyor)
+    }
+
+    /// Round 7: only a glass that rode a belt (it moved while served), whatever the venue is this frame.
+    func rideOff(glasses: [GlassState]) -> Judgement? {
+        return step(glasses, gate: true, needsRide: true)
+    }
+
+    func rideOff(snapshot: GameSnapshot) -> Judgement? {
+        return rideOff(glasses: snapshot.glasses)
+    }
+
+    private func step(_ glasses: [GlassState], gate: Bool, needsRide: Bool) -> Judgement? {
+        scratch.removeAll(keepingCapacity: true)
         var ding: Judgement?
         for glass in glasses {
-            let before = phases[glass.id]
-            next[glass.id] = glass.phase
-            guard conveyor, glass.phase == .leaving, before == .served else { continue }
+            var before: Track?
+            for t in tracks where t.id == glass.id {
+                before = t
+                break
+            }
+            var servedX: CGFloat? = before?.servedX
+            var rode: Bool = before?.rode ?? false
+            if glass.phase == .served {
+                if let sx = servedX {
+                    if abs(glass.x - sx) > ConveyorBellWatch.rideThreshold { rode = true }
+                } else {
+                    servedX = glass.x
+                }
+            }
+            scratch.append(Track(id: glass.id, phase: glass.phase, servedX: servedX, rode: rode))
+            guard gate, glass.phase == .leaving, let b = before, b.phase == .served else { continue }
+            if needsRide && !rode { continue }
             guard let result = glass.result, result.isHit else { continue }
             if ding == nil || result == .perfect { ding = result }
         }
-        phases = next
+        let last = tracks
+        tracks = scratch
+        scratch = last
         return ding
-    }
-
-    func update(snapshot: GameSnapshot) -> Judgement? {
-        update(glasses: snapshot.glasses, conveyor: snapshot.venue == .conveyor)
     }
 }

@@ -312,8 +312,8 @@ final class FeedbackDirector: FeedbackSink {
             haptics.play(HapticBook.lowJug)
         }
 
-        // Conveyor: the service bell as a served glass rides off.
-        let leaving = bellWatch.update(snapshot: snapshot)
+        // Conveyor: the service bell as a served glass rides off — only one that really rode a belt (QA-3 P2-4).
+        let leaving = bellWatch.rideOff(snapshot: snapshot)
         if let judgement = leaving, !paused, !ending, snapshot.phase != .finished, now - lastBell >= 0.25 {
             lastBell = now
             audio.play(SoundBook.serviceBell(perfect: judgement == .perfect, dice: &dice))

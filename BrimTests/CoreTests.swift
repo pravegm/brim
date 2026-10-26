@@ -296,11 +296,18 @@ struct CoreTests {
     }
 
     @Test func starRules() {
+        // Round 6 balance pass: stars count misses (short / over / spill), not Perfects.
+        // No miss → 3★, whatever the Perfect count (the Flawless crown is the all-Perfect goal).
         #expect(Rules.stars(perfects: 6, hits: 6, spills: 0, total: 6) == 3)
-        #expect(Rules.stars(perfects: 4, hits: 6, spills: 0, total: 6) == 3)
-        #expect(Rules.stars(perfects: 3, hits: 6, spills: 0, total: 6) == 2)
+        #expect(Rules.stars(perfects: 3, hits: 6, spills: 0, total: 6) == 3)
+        #expect(Rules.stars(perfects: 0, hits: 6, spills: 0, total: 6) == 3)
+        // One miss → 2★, whether it was a spill or a short / over.
         #expect(Rules.stars(perfects: 5, hits: 5, spills: 1, total: 6) == 2)
-        #expect(Rules.stars(perfects: 0, hits: 4, spills: 0, total: 6) == 1)
+        #expect(Rules.stars(perfects: 5, hits: 5, spills: 0, total: 6) == 2)
+        #expect(Rules.stars(perfects: 7, hits: 7, spills: 0, total: 8) == 2)
+        // Two misses (still cleared: under 3 strikes) → 1★.
+        #expect(Rules.stars(perfects: 4, hits: 4, spills: 0, total: 6) == 1)
+        #expect(Rules.stars(perfects: 6, hits: 6, spills: 2, total: 8) == 1)
         #expect(Rules.stars(perfects: 0, hits: 0, spills: 0, total: 0) == 0)
     }
 
@@ -1239,7 +1246,8 @@ struct CoreTests {
         #expect(swaps(back) == 0)
         run(s, seconds: 0.25, tilt: 0, events: &back)
         #expect(swaps(back) == 1)
-        // The glass waits for the player to pour again; the fresh jug arrives full.
+        // The glass waits for the player to pour again (round 7: the swap, then lock-in and `serveIdle`, ≈ 1.1 s after
+        // the refill; see `aDryJugRefillReachesItsVerdictWithinASecondAndAHalf`); the fresh jug arrives full.
         run(s, seconds: CoreTuning.jugSwapPause + 0.2, tilt: 0, events: &back)
         #expect(servedJudgements(back).isEmpty)
         #expect(s.snapshot.jug.fill >= 0.5)
@@ -1676,6 +1684,7 @@ struct CoreTests {
         var seen: [Int] = []
         var problems: [String] = []
         var belts: Int = 0
+        var handoffs: [Int] = []
         var t: Double = 0
         while t < 900 && seen.count < 4 * CoreTuning.rushTierEvery + 1 && !s.isFinished {
             s.step(dt: 1.0 / 30.0, tilt: 0)
@@ -1684,6 +1693,17 @@ struct CoreTests {
             let shown: VenueID? = snap.venue
             if shown != Rules.rushVenue(tier: snap.rushTier) {
                 problems.append("t \(t): venue \(String(describing: shown)) for tier \(snap.rushTier)")
+            }
+            // Round 7 (QA-3 P2-2): at Conveyor → Diner, the first glass that stands still is sent only as the last belt
+            // glass starts leaving, and never slides in over it (mug handles on the left included).
+            for b in snap.glasses where b.patienceTotal == nil && !b.isWaitingInSlot {
+                for n in snap.glasses where n.patienceTotal != nil && !n.isWaitingInSlot && n.phase == .arriving {
+                    if !handoffs.contains(n.id) { handoffs.append(n.id) }
+                    if b.phase != .leaving { problems.append("t \(t): glass \(n.id) sent while belt glass \(b.id) is \(b.phase)") }
+                    let gap: Double = Double(b.x - n.x) - NextGlassSlot.bodyHalfWidth(n.shape)
+                        - NextGlassSlot.bodyHalfWidth(b.shape) - NextGlassSlot.handleReach(b.shape)
+                    if gap < 0 { problems.append("t \(t): glass \(n.id) overlaps belt glass \(b.id) by \(-gap) pt") }
+                }
             }
             for g in snap.glasses where g.phase == .filling && !seen.contains(g.id) {
                 let k: Int = seen.count
@@ -1702,6 +1722,7 @@ struct CoreTests {
         #expect(!s.isFinished)
         #expect(seen.count == 4 * CoreTuning.rushTierEvery + 1, "glasses at the stop \(seen.count) in \(t) s")
         #expect(belts == CoreTuning.rushTierEvery, "belt glasses \(belts)")
+        #expect(handoffs.count == 1, "belt → counter handoffs \(handoffs)")
         #expect(problems.isEmpty, "\(problems)")
         #expect(s.snapshot.rushTier == 5)
         let finalVenue: VenueID? = s.snapshot.venue
@@ -1833,6 +1854,235 @@ struct CoreTests {
         // Still "foamy" for the Daily generator (> 0.3, ≤ 1.0), so every version generates the same Daily.
         #expect(cream.foamPerVolume > 0.3 && cream.foamPerVolume <= 1.0)
         #expect(cream.fizzy)
+    }
+
+    // MARK: Round 7 (QA-3): the start hold, Rush hand-offs, dry-jug dead air
+
+    @Test func theStartHoldFreezesTheBeltPatienceAndFadingLinesUntilReleased() {
+        // QA-3 P1-3: the conveyor intro card. A phone (no flat gate), so only the hold stops the belt.
+        guard let beltLevel = LevelCatalog.levels.first(where: { (l: Level) -> Bool in l.conveyorSpeed != nil }) else {
+            Issue.record("no conveyor shift")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(beltLevel.id), layout: phoneLayout(), seed: 3)
+        #expect(!s.isStartHeld)
+        s.setStartHold(true)
+        #expect(s.isStartHeld)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        #expect(s.snapshot.phase == .playing)
+        let x0: CGFloat? = activeGlass(s)?.x
+        run(s, seconds: 3.0, tilt: 0, events: &events)
+        let x1: CGFloat? = activeGlass(s)?.x
+        #expect(x0 != nil)
+        #expect(x1 == x0)
+        #expect(servedJudgements(events).isEmpty)
+        #expect(s.isStartHeld)
+        // The App dismisses the card: the belt runs.
+        s.setStartHold(false)
+        #expect(!s.isStartHeld)
+        run(s, seconds: 0.5, tilt: 0, events: &events)
+        let x2: CGFloat? = activeGlass(s)?.x
+        if let a = x1, let b = x2 {
+            #expect(b > a)
+        } else {
+            Issue.record("the belt glass went missing")
+        }
+
+        // Pouring releases the hold by itself ("Pour to start"), and the belt runs on.
+        let p: GameSession = GameSession(mode: .shift(beltLevel.id), layout: phoneLayout(), seed: 3)
+        p.setStartHold(true)
+        var pre: [GameEvent] = []
+        run(p, seconds: 1.0, tilt: 0, events: &pre)
+        let pid: Int? = activeGlass(p)?.id
+        let px0: CGFloat? = activeGlass(p)?.x
+        var poured: [GameEvent] = []
+        run(p, seconds: 0.5, tilt: pourLid(fill: p.snapshot.jug.fill) + 15, events: &poured)
+        #expect(pourStarts(poured) >= 1)
+        #expect(!p.isStartHeld)
+        let moved: GlassState? = p.snapshot.glasses.first(where: { (g: GlassState) -> Bool in g.id == pid })
+        if let a = px0, let g = moved {
+            #expect(g.x > a)
+        } else {
+            Issue.record("no belt glass to watch")
+        }
+
+        // Patience waits behind the hold.
+        if let timed = LevelCatalog.levels.first(where: { (l: Level) -> Bool in
+            l.conveyorSpeed == nil && l.orders.first?.patience != nil
+        }) {
+            let q: GameSession = GameSession(mode: .shift(timed.id), layout: phoneLayout(), seed: 3)
+            q.setStartHold(true)
+            var qe: [GameEvent] = []
+            run(q, seconds: 4.0, tilt: 0, events: &qe)
+            let full: Double? = activeGlass(q)?.patienceTotal
+            let held: Double? = activeGlass(q)?.patienceLeft
+            #expect(full != nil)
+            #expect(held == full)
+            q.setStartHold(false)
+            run(q, seconds: 1.0, tilt: 0, events: &qe)
+            let after: Double? = activeGlass(q)?.patienceLeft
+            if let f = full, let a = after {
+                #expect(a < f - 0.5)
+            } else {
+                Issue.record("the timed glass went missing")
+            }
+        } else {
+            Issue.record("no shift with patience on its first glass")
+        }
+
+        // A fading line doesn't fade behind the hold.
+        if let fading = LevelCatalog.levels.first(where: { (l: Level) -> Bool in
+            l.conveyorSpeed == nil && l.orders.first?.lineFadesAfter != nil
+        }), let fade = fading.orders.first?.lineFadesAfter {
+            let f: GameSession = GameSession(mode: .shift(fading.id), layout: phoneLayout(), seed: 3)
+            f.setStartHold(true)
+            var fe: [GameEvent] = []
+            run(f, seconds: fade + 2.0, tilt: 0, events: &fe)
+            let opacity: Double? = activeGlass(f)?.lineOpacity
+            #expect(opacity == Double(1))
+        } else {
+            Issue.record("no shift with a fading first line")
+        }
+    }
+
+    @Test func rushKeepsTheStreamsDrinkUntilThePourStops() {
+        // QA-3 P2-3: a glass sent to the stop mid-pour (a belt serve, or a changeover under a running stream) doesn't
+        // change the stream's drink under the player's hand; the jug takes it once the stream has stopped and landed.
+        var found: Bool = false
+        var problems: [String] = []
+        var seed: UInt64 = 1
+        while seed <= 30 && !found {
+            let s: GameSession = GameSession(mode: .rush, layout: phoneLayout(), seed: seed)
+            seed += 1
+            var t: Double = 0
+            var prevFlow: Double = 0
+            var prevLiquid: LiquidID = s.snapshot.jug.liquid.id
+            var want: LiquidID? = nil
+            while t < 30 && !s.isFinished && want == nil {
+                s.debugSetJugFill(1.0)
+                let tilt: Double = t < 1.0 ? 0 : 70
+                s.step(dt: 1.0 / 60.0, tilt: tilt)
+                t += 1.0 / 60.0
+                let jug: JugState = s.snapshot.jug
+                if prevFlow > 0 && jug.flow > 0 && jug.liquid.id != prevLiquid {
+                    problems.append("t \(t): the stream turned \(prevLiquid) → \(jug.liquid.id) mid-pour")
+                }
+                prevFlow = jug.flow
+                prevLiquid = jug.liquid.id
+                if jug.flow > 0 {
+                    let sent: GlassState? = s.snapshot.glasses.first(where: { (g: GlassState) -> Bool in
+                        g.phase == .arriving && !g.isWaitingInSlot
+                    })
+                    if let g = sent, g.liquid.id != jug.liquid.id { want = g.liquid.id }
+                }
+            }
+            guard let next = want else { continue }
+            found = true
+            // Laid back: the jug takes the new drink only once nothing flows.
+            var switched: Bool = false
+            var lt: Double = 0
+            while lt < 2.0 && !switched {
+                s.step(dt: 1.0 / 60.0, tilt: 0)
+                lt += 1.0 / 60.0
+                if s.snapshot.jug.liquid.id == next {
+                    switched = true
+                    #expect(s.snapshot.jug.flow == 0)
+                }
+            }
+            #expect(switched, "the jug never took \(next)")
+        }
+        #expect(found, "no Rush seed sent a new drink to the stop mid-pour")
+        #expect(problems.isEmpty, "\(problems)")
+    }
+
+    @Test func aDryJugRefillReachesItsVerdictWithinASecondAndAHalf() {
+        // QA-3 P2-7: laid back after running dry short of the line: one refill swap, a short wait to pour again, then
+        // the verdict ≈ 1.5 s after the lay-back (was ≈ 4.9 s).
+        let s: GameSession = GameSession(mode: .shift("1-1"), layout: phoneLayout(), seed: 13)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        guard let glass = activeGlass(s) else {
+            Issue.record("no glass")
+            return
+        }
+        let tilt: Double = pourLid(fill: s.snapshot.jug.fill) + 12
+        var t: Double = 0
+        var third: Bool = false
+        while t < 8 && !third {
+            events.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: tilt))
+            t += 1.0 / 60.0
+            if let g = activeGlass(s), g.liquidHeight >= g.lineHeight * 0.35 { third = true }
+        }
+        #expect(third)
+        s.debugSetJugFill(0)
+        run(s, seconds: 1.0, tilt: tilt, events: &events)
+        #expect(s.snapshot.jug.fill == 0)
+        #expect(servedJudgements(events).isEmpty)
+        var back: [GameEvent] = []
+        var waited: Double = 0
+        while waited < 6 && servedJudgements(back).isEmpty {
+            back.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: 0))
+            waited += 1.0 / 60.0
+        }
+        #expect(servedJudgements(back) == [Judgement.short])
+        #expect(waited >= 1.0 && waited <= 1.6, "verdict \(waited) s after the lay-back")
+        #expect(swaps(back) == 1)
+        var servedID: Int = -1
+        for e in back {
+            if case .served(let id, _, _) = e { servedID = id }
+        }
+        #expect(servedID == glass.id)
+    }
+
+    @Test func aDryJugOverAGlassThatIsAlreadyAHitIsJudgedWithoutARefill() {
+        // QA-3 P2-7: run dry just short of the line (inside the Good band), lay back: judged ~0.9 s later with no
+        // refill swap; the next glass brings the refill.
+        let s: GameSession = GameSession(mode: .shift("1-1"), layout: phoneLayout(), seed: 13)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        guard let glass = activeGlass(s) else {
+            Issue.record("no glass")
+            return
+        }
+        var stopped: Bool = false
+        var lastTilt: Double = 0
+        var t: Double = 0
+        while t < 12 && !stopped {
+            let tl: Double = carefulTilt(s, offset: 12, stopAt: -0.03, stopped: &stopped)
+            if stopped { break }
+            lastTilt = tl
+            events.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: tl))
+            t += 1.0 / 60.0
+        }
+        #expect(stopped)
+        // Runs dry right there, still tipped: no verdict, no swap.
+        s.debugSetJugFill(0)
+        run(s, seconds: 1.0, tilt: lastTilt, events: &events)
+        #expect(s.snapshot.jug.fill == 0)
+        #expect(servedJudgements(events).isEmpty)
+        #expect(swaps(events) == 0)
+        var back: [GameEvent] = []
+        var waited: Double = 0
+        while waited < 6 && servedJudgements(back).isEmpty {
+            back.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: 0))
+            waited += 1.0 / 60.0
+        }
+        let judged: [Judgement] = servedJudgements(back)
+        #expect(judged.count == 1)
+        if let j = judged.first { #expect(j.isHit, "judged \(j)") }
+        #expect(waited <= 1.05, "verdict \(waited) s after the lay-back")
+        #expect(swaps(back) == 0)
+        var servedID: Int = -1
+        for e in back {
+            if case .served(let id, _, _) = e { servedID = id }
+        }
+        #expect(servedID == glass.id)
+        // The next glass is sent with a refilled jug (one swap).
+        var next: [GameEvent] = []
+        run(s, seconds: 2.0, tilt: 0, events: &next)
+        #expect(swaps(next) == 1)
+        #expect(s.snapshot.jug.fill >= 0.5)
     }
 }
 

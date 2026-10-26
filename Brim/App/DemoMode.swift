@@ -37,7 +37,9 @@ import UIKit
 //     finished  when the run finishes; the results card shows at once.
 //     intro     round 6: 0.5 s (session time) into the run, during the intro phase: the shift banner ("Shift 6 · …")
 //               and, with `hints=fresh` on a venue's shift, the one-time venue intro card are on screen.
-//     tier      round 6 (Rush): 0.35 s after the Rush tier changes ("TIER 2 · FIZZ!" banner on screen). Pair it with
+//     tier      round 6 (Rush): after the Rush tier changes ("TIER 2 · FIZZ!" banner on screen). Round 7 (QA-3 P1-1):
+//               ≥ 0.35 s after the change AND once the old glass has finished leaving (no `.leaving` glass), at the
+//               latest 1.2 s after it, so the frame never shows the old glass's stamp riding out. Pair it with
 //               `streak=11` (tiers change every `CoreTuning.rushTierEvery` = 12 glasses) so the change comes a glass
 //               or two into the live frames. Logs `BRIM-T tier <n> venue=<v>` too.
 // - `streak=N`     the run is really PLAYED up to an N-Perfect streak (perfect autopilot, headless, at launch) before
@@ -78,6 +80,10 @@ import UIKit
 // - Round 6 (every DEBUG build, GameController):
 //   `BRIM-T tier <n> venue=<v>`    a Rush tier change the player sees (banner shown).
 //   `BRIM-T intro card <hint>`     a one-time venue intro card was put up (`belt`, `fade`, `sand`, `foam`, `thick`).
+// - Round 7 (every DEBUG build, GameController):
+//   `BRIM-T start hold <0|1>`      the run is held under a venue intro card (1) / released (0) (QA-3 P1-3).
+//   `BRIM-T intro card skipped <hint>`   a player with stars in the venue already knows it (QA-3 P2-12).
+//   `BRIM-T touch override ends: the hinge poured`   "Use touch instead" ends at the next run (QA-3 P2-11).
 // - Demo runs keep the scene rendering on every screen (the real app pauses it under Venues, Settings, results and the
 //   pose cards), so `BRIM-T frame 120` always arrives.
 

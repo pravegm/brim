@@ -77,13 +77,17 @@ final class SceneGlass {
     /// Round 6: a prefilled glass shows its old drink as a darker settled layer with a meniscus line on top.
     private let prefillLayer: SKShapeNode
     private let prefillLine: SKShapeNode
-    /// Round 6: the hourglass's turned-wood plinth and posts.
+    /// Round 6: the hourglass's turned-wood plinth (front) and, round 7, its posts (back: they stand behind the glass).
     private let woodFrame: SKShapeNode
     private let woodShine: SKShapeNode
+    private let woodPosts: SKShapeNode
+    private let woodPostShine: SKShapeNode
     private let overflow: SKShapeNode
     private let overflowShine: SKShapeNode
     private let wetSheen: SKShapeNode
     private let stamp: SKSpriteNode
+    /// Parent of the stamp; its alpha fades the stamp out as the glass leaves (QA-3 P1-1).
+    private let stampHolder: SKNode
 
     private(set) var shapeID = ""
     private var profile: [CGPoint] = []
@@ -137,6 +141,24 @@ final class SceneGlass {
     private var isHourglass = false
     /// Whether the hourglass's wooden plinth and posts are drawn (tests).
     var hasWoodFrame: Bool { !woodFrame.isHidden }
+    /// How far (local, either side of the centre line) the hourglass's plinth and posts reach, strokes included; 0 when
+    /// it has none. Round 7 (QA-3 P2-16): never past the body half-width Core's slot contract plans for. Tests.
+    var woodReach: CGFloat {
+        if woodFrame.isHidden { return 0 }
+        var r: CGFloat = 0
+        for n in [woodFrame, woodPosts] {
+            guard let p = n.path else { continue }
+            let b = p.boundingBoxOfPath
+            r = max(r, max(abs(b.minX), abs(b.maxX)) + n.lineWidth * 0.5)
+        }
+        return r
+    }
+    /// Round 7 (QA-3 P2-4): this glass rode a belt — it moved while `.served` (Core carries a served belt glass on with
+    /// the belt; a counter glass stands still until it leaves). The bell flicks only for these, the same rule Feel's
+    /// `ConveyorBellWatch.rideOff` rings by (`rideThreshold` is the same 0.5 pt).
+    private(set) var rodeBelt = false
+    static let rideThreshold: CGFloat = 0.5
+    private var servedX: CGFloat?
     private var lastX: CGFloat?
     private var lastVX: CGFloat = 0
     private var velocityValid = false
@@ -214,10 +236,13 @@ final class SceneGlass {
         prefillLine = SKShapeNode()
         woodFrame = SKShapeNode()
         woodShine = SKShapeNode()
+        woodPosts = SKShapeNode()
+        woodPostShine = SKShapeNode()
         overflow = SKShapeNode()
         overflowShine = SKShapeNode()
         wetSheen = SKShapeNode()
         stamp = SKSpriteNode()
+        stampHolder = SKNode()
 
         let ink = SceneColor.ink
         // back
@@ -374,13 +399,32 @@ final class SceneGlass {
         overflowShine.zPosition = 5.1
         wetSheen.strokeColor = .clear
         wetSheen.zPosition = 4.9
-        stamp.zPosition = 40
+        // The stamp sits in a holder whose alpha is the ride-out fade (QA-3 P1-1); the stamp's own alpha and scale
+        // belong to its pop-in actions.
+        stampHolder.zPosition = 40
+        stamp.zPosition = 0
         stamp.isHidden = true
         for n in [walls, outline, extraOutline, extra, woodFrame, woodShine, highlight, highlight2, shade, rimFront, band,
                   bandEdges, lineGlow, ghostTick, lineHalo, lineInk, tab, tabFill, wetSheen, overflow, overflowShine] {
             front.addChild(n)
         }
-        front.addChild(stamp)
+        front.addChild(stampHolder)
+        stampHolder.addChild(stamp)
+        // Round 7 (QA-3 P2-16): the hourglass's posts stand behind the glass, inside the body half-width Core plans for.
+        woodPosts.fillColor = woodFrame.fillColor
+        woodPosts.strokeColor = woodFrame.strokeColor
+        woodPosts.lineWidth = woodFrame.lineWidth
+        woodPosts.lineJoin = .round
+        woodPosts.zPosition = 0.5
+        woodPosts.isHidden = true
+        woodPostShine.fillColor = .clear
+        woodPostShine.strokeColor = woodShine.strokeColor
+        woodPostShine.lineWidth = woodShine.lineWidth
+        woodPostShine.lineCap = .round
+        woodPostShine.zPosition = 0.51
+        woodPostShine.isHidden = true
+        back.addChild(woodPosts)
+        back.addChild(woodPostShine)
 
         for _ in 0..<SceneGlass.bubbleCount {
             bubbleX.append(rng.range(-0.8, 0.8))
@@ -510,6 +554,13 @@ final class SceneGlass {
 
         counterY = f.counterY
         x = g.x
+        if g.phase == .served {
+            if let sx = servedX {
+                if abs(g.x - sx) > SceneGlass.rideThreshold { rodeBelt = true }
+            } else {
+                servedX = g.x
+            }
+        }
         if !prefillKnown {
             // A prefilled glass arrives with drink already in it; anything else starts empty.
             prefillKnown = true
@@ -1230,6 +1281,8 @@ final class SceneGlass {
         if r != shownResult {
             shownResult = r
             stamp.removeAllActions()
+            stampHolder.alpha = 1
+            stampRidingOut = false
             if let j = r {
                 let art = SceneArt.stamp(j)
                 stamp.texture = art.texture
@@ -1256,7 +1309,19 @@ final class SceneGlass {
                 stamp.isHidden = true
             }
         }
-        if !stamp.isHidden {
+        if !stamp.isHidden && g.phase == .leaving {
+            // QA-3 P1-1 (CI frame 26): once its glass leaves, the stamp rides out with it at its last local spot (no
+            // safe-area clamp, which pinned it over the next glass as this one slid off) and fades in ~0.12 s.
+            if !stampRidingOut {
+                stampRidingOut = true
+                pendingStreak = nil
+                // The pop is long done after `resultHold`; settle it if a frame skipped past the end.
+                stamp.removeAllActions()
+                stamp.setScale(1)
+            }
+            stampHolder.alpha = max(0, stampHolder.alpha - f.dt * SceneGlass.stampLeaveFade)
+            if stampHolder.alpha <= 0.001 { stamp.isHidden = true }
+        } else if !stamp.isHidden {
             // Just above the rim, kept inside the crop and BELOW the crease keep-out (ROUND-3 decision 3): tall glasses
             // get the stamp over their upper body instead of on the fold. Computed from the live root (Perfect hop).
             let sy = max(front.yScale, 0.01)
@@ -1277,6 +1342,16 @@ final class SceneGlass {
     }
 
     private var pendingStreak: (n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat)?
+    /// The glass is leaving: the stamp rides out with it and fades (per second of simulation: gone in ~0.12 s).
+    private var stampRidingOut = false
+    static let stampLeaveFade: CGFloat = 8
+    /// The stamp's world x this frame (its ink centre); nil when no stamp shows. Tests.
+    var stampWorldX: CGFloat? {
+        if stamp.isHidden { return nil }
+        return front.position.x + front.xScale * stamp.position.x
+    }
+    /// The ride-out fade (1 = not fading). Tests.
+    var stampLeaveAlpha: CGFloat { stampHolder.alpha }
     /// The stamp's settled size. `SKSpriteNode.size` includes the node's scale, and the streak is placed while the
     /// stamp is still popping in at 0.3×: measured that way it looked tiny and the pop landed where the full stamp
     /// later covered it (final Duo frame D2).
@@ -1385,45 +1460,61 @@ final class SceneGlass {
 
     /// A turned-wood plinth the glass stands in and two slender posts with beads and finials either side, like a
     /// real sand timer (open at the top: you pour into it). Static, built with the shape.
+    ///
+    /// Round 7 (QA-3 P2-16): everything stays inside the glass's body half-width (`maxHW` = widest + wall, exactly
+    /// `NextGlassSlot.bodyHalfWidth`), strokes included, so Core's slot edge margin and stop gap hold for an hourglass
+    /// too. The posts stand just inside the bulbs' widest edge and are drawn on the back root, behind the glass: they
+    /// show beside the waist and disappear behind the bulbs, as on a real timer.
     private func buildHourglassFrame() {
         guard isHourglass, profile.count >= 2 else {
             woodFrame.isHidden = true
             woodShine.isHidden = true
+            woodPosts.isHidden = true
+            woodPostShine.isHidden = true
             return
         }
-        let postX = maxHW + 7
+        let reach = maxHW - woodFrame.lineWidth * 0.5
+        let postHW = SceneGlass.hourglassPostHalfWidth
+        let postX = reach - postHW
         let plinthTop = -base + min(7, max(4, base * 0.5))
-        let plinth = CGRect(x: -(postX + 6), y: -base - 1.5, width: (postX + 6) * 2, height: plinthTop + base + 1.5)
+        let plinth = CGRect(x: -reach, y: -base - 1.5, width: reach * 2, height: plinthTop + base + 1.5)
         let path = CGMutablePath()
         path.addRoundedRect(in: plinth, cornerWidth: 3, cornerHeight: 3)
         let postTop = max(plinthTop + 30, rimY - 8)
         let shine = CGMutablePath()
         shine.move(to: CGPoint(x: plinth.minX + 5, y: plinth.maxY - 1.8))
         shine.addLine(to: CGPoint(x: plinth.maxX - 5, y: plinth.maxY - 1.8))
+        let posts = CGMutablePath()
+        let postShine = CGMutablePath()
         for side in [CGFloat(-1), CGFloat(1)] {
             let cx = side * postX
             let span = postTop - plinthTop
             let b1 = plinthTop + span * 0.28, b2 = plinthTop + span * 0.72
-            // (height, half-width) up the post: shaft, two beads, a finial.
+            // (height, half-width) up the post: shaft, two beads, a finial (the widest is `postHW`).
             let rows: [(CGFloat, CGFloat)] = [
-                (plinthTop, 4.2), (plinthTop + 3, 3), (b1 - 3.5, 3), (b1, 5.2), (b1 + 3.5, 3), (b2 - 3.5, 3), (b2, 5.2),
-                (b2 + 3.5, 3), (postTop, 3), (postTop + 2.5, 4.6), (postTop + 6.5, 5.4), (postTop + 10, 3.6),
-                (postTop + 12, 1.4),
+                (plinthTop, 3.4), (plinthTop + 3, 2.4), (b1 - 3.5, 2.4), (b1, 4.0), (b1 + 3.5, 2.4), (b2 - 3.5, 2.4),
+                (b2, 4.0), (b2 + 3.5, 2.4), (postTop, 2.4), (postTop + 2.5, 3.6), (postTop + 6.5, postHW),
+                (postTop + 10, 2.9), (postTop + 12, 1.1),
             ]
             var pts: [CGPoint] = []
             for r in rows { pts.append(CGPoint(x: cx - r.1, y: r.0)) }
             for r in rows.reversed() { pts.append(CGPoint(x: cx + r.1, y: r.0)) }
-            path.addPath(ScenePaths.polygon(pts))
-            shine.move(to: CGPoint(x: cx - 1.3, y: plinthTop + 6))
-            shine.addLine(to: CGPoint(x: cx - 1.3, y: postTop - 3))
+            posts.addPath(ScenePaths.polygon(pts))
+            postShine.move(to: CGPoint(x: cx - 1, y: plinthTop + 6))
+            postShine.addLine(to: CGPoint(x: cx - 1, y: postTop - 3))
         }
         woodFrame.path = path
         woodShine.path = shine
+        woodPosts.path = posts
+        woodPostShine.path = postShine
         woodFrame.isHidden = false
         woodShine.isHidden = false
-        // UI keep-outs include the posts.
-        maxHW = postX + 6
+        woodPosts.isHidden = false
+        woodPostShine.isHidden = false
     }
+
+    /// The widest part of an hourglass post (its finial), local pt either side of the post's centre line.
+    static let hourglassPostHalfWidth: CGFloat = 4.2
 
     // MARK: Static parts (once per glass shape)
 

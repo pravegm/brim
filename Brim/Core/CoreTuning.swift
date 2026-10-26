@@ -87,6 +87,12 @@ enum CoreTuning {
     /// A shift jug that runs dry mid-glass stays empty (no stream) until the glass is served or the jug has been
     /// tipped back below the refilled jug's pour point for this long; then it is swapped.
     static let jugDryTipBackTime: Double = 0.4
+    /// Round 7 (QA-3 P2-7): after a dry jug's tip-back refill, the glass under the spout waits this long for the player
+    /// to pour again (the swap itself), then locks in and is judged `serveIdle` later: lay-back → verdict ≈
+    /// `jugDryTipBackTime` + this + `serveIdle` = 1.5 s (was ≈ 4.9 s on `resumeServeIdle`). A glass that is already a
+    /// hit when the jug is laid back gets no refill and no hold: it is judged `serveIdle` after the tip-back (≈ 0.9 s)
+    /// and the jug is refilled with the next glass.
+    static let dryRefillServeHold: Double = 0.6
     /// When the next glass is sent to the stop, the jug is refilled there (between glasses) if it holds less than
     /// this × the drink that glass needs to its line.
     static let jugRefillMargin: Double = 1.3

@@ -15,7 +15,7 @@ import Testing
 //   BRIM-BAL level=1-3 profile=casual clear=0.83 stars=2.1 three=0.17 perfect=0.41 ... short=0.05 dur=48.2 n=6
 // Assertions are LOOSE sanity bounds (CI stays green while numbers move); the target curve is printed as WARN lines.
 //
-// Cost: a 60 Hz frame of a debug-build GameSession costs ~2–3 ms on CI, so a full sweep (44 levels × 3 profiles × N,
+// Cost: CI runs ~2,900–5,700 debug-build GameSession frames/s across its cores (run 40248384068), so a full sweep (44 levels × 3 profiles × N,
 // Rush, Daily) is ~1–2 M frames. The default tier is a small smoke sample (~25 k frames); run a sweep with
 // `TEST_RUNNER_BRIM_BAL=standard` (or `full`) in xcodebuild's environment, or flip `BalanceConfig.defaultTier` for one
 // push. Overrides: BRIM_BAL_ATTEMPTS, BRIM_BAL_RUSH_SEEDS, BRIM_BAL_DAYS, BRIM_BAL_BUDGET (s per suite, 0 = none),
@@ -29,7 +29,7 @@ enum BalanceTier: String {
 }
 
 enum BalanceConfig {
-    /// Flip to `.standard` (~10 min of CI) or `.full` (~20+ min) for a one-off balance push; keep `.smoke` on main.
+    /// Flip to `.standard` (~4 min of CI) or `.full` (~9.5 min) for a one-off balance push; keep `.smoke` on main.
     static let defaultTier: BalanceTier = .smoke
 
     /// The app's frame step and the hinge model.
@@ -1029,8 +1029,9 @@ struct BalanceTests {
         }
         if casualLevels >= 10 {
             let share: Double = Double(casualThreeLikely) / Double(casualLevels)
-            if share < 0.25 || share > 0.6 {
-                BalanceRun.warn("casual likely 3★ (within 5 tries) on \(BalanceRun.f2(share)) of levels, target ~0.40")
+            // Stars count misses since the round-6 rule (3★ = no miss); the all-Perfect crown is the mastery goal.
+            if share < 0.4 || share > 0.8 {
+                BalanceRun.warn("casual likely 3★ (within 5 tries) on \(BalanceRun.f2(share)) of levels, target 0.4–0.8")
             }
         }
         if expertLevels >= 10 && expertClearSum / Double(expertLevels) < 0.9 {

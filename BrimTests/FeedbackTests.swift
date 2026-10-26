@@ -972,6 +972,75 @@ struct FeedbackTests {
         let after = renderPeak(pile, blocks: 10)
         #expect(after.peak < 0.01)
     }
+
+    /// Round 7 (QA-3 P2-4): the bell rings only for a glass that really rode a belt (it moved while served), whatever
+    /// the venue is that frame: not for the last Soda glass leaving as Rush turns into the Conveyor (tier 2→3), and
+    /// still for the last belt glass as the room turns into the Diner (3→4).
+    @Test func conveyorBellRingsOnlyForAGlassThatRodeABelt() {
+        func glass(_ id: Int, _ phase: GlassPhase, _ result: Judgement?, x: CGFloat) -> GlassState {
+            var g = feedbackGlass(id: id, phase: phase, result: result)
+            g.x = x
+            return g
+        }
+        // A belt glass: carried on by the belt while served, then rides off.
+        let belt = ConveyorBellWatch()
+        var rang: [Judgement] = []
+        var x: CGFloat = 300
+        for _ in 0..<3 {
+            if let j = belt.rideOff(glasses: [glass(1, .filling, nil, x: x)]) { rang.append(j) }
+            x += 0.6
+        }
+        for _ in 0..<18 {
+            if let j = belt.rideOff(glasses: [glass(1, .served, .perfect, x: x)]) { rang.append(j) }
+            x += 0.6
+        }
+        let off = belt.rideOff(glasses: [glass(1, .leaving, .perfect, x: x)])
+        let after = belt.rideOff(glasses: [glass(1, .leaving, .perfect, x: x + 20)])
+        #expect(rang.isEmpty)
+        #expect(off == .perfect)
+        #expect(after == nil)
+
+        // Tier 2→3: a counter glass (standing still while served) leaves as the venue becomes the Conveyor: quiet.
+        let counter = ConveyorBellWatch()
+        var counterRang: [Judgement] = []
+        for _ in 0..<18 {
+            var s = feedbackSnapshot(fill: 0.5, angle: 0, mode: .rush, glassPhase: .served, result: .great,
+                                     venue: .sodaFountain, rushTier: 2)
+            s.glasses[0].x = 335
+            if let j = counter.rideOff(snapshot: s) { counterRang.append(j) }
+        }
+        var leaving = feedbackSnapshot(fill: 0.5, angle: 0, mode: .rush, glassPhase: .leaving, result: .great,
+                                       venue: .conveyor, rushTier: 3)
+        leaving.glasses[0].x = 360
+        if let j = counter.rideOff(snapshot: leaving) { counterRang.append(j) }
+        #expect(counterRang.isEmpty)
+
+        // Tier 3→4: the last belt glass rode the belt; the venue is already the Diner when it leaves: it rings.
+        let edge = ConveyorBellWatch()
+        var ex: CGFloat = 340
+        for _ in 0..<18 {
+            var s = feedbackSnapshot(fill: 0.5, angle: 0, mode: .rush, glassPhase: .served, result: .good,
+                                     venue: .milkshakeDiner, rushTier: 4)
+            s.glasses[0].x = ex
+            _ = edge.rideOff(snapshot: s)
+            ex += 0.5
+        }
+        var edgeLeaving = feedbackSnapshot(fill: 0.5, angle: 0, mode: .rush, glassPhase: .leaving, result: .good,
+                                           venue: .milkshakeDiner, rushTier: 4)
+        edgeLeaving.glasses[0].x = ex
+        #expect(edge.rideOff(snapshot: edgeLeaving) == .good)
+
+        // A belt miss still rides off quietly; a glass first seen leaving rings nothing.
+        let miss = ConveyorBellWatch()
+        _ = miss.rideOff(glasses: [glass(5, .served, .short, x: 300)])
+        _ = miss.rideOff(glasses: [glass(5, .served, .short, x: 304)])
+        #expect(miss.rideOff(glasses: [glass(5, .leaving, .short, x: 310)]) == nil)
+        #expect(ConveyorBellWatch().rideOff(glasses: [glass(6, .leaving, .great, x: 310)]) == nil)
+        // Ids are only remembered for one frame: a restarted run's glass 1 starts fresh.
+        _ = belt.rideOff(glasses: [])
+        _ = belt.rideOff(glasses: [glass(1, .served, .great, x: 335)])
+        #expect(belt.rideOff(glasses: [glass(1, .leaving, .great, x: 340)]) == nil)
+    }
 }
 
 private func feedbackLiquid() -> Liquid {

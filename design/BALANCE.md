@@ -1,9 +1,11 @@
 # Brim — balance: the difficulty curve and how we measure it
 
-*Owner: balance design. Round 5, 26 Oct 2026. The harness is `BrimTests/BalanceTests.swift`; the content is
-`Brim/Core/LevelCatalog.swift`. Numbers below come from a Node mirror of Core + the same player model (the Swift test
-is a straight port); CI's `BRIM-BAL` lines replace them once a sweep has run. Treat every number as a model estimate
-until the real-Duo TestFlight session calibrates it (§7).*
+*Owner: balance design. Rounds 5–6, 26 Oct 2026. The harness is `BrimTests/BalanceTests.swift`; the content is
+`Brim/Core/LevelCatalog.swift`, and since round 6 the star rule (`Rules.stars`). The first full CI sweep ran on the
+round-5 content (§9); this pass was tuned on the Node mirror of Core + the same player model and waits for the next
+sweep. Treat every number as a model estimate until the real-Duo TestFlight session calibrates it (§8).*
+
+**Latest pass: §9 (round 6).**
 
 ## 1. What we want, and why
 
@@ -22,13 +24,15 @@ the content. That sets the shape:
 ## 2. Target curve
 
 Rates are per attempt unless stated. "Casual 3★ likely" = the chance of at least one 3★ in five tries is ≥ 50 %.
+Stars (round 6, founder): 3★ = cleared with no miss, 2★ = one miss, 1★ = cleared (a miss is a short, over or spill);
+the Flawless crown (every glass Perfect) is the mastery goal.
 
 | Measure | Target | Why |
 |---|---|---|
 | Novice clears 1-1 … 1-4 | ≥ 85 % each | first minutes; no early churn |
 | Novice first wall (clear < 50 %) | venue 2–3, not venue 1 | learn the pour before the twists |
 | Casual clears every shift | ≥ 50 % (venue finales x-8 ≥ 35 %; Sand Bar exempt) | no shift is a paywall-style blocker |
-| Casual 3★ likely | ~40 % of shifts | stars feel earnable; 3★ everywhere is mastery |
+| Casual 3★ likely | 40–80 % of shifts (WARN outside) | stars are earnable by clean pouring; crowns are mastery |
 | Expert clears | ≥ 90 % mean; no shift at 0 % | hard ≠ broken |
 | Venue v shift 1 vs venue v−1 shift 8 | shift 1 easier (casual ★) | each venue opens with a breather |
 | Rush run length | casual 2–3 min, expert 5–8 min | the long session; leaderboard spread |
@@ -73,15 +77,18 @@ BRIM-BAL WARN rush casual run 95.2 s, target 120–180
 `spill` = drink crossed the rim; `over` = filled past the Good band (a strike since round 5); `three` = 3★ attempts;
 `dur` = seconds of play per attempt.
 
-**Cost and tiers.** A debug-build 60 Hz `GameSession` frame costs roughly 2–3 ms on CI (estimate: CoreTests step
-~100 k frames and take 240–300 s), so a full sweep (~1–2 M frames) cannot run on every push. The first CI run's
-`timing` lines replace the estimate.
+**Cost and tiers.** Measured on CI (run 40248384068, `full`): the level suite ran 1.29 M frames in 448 s (2,900 fps
+across the runner's cores), Rush 0.44 M at 5,700 fps, Daily 0.21 M at 4,300 fps: about 9.5 min for the whole `full`
+sweep, so it stays opt-in (`balance.yml`) and the default `smoke` tier stays small.
 
 | Tier | What | CI wall (est.) |
 |---|---|---|
-| `smoke` (default) | novice 1-1 ×3; casual 2-2, 4-4, 5-5; expert 3-4, 4-8; one casual Rush (60 s cap); one casual Daily | ~30 s |
-| `standard` | 44 shifts × 3 profiles × 2; Rush 4 seeds × 3; Daily 6 days × 3 | ~10–12 min |
-| `full` | × 4 attempts; Rush 12 seeds; Daily 20 days (budgets 900/400/300 s) | ~20–25 min |
+| `smoke` (default) | novice 1-1 ×3; casual 2-2, 4-4, 5-5; expert 3-4, 4-8; one casual Rush (60 s cap); one casual Daily | ~10 s |
+| `standard` | 44 shifts × 3 profiles × 2; Rush 4 seeds × 3; Daily 6 days × 3 | ~4 min |
+| `full` | × 4 attempts; Rush 12 seeds; Daily 20 days (budgets 900/400/300 s) | ~9.5 min (measured) |
+
+Reading a `full` sweep: each shift line is four tries by a *fresh* player (no lessons from earlier shifts), so it
+measures first contact, and one line moves by 0.25 per try. Judge venues and trends, not single shifts.
 
 Pick a tier with `TEST_RUNNER_BRIM_BAL=standard` in the environment of `xcodebuild test` (xcodebuild strips the prefix
 and hands it to the test process), or flip `BalanceConfig.defaultTier` for one push and back. Other knobs (same prefix):
@@ -94,7 +101,7 @@ novices clear 1-1 at least once in 3 tries (and ≥ 50 % from 6), experts clear 
 Rush run serves a glass and expert Rush runs last 30–600 s, Daily runs finish and serve ≥ 3 glasses. The §2 targets are
 WARN lines only.
 
-## 4. Baseline (round-5 Core, content before this pass; Node mirror, 12 tries per shift and profile)
+## 4. Round 5 pass — baseline (round-5 Core, content before the pass; Node mirror, 12 tries per shift and profile)
 
 Mean clear / mean stars per venue (lowest shift in brackets):
 
@@ -113,7 +120,7 @@ casual 0 %: root beer at 0.85–0.9 lines overflows from the head alone); venue 
 (The other big wall the model found first — a shift jug running dry mid-glass and being judged short during the
 swap — was fixed in round 5's Core: refills now happen between glasses.)
 
-## 5. Changes this pass (`LevelCatalog.swift`, content only)
+## 5. Round 5 pass — changes (`LevelCatalog.swift`, content only)
 
 - **1-1** lines 0.6–0.7 → 0.66–0.72, first two glasses both water (no early jug swap). A longer pour gives a
   first-timer time to see the level coming. First line kept ≤ 0.66 for CoreTests' "over, not spill" headroom.
@@ -132,7 +139,7 @@ swap — was fixed in round 5's Core: refills now happen between glasses.)
 All of `LevelTests` still holds (checked against a mirror of every assertion; 44 shifts, ids, counts, 1-1 rules,
 1-4/1-6/1-8 twists, Daily rules). Venue unlock thresholds unchanged.
 
-## 6. After (same model and seeds)
+## 6. Round 5 pass — after (same model and seeds)
 
 | Venue | novice | casual | expert |
 |---|---|---|---|
@@ -147,7 +154,7 @@ Novice 1-1…1-4: 0.83–0.93 (1-1 0.90 and 1-3 0.93 over 30–40 tries). Expert
 Daily casual 0.60–0.75 depending on sample. Rush unchanged (Core). \*4-8 casual swings 0.17–0.5 between samples: noise at
 12 tries is ±0.14.
 
-**Still off target** (needs data or another owner):
+**Still off target after round 5** (round 6's answers are in §9):
 1. **Casual 3★ is rare** — likely on ~10 % of shifts (target ~40 %); experts ~40 %. 3★ needs every glass a hit and
    ≥ 60 % Perfect; the model casual lands ~20–45 % Perfect in ±2.5–4.5 % bands. Not changed yet: Perfect rates are
    the least calibrated number in the model, and the band is the feel of the game.
@@ -157,7 +164,10 @@ Daily casual 0.60–0.75 depending on sample. Rush unchanged (Core). \*4-8 casua
 3. **Rush is short for everyone**: ~1.6 min casual, ~2.3 min expert (targets 2–3 and 5–8).
 4. Novices hit the venue-4 belts hard (0–0.4 on 4-5…4-8). Acceptable: by then they are casual players.
 
-## 7. Recommendations for other owners
+## 7. Round 5 recommendations for other owners
+
+*All taken in round 6: refills 0.20/0.10, tiers every 12, only rim spills strike in Rush, `serveIdle` 0.5 s, and the
+new 3★ rule in §9.*
 
 - **Rush (Core: `CoreTuning`, `GameSession.serve`).** Two limits: the jug runs dry (economy), and once it doesn't, 3
   strikes end it (round 5 made over-pours strike in Rush). Modelled (10 seeds, same players):
@@ -187,3 +197,56 @@ Daily casual 0.60–0.75 depending on sample. Rush unchanged (Core). \*4-8 casua
    judgements for a few players on 1-1…1-4, 2-1, 2-2. Fit reaction, aim σ and anticipation learning so the novice and
    casual rows match; then redo §2's gaps (3★ first, then foam, then Rush with Core).
 4. Tune `LevelCatalog` (lines, patience, bands, belts, jug fill) against the WARN lines; keep LevelTests green.
+
+## 9. Round 6 pass (founder decisions after the first full sweep)
+
+**The sweep** (CI run 40248384068, `full`, round-5 content and round-6 Core). Venue clear rates: V1 novice 0.75
+(1-2 and 1-4 only 0.50), casual 0.94; V2 novice 0.41, casual 0.59, with **2-1 harder than 1-8 for casual (1.0★ vs
+2.0★)**; V3 casual 0.91; V4 novice 0.41, casual 0.62; V5 novice 0.28, casual 0.84; V6 casual 0.94. Casual likely-3★ on
+0.09 of shifts. Rush casual 138 s, expert 334 s (on target after round 6's Rush changes). Daily casual 0.65. Mean clear
+over all shifts: CI 0.53 / 0.80 / 0.96 (novice / casual / expert) against the Node mirror's 0.59 / 0.80 / 0.97, so the
+mirror tracks CI. CI's per-shift numbers are four tries by a cold player, which is why its venue-1 novice rate sat
+below the mirror's (which had averaged twelve learning tries).
+
+**Founder decisions and what changed**
+
+1. **Stars count clean pours** (`Rules.stars`, CoreTests `starRules`): 3★ = no miss, 2★ = one miss, 1★ = cleared.
+   The Flawless crown carries the all-Perfect goal. Model: casual likely-3★ 0.09 → **0.61** of shifts, expert 0.86,
+   novice 0.36. Open item for the App owner: `ResultsView.chaseLine` still says "3★ needs every glass a hit and N of
+   M Perfect", which is no longer true; it should read "3★ needs every glass a hit. You had …"
+   (`AppTests.resultsSayWhatIsLeftToChase` checks the old copy).
+2. **Venue 1 genuinely gentle** (target: a cold novice clears 1-1…1-4 ≥ 85 % over the first four tries). 1-1…1-4 start
+   with a full jug (a smaller first gush) and the jug only empties from 1-5; Perfect bands widen to 0.05 → 0.03 across
+   the venue (they shape Perfects, not misses); 1-1's later lines rise to 0.75 with three waters first; 1-2 and 1-3
+   lean on soda glasses and mason jars (a wide glass rises ~35 % slower per unit of flow than a tumbler, which helps a
+   fixed-pace novice most) and 1-3 waits 18 s; 1-4's low lines sit at 0.5 in the widest glasses, 16 s. 1-8 stays the
+   finale (third flute, 10 s). Cold novice, first four tries (40–60 players): **1-1 0.85, 1-2 0.88, 1-3 0.93, 1-4 0.88**.
+3. **Venue-2 and conveyor entries.** 2-1 is now cream soda (round 6's smaller head) with one cola; 2-2 "Head Start" is
+   cola and cream soda at 0.45–0.6, five glasses; root beer, the tallest head, now arrives in 2-4 (this also answers
+   QA-2's "no root beer in a mug at 2-2" for the store frame). 2-7's first glass is an untimed mug of root beer to 0.55:
+   it is the shift CoreTests' foam-settling check picks, and that check was written against exactly that glass. 4-1 belt
+   16 → 14, 4-2 18 → 16 in mugs and tumblers. Fresh casual, first four tries, mean stars: **2-1 2.15, 2-2 2.12 vs 1-8
+   2.00; 4-1 2.13, 4-2 1.86 vs 3-8 1.31.**
+4. **Daily casual ≥ 70 %.** The Daily menu drops the tiny cup and the vial (over-poured 40 % of the time), allows at
+   most two foamy drinks (root beer and cola were the most-missed Daily glasses, 43 % and 31 %), lines 0.52–0.82,
+   patience 16 → 11 s (+2 s for root beer). Casual clear measured CI-style (fresh player every 5 days, 100 days):
+   0.70 → **0.82**. Novice ~0.5.
+
+**After (Node mirror, 12 tries per shift and profile, new stars):**
+
+| Venue | novice | casual | expert |
+|---|---|---|---|
+| 1 | 0.91 / 1.8 (0.67) | 0.94 / 2.2 (0.67) | 1.00 / 2.5 (1.00) |
+| 2 | 0.61 / 1.0 (0.08) | 0.74 / 1.4 (0.58) | 1.00 / 2.4 (1.00) |
+| 3 | 0.77 / 1.4 (0.17) | 0.91 / 1.9 (0.75) | 0.98 / 2.3 (0.92) |
+| 4 | 0.45 / 0.8 (0.00) | 0.64 / 1.1 (0.17) | 0.95 / 2.1 (0.83) |
+| 5 | 0.33 / 0.4 (0.00) | 0.77 / 1.4 (0.58) | 0.96 / 2.1 (0.83) |
+| 6 | 0.71 / 1.2 (0.42) | 0.94 / 1.8 (0.75) | 0.96 / 2.3 (0.92) |
+
+(Stars use the new rule, so they read higher than §6's for the same play.) The late shifts of each venue stay the
+challenge: 2-7/2-8, 3-8, 4-7/4-8 and 5-8 are where casual clear dips to 0.2–0.6. The Node mirror carries the round-6
+Core changes that matter for shifts (`serveIdle` 0.5, cream soda's smaller head, the new stars, Rush refills, tiers
+and strikes) but not Rush's per-venue menus, so its Rush numbers are not quoted; CI's are.
+
+**For the next sweep, watch:** the venue-1 novice WARN lines (1-1…1-4), the 2-1/2-2 vs 1-8 WARN, casual likely-3★
+(WARN outside 0.4–0.8) and Daily casual (WARN under 0.70).
