@@ -926,11 +926,14 @@ func loadMetadata(_ v: Validation) -> Metadata? {
             if let vis = str(l, "visibility", path, "gamecenter", nullable: true) {
                 if ["SHOW_FOR_ALL", "HIDE_FOR_ALL"].contains(vis) { a["visibility"] = vis } else { v.error("gamecenter", "\(path).visibility: SHOW_FOR_ALL or HIDE_FOR_ALL") }
             }
+            // The API takes the range as STRINGS (push run 40343054685: "Expected a STRING but got INTEGER").
+            var range: [String: Double] = [:]
             for k in ["scoreRangeStart", "scoreRangeEnd"] {
                 guard let raw = l[k], !(raw is NSNull) else { continue }
-                if let n = raw as? NSNumber, !isBool(n) { a[k] = n } else { v.error("gamecenter", "\(path).\(k): must be a number") }
+                if let n = raw as? NSNumber, !isBool(n) { a[k] = n.stringValue; range[k] = n.doubleValue }
+                else { v.error("gamecenter", "\(path).\(k): must be a number") }
             }
-            if let s = a["scoreRangeStart"] as? NSNumber, let e = a["scoreRangeEnd"] as? NSNumber, s.doubleValue >= e.doubleValue {
+            if let s = range["scoreRangeStart"], let e = range["scoreRangeEnd"], s >= e {
                 v.error("gamecenter", "\(path): scoreRangeStart must be below scoreRangeEnd")
             }
             if let r = l["recurrence"] as? JSON {
