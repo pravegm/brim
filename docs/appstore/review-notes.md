@@ -1,6 +1,6 @@
 # Brim: App Review notes (v1.0)
 
-*Written 25 Oct 2026; rewritten 26 Oct for "Glasses on the sharp half" (upside down by default on a Duo), Split View on the Duo inner display (touch) and QA-5 P1-2. The block between the markers is what you paste. Apple limits the field to 4,000 bytes; the block is **3,847 bytes**, plain ASCII (no smart quotes or symbols) so bytes = characters. Guideline 2.3.1(a) wants every feature described specifically here, and 2.5.19 (new, 16 Oct 2026) forbids undocumented features, so the secret venue and both Duo settings are named. Before submission, tick the "Check against the build" table at the end; if a line is false, change the block, never the other way round.*
+*Written 25 Oct 2026; rewritten 26 Oct for "Glasses on the sharp half" (upside down by default on a Duo), Split View on the Duo inner display (touch) and QA-5 P1-2. The block between the markers is what you paste. Apple limits the field to 4,000 bytes; the block is **3,946 bytes**, plain ASCII (no smart quotes or symbols) so bytes = characters. Guideline 2.3.1(a) wants every feature described specifically here, and 2.5.19 (new, 16 Oct 2026) forbids undocumented features, so the secret venue and both Duo settings are named. Before submission, tick the "Check against the build" table at the end; if a line is false, change the block, never the other way round.*
 
 **A reviewer on a normal iPhone** needs only §1. **A reviewer on a Duo** needs §2a first: the game appears upside down until the phone is turned round.
 
@@ -20,22 +20,22 @@ Thanks for reviewing Brim: a paid game with no ads, no in-app purchases, no acco
 You don't need a Duo. Every mode, venue, unlock and achievement works on any iPhone and in the Simulator.
 - Tap Play. A jug sits at the top, a glass with a fill line on the counter below.
 - Drag UP anywhere: the jug tips and pours. Let go: it eases upright and the pour stops.
-- The stream takes a moment to fall, so stop just before the line. Each glass is judged Perfect / Great / Good / Short / Over (too full, nothing over the rim) / Spill (over the rim).
+- The stream takes a moment to fall, so stop just before the line. Each glass is judged Perfect / Great / Good / Short / Over (too full) / Spill (over the rim).
 
 2. iPHONE DUO (hinge)
-Brim reads the hinge angle only through the public iOS 27.1 API (SwiftUI onHingeChange), behind an availability check. No private API.
-a) Upside down by default: as a fold starts, iOS blurs one physical half of the inner display for about 2 s (all apps), so Brim runs the inner screen upside down to keep the glasses on the half that stays sharp. If the game looks upside down, turn the phone round once (hold it up for a second so iOS turns too). Settings > Controls > "Glasses on the sharp half" (Duo only) switches this off and restores the usual orientation.
+The hinge angle comes only from the public iOS 27.1 API (SwiftUI onHingeChange). No private API.
+a) Upside down by default: as a fold starts, iOS blurs one physical half of the inner display for about 2 s (all apps), so Brim runs the inner screen upside down to keep the glasses on the half that stays sharp. If the game looks upside down, turn the phone round once (hold it up for a second so iOS turns too). Settings > Controls > "Glasses on the sharp half" (Duo only) switches this off and restores the usual orientation. A one-time card on Home explains it.
 b) Lay the Duo open on a table, inner screen up, fold running left to right: jug on the far half, glass on the near half. "Lay it flat to start" opens at about 168 degrees; after 6 s it also offers "Use touch instead".
 c) Lift the far half like a laptop lid: the jug tips and pours across the fold. Nothing pours until the lid is about 6 degrees up. Lower it to stop. Play stays between about 174 and 90 degrees, with slow, held angles.
-d) Book pose (fold top to bottom): the game pauses with "Turn me so the fold runs side to side, then lay me flat." and a "Use touch" button.
-e) Below about 70 degrees a run pauses and nothing is judged; it resumes once open and flat. Closed, the outer display shows a status card ("Open me to pour").
-f) Split View, or any window smaller than the inner display: Brim uses touch (drag up), as on other iPhones.
+d) Book pose (fold top to bottom): the game pauses with "Turn me so the fold runs side to side, then lay me flat." and a "Use touch" button, which plays on the right-hand page, clear of the fold.
+e) Below about 70 degrees a run pauses and nothing is judged; it resumes once open and flat. Closed, the outer display shows a status card (it says when a run is paused); "Pour here with touch" plays there, and opening the phone returns to the hinge behind "Lay it flat to carry on".
+f) Split View, or any window smaller than the inner display: Brim uses touch (drag up), as on other iPhones. Windows too small to pour in show "Make Brim full screen to pour".
 g) Settings > Controls > "Touch controls on iPhone Duo" uses drag full time.
 
 3. KIND TO THE DEVICE (Guidelines 2.4.2, 1.4.5)
-- Brim never asks the user to close the phone, fold quickly or fold repeatedly. The hinge is a slow dial in the middle of its range, read by angle, never by the closed state.
+- Brim never asks the user to close the phone or fold quickly or repeatedly. The hinge is a slow dial, read by angle, never by the closed state.
 - Nothing is placed on or between the screens.
-- Nothing rewards folding speed or fold count; flapping the lid only spills drinks, which costs points.
+- Nothing rewards folding speed or fold count; flapping the lid only spills drinks.
 
 4. MODES AND UNLOCKS (nothing hidden, nothing to buy)
 - Shifts: five venues (Lemonade Stand, Soda Fountain, Milkshake Diner, The Conveyor, Potion Shop). Stars open the next venue.
@@ -44,10 +44,10 @@ g) Settings > Controls > "Touch controls on iPhone Duo" uses drag full time.
 - Daily Pour: 10 glasses, the same for everyone, new each day at 00:00 UTC; one scored attempt (leaving part-way keeps the score so far), then unscored practice. The result can be shared as text via the share sheet.
 
 5. CONTENT
-Every drink is non-alcoholic: water, lemonade, juice, sodas (cola, root beer, cream soda), milkshakes, honey, syrup and fictional coloured potions. A spill makes a puddle; nothing is harmed.
+Every drink is non-alcoholic: water, lemonade, juice, sodas, milkshakes, honey, syrup and fictional potions. A spill makes a puddle; nothing is harmed.
 
 6. PRIVACY
-No third-party SDKs, analytics, ads, accounts or tracking. Progress and settings stay on the device. App Privacy: Data Not Collected.
+No third-party SDKs, analytics, ads or tracking. Progress stays on the device. Data Not Collected.
 
 7. GAME CENTER
 Optional. 2 leaderboards (Rush, Daily Pour) and 10 achievements (700 points, 1 hidden). Brim works fully when not signed in.
@@ -73,7 +73,9 @@ Round 4 (App engineer) checked each line against the code; "Source today" names 
 | Dead zone 6° (≈174°), play to about 90° (lid tilt = 180 − hinge, capped at 90) | `Core/Rules.swift` `deadZone`, `Input/TiltFilters.swift` | [x] update if tuning moves them |
 | Book-pose card "Turn me so the fold runs side to side, then lay me flat." + "Use touch" | `UI/PoseCards.swift` (`StandUpCard`) | [x] exact wording |
 | Closing below ~70° pauses, nothing judged, resumes behind the flat gate | `App/GameController.swift` (`autopauseBelow`, `resumeHook`), CI `CLOSE-GUARD` | [x] |
-| Cover card: Rush best, Daily Pour #N, "Open me to pour" | `UI/PoseCards.swift` (`CoverView`) | [x] |
+| Cover card: Rush best, Daily Pour #N, "Open me to pour" ("Open me to carry on" + the paused run when one is paused); "Pour here with touch"; reopening hands back to the hinge behind "Lay it flat to carry on" | `UI/PoseCards.swift` (`CoverView`), `App/GameController.swift` (`playOnCover`, `clearCoverTouch`), Duo CI `COVER-PAUSED` / `COVER-PLAY` / `COVER-HANDOVER` | [x] code + sim; [ ] real Duo |
+| Book pose "Use touch" plays on the right-hand page | `UI/Layout.swift` (`PoseRule.bookPage`), Duo CI `BOOK-TOUCH` | [x] |
+| One-time "Upside down on purpose" card on the first Duo Home | `HintKind.turnRound`, Duo CI `TURN-HINT` | [x] |
 | Never uses `status == .closed` in play | `Input/HingeReader.swift` (angle only) | [x] grep |
 | Rush ends after 3 spills or a dry jug | `Core/GameSession.swift` | [x] |
 | Unlock rule for Sand Bar = 105 stars in the five main venues (round 9; `LevelCatalog.starsToUnlock(.sandBar)`) | `Persistence/ProgressStore.swift` (`isUnlocked`, `campaignStars`) | [x] |
@@ -81,7 +83,7 @@ Round 4 (App engineer) checked each line against the code; "Source today" names 
 | Setting name "Respect silent mode", default off | `UI/SettingsView.swift`, `Feedback/FeedbackDirector.swift` | [x] exact label |
 | No notifications, no rating prompt | no `UNUserNotificationCenter` / `requestReview` in `Brim/` | [x] if a rating prompt is added, add a line: "A one-time rating prompt may appear after a finished run, never mid-pour." |
 | *26 Oct:* "Glasses on the sharp half" in Settings › Controls, on by default, Duo only (shown when a hinge has reported); off restores upright | `UI/SettingsView.swift` (`hingeSeen`), `Persistence/SettingsStore.swift` (`sharpSide`), `App/OrientationLock.swift`, `UI/RootView.swift` (`turnsRound`) | [x] code; [ ] real Duo |
-| *26 Oct:* Split View / any window smaller than the inner display uses touch | QA-5 P1-2, being implemented 26 Oct (today a short window reads as the cover display, `PoseRule.coverMaxSide`) | [ ] **must land before submission**, or delete line 2f |
+| *26 Oct:* Split View / any window smaller than the inner display uses touch; under 360 × 520 "Make Brim full screen to pour" | `UI/Layout.swift` (`PoseRule.isWindowed`, `.cramped`), `GameController.setWindowed`, Duo CI `SPLIT-VIEW` | [x] code + sim; [ ] real Duo |
 | *26 Oct:* Release has no `UIRequiresFullScreen` (needed for upside down and Split View) | `project.yml` post-build script, `testflight.yml` check | [x] |
 | *26 Oct:* Daily Pour resets at 00:00 UTC | `Core/LevelCatalog.swift` `dayNumber` (UTC calendar) | [x] |
 | *26 Oct:* "Use touch instead" after 6 s on the flat gate | `App/GameController.swift` `touchOfferDelay = 6` | [x] |
