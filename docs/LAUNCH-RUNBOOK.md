@@ -25,7 +25,12 @@ Claude pushed the listing into App Store Connect with `tools/appstore/asc.swift`
 2. **Pricing and Availability:** under "iPhone and iPad Apps on Apple Silicon Macs", untick *Make this app available*. Under "Apple Vision Pro", untick it too. Save.
 3. **App Information:** turn **Family Sharing** on. Then **App Store Regulations and Permits → EU Digital Services Act**: confirm your trader status for Brim. Apple asks again for each app; use the same answer as Squish.
 4. **Play the release candidate on your Duo** (§3, including the new "Duo specifics" block), and send Claude your notes.
-5. **Release build: 1.0 (13)** (founder-tested 26 Oct). On the 1.0 page, in the Build section, click **+** and pick **13**. Screenshots (6.9", 6.1" and iPhone Duo, en-GB and en-US) are uploaded, and the 12 Game Center items are attached to the draft submission (asc run 40372736601). Then **Add for Review → Submit to App Review**, any day up to Fri 13 Nov.
+5. **Release build: 1.0 (13)** (founder-tested 26 Oct). It is already attached to the 1.0 version (asc run 40383693699). Also in place, confirmed by Apple's own read-back (asc `check` audit, 26 Oct evening):
+   - 15 screenshots: 6.9", 6.1" and iPhone Duo, en-GB and en-US. They sit under **Product Page Information → App Previews and Screenshots**.
+   - The header and search images, under the **Header and Search Results** tab.
+   - The 12 Game Center items in the draft submission.
+
+   Then **Add for Review → Submit to App Review**, any day up to Fri 13 Nov.
 6. **Launch day:** publish the accessibility labels (§6).
 
 ---
