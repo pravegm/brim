@@ -180,10 +180,10 @@ Smoother pours on iPhone Duo, [one real change], and small fixes. Thanks for eve
 |---|---|---|
 | Primary | **Games** | `GAMES` |
 | Game subcategory 1 | **Casual** | `GAMES_CASUAL` |
-| Game subcategory 2 | **Arcade** | `GAMES_ARCADE` |
+| Game subcategory 2 | **Simulation** | `GAMES_SIMULATION` |
 | Secondary category | **Entertainment** | `ENTERTAINMENT` |
 
-**Why:** Casual is where paid one-verb hits chart (Toastie reached #10 in US paid Casual), and its paid chart is shallow enough for a launch spike to show. Arcade matches what Brim is underneath (score chasing, streak multiplier, endless Rush, leaderboards), which a pure toy can't claim, and it separates us from the hinge toys. Entertainment catches people browsing for novelty "look what my phone does" apps. Puzzle was rejected: Brim is a timing and feel game, and puzzle searchers expect sort puzzles.
+**Why:** Casual is where paid one-verb hits chart (Toastie reached #10 in US paid Casual), and its paid chart is shallow enough for a launch spike to show. The second slot was Arcade, but Apple's live Games list no longer has it (App Store Connect API, 26 Oct 2026). Simulation fits instead: the pour is real liquid physics (filling-vessel pitch, foam, thick drinks), and Squish sits there too. Entertainment catches people browsing for novelty "look what my phone does" apps. Puzzle was rejected: Brim is a timing and feel game, and puzzle searchers expect sort puzzles.
 
 ## 8. Age rating: 4+
 

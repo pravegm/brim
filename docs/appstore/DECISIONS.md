@@ -12,7 +12,7 @@
 | 4 | **Promotional text** | Duo first, then "drag up" on other iPhones, then no ads/IAP/data (159/170) | If the Duo screenshot slot is missing, this and the description are the only Duo signals; it's editable any time |
 | 5 | **Description** | Opens "Your iPhone Duo is the jug.", then the hook, then "works on every iPhone"; 2,740/4,000 (recounted 26 Oct); en-US differs in 4 spellings | The brief's order; scannable headings; claims taken from the bible with a check table (`metadata.md` §10) because the build didn't exist yet |
 | 6 | **Keywords** | `bartender,drink,juice,soda,lemonade,milkshake,potion,physics,tilt,hinge,foldable,jug,splash,fizz,cup` (100/100 bytes) | No repeats of name/subtitle words, no competitor or Apple marks; "water" dropped (water trackers and sort puzzles own it) |
-| 7 | **Categories** | Games → **Casual** + **Arcade**; secondary **Entertainment** | Casual is where paid one-verb hits chart (Toastie); Arcade fits the score chasing and separates Brim from hinge toys; Entertainment catches novelty browsers. Puzzle rejected: wrong intent |
+| 7 | **Categories** | Games → **Casual** + **Simulation**; secondary **Entertainment** | Casual is where paid one-verb hits chart (Toastie); Arcade was the first pick, but Apple's live list dropped it (26 Oct 2026), so Simulation (real pour physics); Entertainment catches novelty browsers. Puzzle rejected: wrong intent |
 | 8 | **Age rating** | **4+** on the 4+/9+/13+/16+/18+ scheme: every content item None except **Contests: Infrequent**, every capability No, not Made for Kids (26 Oct) | All drinks are non-alcoholic, nothing is harmed, nothing is random or bought. Apple now defines Contests as competing "for rankings", which the optional leaderboards are; Infrequent is honest and still 4+ |
 | 9 | **Alcohol guard** | No beer/cocktail/shot/pint words in visible copy; keep root beer and foamy amber in pint-style glasses off every store frame; rename the `pint`/`shot` glass styles neutrally in-game | A 4+ rating rests on nothing *looking* like alcohol; root beer reads as beer to UK eyes and to reviewers |
 | 10 | **Price** | Base **UK £1.99**, Apple equalises the rest ($1.99). No launch discount | The brief's price; at £1.99 Brim is the cheapest premium hinge game (rivals $2.99–4.99), good for impulse buys |
@@ -61,7 +61,7 @@
 1. **Launch Tue 17 Nov** (a week *before* Squish), nomination by **Tue 27 Oct**, fallback Tue 1 Dec.
 2. **Make the repo public** for free website hosting (and free Mac build minutes), or keep it private and use Netlify or GitHub Pro. Plus the **support email** you'll create.
 3. **Daily Pour resets at 00:00 UTC** for everyone (midnight UK in winter, 4 pm California), to match Game Center's daily board.
-4. **Store words:** subtitle `Fill every glass to the line`, keywords led by "bartender", Casual + Arcade.
+4. **Store words:** subtitle `Fill every glass to the line`, keywords led by "bartender", Casual + Simulation.
 5. **4+ guard:** keep root beer, pint and shot glasses away from anything that looks like beer or spirits, and out of the store frames.
 
 ## Sources

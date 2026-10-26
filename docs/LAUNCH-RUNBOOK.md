@@ -121,6 +121,16 @@ GitHub builds Brim for you on Apple's latest Xcode (your Mac can't run it). It n
 | 8–9 | Lay the phone flat and leave it. Then turn it to book pose (fold top to bottom). Then, **in the middle of a pour, close the phone quickly**, look at the outer screen, and reopen. Do the quick close 10 times across the session | No dribble when flat? The "Turn me so the fold runs side to side" card in book pose? Closing mid-pour should never cost you a glass or a strike, and reopening asks you to lay it flat before play carries on. Count any strikes it cost you |
 | 9–10 | Flip the silent switch on, then open Settings | Is there still sound? Do the sound, haptics and "Respect silent mode" switches work? |
 
+**Duo specifics (3 minutes, after row 9–10; DUO-AUDIT M4).** Only your Duo can answer these:
+
+1. With the phone turned round as Brim asks, lift from flat 5 times. Which half blurs, the jug or the glasses? Does it happen on every lift, or only the first?
+2. Between glasses, rest the lid just off the table (about a finger's width) instead of fully flat. Does the blur still happen?
+3. Settings › About: copy the grey "Screen: … · iOS turn: …" line (it only shows in TestFlight builds).
+4. Hold the phone sideways (book pose), open Safari, then put Brim beside it in Split View. What does Brim's half show? Can you pour by dragging?
+5. Close the phone mid-shift and look at the outer screen. Does it say the shift is paused? Tap **Pour here with touch**, pour one glass, open the phone, lay it flat, carry on.
+6. Leave it lying flat and untouched for a minute. Does anything ever dribble?
+7. Pour with your ear near each half. Which half is the glug louder on?
+
 **Comfort check (important):** at any point did you have to lift past upright, move fast, or worry about the hinge? Did your hand get tired?
 
 **Send Claude this (copy, fill in, paste in chat):**
@@ -130,6 +140,7 @@ Scores 1-5: pour starts when expected [ ] / stopping is controllable [ ] / Perfe
 Lift before the first drop: [tiny / about right / too much]
 Quick closes mid-pour that cost a strike: [ ] out of 10
 Did the screen ever dim or lock while you were pouring? [yes/no]
+Duo specifics: blur on [jug / glasses], [every lift / first only]; off-the-table rest blurs? [yes/no]; Settings line: [ ]; Split View: [ ]; cover after closing: [ ]; dribble when flat? [yes/no]; louder half: [jug / glasses]
 Best moment:
 Worst moment:
 Bugs (what you did, what happened):
@@ -149,7 +160,7 @@ Paste everything from `docs/appstore/metadata.md` unless a step says otherwise. 
 
 **4.1 App Information** (left sidebar):
 - **Subtitle:** `Fill every glass to the line`
-- **Category:** Primary **Games**, subcategories **Casual** and **Arcade**. Secondary **Entertainment**.
+- **Category:** Primary **Games**, subcategories **Casual** and **Simulation**. Secondary **Entertainment**.
 - **Content Rights:** "Does your app contain, show, or access third-party content?" → **No**.
 - **Age Rating:** Edit → answer exactly as the table in `metadata.md` §8 (everything None or No). It should say **4+**.
 - **Add English (U.S.):** at the top right, the language menu → **Add Language** → English (U.S.) → fill the same name and subtitle.

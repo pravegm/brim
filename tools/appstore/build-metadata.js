@@ -46,7 +46,7 @@ const meta = {
   primaryLocale: 'en-GB',
   copyrightHolder: null,
   contentRights: 'DOES_NOT_USE_THIRD_PARTY_CONTENT',
-  categories: { primary: 'GAMES', primarySubcategories: ['GAMES_CASUAL', 'GAMES_ARCADE'], secondary: 'ENTERTAINMENT' },
+  categories: { primary: 'GAMES', primarySubcategories: ['GAMES_CASUAL', 'GAMES_SIMULATION'], secondary: 'ENTERTAINMENT' },
   localizations: { 'en-GB': loc(descGB), 'en-US': loc(descUS) },
   ageRating: {
     _comment: 'metadata.md section 8 (re-checked 26 Oct 2026): 4+; every item None or No except Contests = Infrequent (the two optional Game Center leaderboards); not Made for Kids. Names from AgeRatingDeclarationUpdateRequest (API docs read 26 Oct 2026).',

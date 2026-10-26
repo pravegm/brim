@@ -35,7 +35,7 @@ The metadata file has no name, phone, email or legal name: `copyrightHolder` and
 | Step | What |
 |---|---|
 | `appinfo` | Name, subtitle and privacy URL for en-GB and en-US. Primary language en-GB. Content Rights: no third-party content |
-| `categories` | Games: Casual and Arcade, then Entertainment. Subcategories are checked against Apple's live list first. **On 26 Oct the live list had no Arcade** (run 40340641267), so this step fails until `metadata.md` §7 picks another second subcategory or none |
+| `categories` | Games: Casual and Simulation, then Entertainment. Subcategories are checked against Apple's live list first (on 26 Oct it had dropped Arcade, the first pick: run 40340641267) |
 | `agerating` | The questionnaire from `metadata.md` §8: everything None or No except Contests = Infrequent. Result 4+ |
 | `version` | 1.0: copyright (inherited), release **Scheduled**, no earlier than 17 Nov 2026 08:00 UTC |
 | `localizations` | Description (UK and US spellings), keywords, promotional text, support and marketing URLs |
