@@ -14,6 +14,8 @@
 //   push                      idempotent create-or-update of everything below. Safe to re-run.
 //   upload-screenshots [dir]  only the screenshots. With <dir>, uses the PNGs found under a `store/` folder in a
 //                             downloaded store.yml artifact (classified by pixel size) instead of the JSON's list.
+//   upload-placements [dir]   only the product page header and search results art (the `placements` step) from
+//                             <dir> (a downloaded store-placements artifact; default ASC_PLACEMENTS_DIR).
 //
 // Options
 //   --only a,b    run only these steps     --skip a,b    skip these steps
@@ -21,8 +23,8 @@
 //   --inherit-from <bundle ID>             read the copyright and the App Review contact (name, phone, email) from
 //                                          that app's newest version, in memory only (env ASC_INHERIT_FROM). They are
 //                                          masked in every line this tool prints.
-//   Steps: appinfo categories agerating version localizations review gamecenter attach screenshots price
-//          accessibility nomination
+//   Steps: appinfo categories agerating version localizations review gamecenter attach screenshots placements
+//          price accessibility nomination
 //
 // Configuration (environment; the key never leaves your Mac and is never printed)
 //   ASC_KEY_ID       the API key's Key ID
@@ -33,6 +35,9 @@
 //   ASC_SCREENSHOTS_DIR    base folder for the JSON's screenshot paths (a `gh run download` of a store.yml run);
 //                          default the repo root
 //   ASC_SCREENSHOT_API     library (default: App Asset Library, API 4.5.1+) | legacy (deprecated screenshot sets)
+//   ASC_PLACEMENTS_DIR     folder with header-3840x1646.png and search-3840x2560.png (a `gh run download` of a
+//                          store.yml run's store-placements artifact); default <ASC_SCREENSHOTS_DIR>/store-placements.
+//                          Without it the placements step changes nothing (a gap, not an error).
 //   ASC_DUO_SCREENSHOTS    auto (default: upload the Duo sets only if the API's reference data offers an IPHONE_DUO
 //                          screenshot group of that pixel size) | skip
 //   ASC_LEGACY_DUO_INNER_DISPLAY_TYPE / ASC_LEGACY_DUO_OUTER_DISPLAY_TYPE
@@ -134,7 +139,7 @@ while !argv.isEmpty {
 let inheritFrom: String? = inheritFromArg
 
 let allSteps = ["appinfo", "categories", "agerating", "version", "localizations", "review", "gamecenter", "attach",
-                "screenshots", "price", "accessibility", "nomination"]
+                "screenshots", "placements", "price", "accessibility", "nomination"]
 for s in (onlySteps ?? []).union(skipSteps) where !allSteps.contains(s) {
     die("unknown step '\(s)'. Steps: \(allSteps.joined(separator: " "))")
 }
@@ -149,10 +154,12 @@ usage: xcrun swift tools/appstore/asc.swift <command> [--only a,b] [--skip a,b] 
   plan                      dry run: every change push would make
   push                      create or update everything (idempotent)
   upload-screenshots [dir]  screenshots only; <dir> = a downloaded store.yml artifact
+  upload-placements [dir]   header and search results art only; <dir> = a downloaded store-placements artifact
 
 steps: \(allSteps.joined(separator: " "))
 env:   ASC_KEY_ID  ASC_ISSUER_ID  ASC_KEY_PATH  [ASC_VERSION=1.0]  [ASC_SCREENSHOT_API=library|legacy]
        [ASC_DUO_SCREENSHOTS=auto|skip]  [ASC_INHERIT_FROM=bundle.id]  [ASC_SCREENSHOTS_DIR=dir]
+       [ASC_PLACEMENTS_DIR=dir]
 """
 
 // MARK: - Paths
@@ -1102,6 +1109,7 @@ func screenshotsFromDirectory(_ dir: URL) throws -> [ScreenshotSet] {
     for case let url as URL in walker {
         let rel = url.path.replacingOccurrences(of: dir.path + "/", with: "")
         let parts = rel.split(separator: "/").map { String($0) }
+        if parts.contains("store-placements") { continue }   // header/search art: the placements step's, not a screenshot set
         if url.lastPathComponent == "MANIFEST.txt" { manifests.append(url) }
         let ext = url.pathExtension.lowercased()
         guard ext == "png" || ext == "jpg" || ext == "jpeg" else { continue }
@@ -1132,6 +1140,76 @@ func screenshotsFromDirectory(_ dir: URL) throws -> [ScreenshotSet] {
         if sorted.count > 10 { warn("\(key): \(sorted.count) frames found, only the first 10 are used") }
         return ScreenshotSet(key: key, files: Array(sorted.prefix(10)))
     }
+}
+
+// MARK: - Creative assets: product page header and search results art (iOS 27 App Store, 5 Oct 2026)
+
+/// One optional creative asset (docs/appstore/header-search.md). Placement type IDs are read from the asset library
+/// reference data at run time. PRODUCT_PAGE_HEADER_ASSET is named in Apple's API docs; APP_STORE_SEARCH_RESULTS_ASSET
+/// is what developers report (UNCONFIRMED in Apple's pages, 26 Oct 2026). If an ID is absent from the reference data,
+/// the one placement type whose ID contains `typeWord` is used instead.
+struct PlacementSpec { let key: String; let label: String; let typeID: String; let typeWord: String; let fileNames: [String] }
+let placementSpecs = [
+    PlacementSpec(key: "header", label: "product page header", typeID: "PRODUCT_PAGE_HEADER_ASSET", typeWord: "HEADER",
+                  fileNames: ["header-3840x1646.png", "header-3840x1646.jpg", "universal-5244x2950.png"]),
+    PlacementSpec(key: "search", label: "search results art", typeID: "APP_STORE_SEARCH_RESULTS_ASSET", typeWord: "SEARCH",
+                  fileNames: ["search-3840x2560.png", "search-3840x2560.jpg", "universal-5244x2950.png"]),
+]
+struct PlacementFile { let spec: PlacementSpec; let file: ImageFile }
+
+/// App Store Connect Help, Creative assets specifications (read 26 Oct 2026): header 21:9 3840 x 1646 (PNG or JPEG) or
+/// the universal 16:9 5244 x 2950 PNG; search results 3:2 from 1920 x 1280 to 3840 x 2560, or the universal PNG.
+/// No alpha channel in either.
+func placementSizeOK(_ key: String, _ i: ImageInfo) -> Bool {
+    if i.width == 5244 && i.height == 2950 { return i.format == "png" }
+    if key == "header" { return i.width == 3840 && i.height == 1646 }
+    return i.width >= 1920 && i.width <= 3840 && i.width * 2 == i.height * 3
+}
+
+func placementsDirectory(_ explicit: String?) -> URL? {
+    if let e = explicit ?? env["ASC_PLACEMENTS_DIR"], !e.trimmingCharacters(in: .whitespaces).isEmpty {
+        return URL(fileURLWithPath: (e as NSString).expandingTildeInPath)
+    }
+    if let b = screenshotsBase {
+        let u = b.appendingPathComponent("store-placements")
+        if FileManager.default.fileExists(atPath: u.path) { return u }
+    }
+    return nil
+}
+
+/// The header and search files in `dir` (ci/store-placements.sh output), checked offline: exact size, no alpha, and the
+/// folder's MANIFEST (when present) reporting no problems. A missing folder or file is a gap, never an error.
+func loadPlacements(_ dir: URL?, _ v: Validation) -> [PlacementFile] {
+    guard let dir = dir else {
+        v.block("placements", "no header/search art folder (ASC_PLACEMENTS_DIR = a downloaded store-placements artifact): App Store Connect's are left as they are")
+        return []
+    }
+    let manifest = dir.appendingPathComponent("MANIFEST.txt")
+    if let text = try? String(contentsOf: manifest, encoding: .utf8),
+       text.range(of: "problems [1-9]", options: .regularExpression) != nil || text.contains(" FLAGGED ") || text.contains(" FAILED ") {
+        v.error("placements", "\(manifest.path) reports problems; refusing to place that art (fix it and re-run store.yml)")
+        return []
+    }
+    var result: [PlacementFile] = []
+    for spec in placementSpecs {
+        guard let name = spec.fileNames.first(where: { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }) else {
+            v.block("placements", "\(spec.label): no \(spec.fileNames[0]) in \(dir.path); not placed")
+            continue
+        }
+        switch loadImage(dir.appendingPathComponent(name).path) {
+        case .failure(let e): v.error("placements", "\(spec.label): \(e.description)")
+        case .success(let f):
+            if !placementSizeOK(spec.key, f.info) {
+                let want = spec.key == "header" ? "3840x1646" : "3:2 from 1920x1280 to 3840x2560"
+                v.error("placements", "\(spec.label): \(name) is \(f.info.width)x\(f.info.height); Apple takes \(want) or the universal 5244x2950 PNG")
+            } else if f.info.hasAlpha {
+                v.error("placements", "\(spec.label): \(name) has an alpha channel (creative assets must be opaque)")
+            } else {
+                result.append(PlacementFile(spec: spec, file: f))
+            }
+        }
+    }
+    return result
 }
 
 // MARK: - App Store Connect client (ES256 JWT, JSON:API)
@@ -2064,7 +2142,8 @@ final class Engine {
         }
     }
 
-    func ensureLibraryImage(libID: String, name: String, file: ImageFile, cache: inout [String: String]) async throws -> String {
+    func ensureLibraryImage(libID: String, name: String, file: ImageFile, category: String = "APP_SCREENSHOTS_AND_PREVIEWS",
+                            cache: inout [String: String]) async throws -> String {
         if let id = cache[name] { return id }
         let (found, _) = try await api.getAll("/v1/appAssetLibraries/\(libID)/images", [("filter[referenceName]", name), ("limit", "20")])
         let usable = found.first { ["UPLOAD_COMPLETE", "PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW", "WAITING_FOR_REVIEW",
@@ -2078,7 +2157,7 @@ final class Engine {
         let reserved = try await create("library image \(name) ← \(file.path) (\(file.size / 1024) KB)", "/v1/appAssetLibraryImages",
                                         type: "appAssetLibraryImages",
                                         attributes: ["fileName": file.url.lastPathComponent, "fileSize": file.size,
-                                                     "category": "APP_SCREENSHOTS_AND_PREVIEWS", "referenceName": name],
+                                                     "category": category, "referenceName": name],
                                         relationships: ["assetLibrary": ref("appAssetLibraries", libID)])
         cache[name] = idOf(reserved)
         if dryRun { return idOf(reserved) }
@@ -2313,15 +2392,93 @@ final class Engine {
     }
 }
 
+// MARK: - Creative assets (the placements step)
+
+extension Engine {
+    /// Product page header and search results art (App Asset Library, API 4.5): upload each file once as a
+    /// CREATIVE_ASSETS image, then give every version localization one placement of each type per placement group
+    /// that takes its size. Placements can't be edited, so a changed file means delete + create. Idempotent: a
+    /// placement whose image has the same content-addressed reference name is left alone. The art then goes to App
+    /// Review with the version (placements follow their parent's review state).
+    func syncPlacements(_ files: [PlacementFile]) async throws {
+        guard !files.isEmpty else { note("no header or search art to place (see the gaps below); App Store Connect's are left as they are"); return }
+        if versionLocIDs.isEmpty { try await loadVersionLocalizations() }
+        let locales = meta.locales.filter { versionLocIDs[$0] != nil }
+        guard !locales.isEmpty else { note("no version localizations yet (run the localizations step first)"); return }
+        guard let libRes = try await api.getOptional("/v1/apps/\(appID)/assetLibrary"), let lib = dataOne(libRes) else {
+            throw ToolError("the app has no asset library (GET /v1/apps/{id}/assetLibrary); upload the art by hand (docs/appstore/header-search.md)")
+        }
+        let libID = idOf(lib)
+        let catalog = try await RefCatalog.load(api)
+        var assetCache: [String: String] = [:]
+        for pf in files {
+            let info = pf.file.info
+            let fileName = pf.file.url.lastPathComponent
+            guard let type = catalog.placementType(pf.spec.typeID, containing: pf.spec.typeWord) else {
+                note("\(pf.spec.label): the API's reference data offers no \(pf.spec.typeID) placement type; skipped")
+                manual.append("\(pf.spec.label): not offered by the API for this app yet; upload \(fileName) in App Store Connect (docs/appstore/header-search.md).")
+                continue
+            }
+            if !catalog.versionTypes.isEmpty && !catalog.versionTypes.contains(type) {
+                note("\(type) is not listed under APP_STORE_VERSIONS in the reference data; trying anyway")
+            }
+            let category = catalog.category(for: type)
+            let groups = catalog.groups(forType: type, width: info.width, height: info.height)
+            if catalog.hasGroups(type) && groups.isEmpty {
+                throw ToolError("\(pf.spec.label): no \(type) placement group takes \(info.width)x\(info.height). Groups: \(catalog.describe(type))")
+            }
+            let targets: [String?] = groups.isEmpty ? [nil] : groups.map { Optional($0) }
+            note("\(pf.spec.label) → \(type), \(groups.isEmpty ? "no placement group in the reference data" : "group(s) \(groups.joined(separator: ", "))"), category \(category)")
+            let name = "brim \(pf.spec.key) \(pf.file.sha12)"
+            for locale in locales {
+                guard let locID = versionLocIDs[locale] else { continue }
+                for group in targets {
+                    var query: [(String, String)] = [("filter[placementType]", type), ("include", "image"),
+                                                     ("fields[appAssetLibraryImages]", "referenceName,state"), ("limit", "50")]
+                    if let g = group { query.append(("filter[placementGroup]", g)) }
+                    let label = "\(locale) \(pf.spec.key)\(group.map { " [\($0)]" } ?? "")"
+                    var current: [(placement: String, name: String)] = []
+                    if !locID.hasPrefix(plannedPrefix) {
+                        let (placements, included) = try await api.getAll("/v1/appStoreVersionLocalizations/\(locID)/placements", query)
+                        var imageNames: [String: String] = [:]
+                        for inc in included where inc["type"] as? String == "appAssetLibraryImages" {
+                            imageNames[idOf(inc)] = attrs(inc)["referenceName"] as? String ?? ""
+                        }
+                        current = placements.map { p in (idOf(p), relID(p, "image").flatMap { imageNames[$0] } ?? "") }
+                    }
+                    if current.count == 1 && current[0].name == name {
+                        same("\(label): \(fileName)")
+                        continue
+                    }
+                    for c in current {
+                        try await delete("\(label) placement \(c.name.isEmpty ? c.placement : c.name)", "/v1/appAssetLibraryPlacements/\(c.placement)")
+                    }
+                    let imageID = try await ensureLibraryImage(libID: libID, name: name, file: pf.file, category: category, cache: &assetCache)
+                    var attributes: JSON = ["placementType": type]
+                    if let g = group { attributes["placementGroup"] = g }
+                    _ = try await create("\(label) ← \(fileName) (\(info.width)x\(info.height), \(pf.file.size / 1024) KB)",
+                                         "/v1/appAssetLibraryPlacements", type: "appAssetLibraryPlacements", attributes: attributes,
+                                         relationships: ["image": ref("appAssetLibraryImages", imageID),
+                                                         "appStoreVersionLocalization": ref("appStoreVersionLocalizations", locID)])
+                }
+            }
+        }
+        manual.append("Header and search art: check both in App Store Connect's product page preview (the iPhone header loses ~8 % per side); they go to App Review with the version.")
+    }
+}
+
 // MARK: - Asset library reference data
 
 struct RefCatalog {
     var groups: [String: String] = [:]                 // placementProfileGroupId → displayClassId
     var specs: [String: (Int, Int, Int, Int)] = [:]    // specId → minW, maxW, minH, maxH
     var screenshotGroups: [String: [String]] = [:]     // placementGroupId → spec IDs, for APP_SCREENSHOT
+    var typeGroups: [String: [String: [String]]] = [:]  // placementTypeId → placementGroupId → spec IDs (every type)
+    var typeCategories: [String: [String]] = [:]       // placementTypeId → acceptsAssetCategories
+    var versionTypes: Set<String> = []                 // types APP_STORE_VERSIONS lists (field names UNCONFIRMED)
 
     static func load(_ api: ASC) async throws -> RefCatalog {
-        let res = try await api.get("/v1/appAssetLibraryRefData", [("fields[appAssetLibraryRefData]", "placementProfileGroups,placementTypes,imageSpecs")])
+        let res = try await api.get("/v1/appAssetLibraryRefData", [("fields[appAssetLibraryRefData]", "features,placementProfileGroups,placementTypes,imageSpecs")])
         var c = RefCatalog()
         for datum in dataList(res) {
             let a = attrs(datum)
@@ -2333,9 +2490,23 @@ struct RefCatalog {
                 func n(_ k: String) -> Int { (d[k] as? NSNumber)?.intValue ?? -1 }
                 c.specs[id] = (n("minWidth"), n("maxWidth"), n("minHeight"), n("maxHeight"))
             }
-            for t in (a["placementTypes"] as? [JSON]) ?? [] where t["placementTypeId"] as? String == "APP_SCREENSHOT" {
+            for t in (a["placementTypes"] as? [JSON]) ?? [] {
+                guard let tid = t["placementTypeId"] as? String else { continue }
+                c.typeCategories[tid] = (t["acceptsAssetCategories"] as? [String]) ?? []
+                var groups = c.typeGroups[tid] ?? [:]
                 for m in (t["specMappings"] as? [JSON]) ?? [] {
-                    if let g = m["placementGroupId"] as? String { c.screenshotGroups[g, default: []] += (m["specs"] as? [String]) ?? [] }
+                    guard let g = m["placementGroupId"] as? String else { continue }
+                    let specs = (m["specs"] as? [String]) ?? []
+                    groups[g, default: []] += specs
+                    if tid == "APP_SCREENSHOT" { c.screenshotGroups[g, default: []] += specs }
+                }
+                c.typeGroups[tid] = groups
+            }
+            for f in (a["features"] as? [JSON]) ?? [] {
+                let fid = (f["featureId"] ?? f["feature"] ?? f["id"]) as? String ?? ""
+                guard fid == "APP_STORE_VERSIONS" else { continue }
+                for pol in (f["placementPolicies"] as? [JSON]) ?? [] {
+                    if let t = (pol["placementTypeId"] ?? pol["placementType"]) as? String { c.versionTypes.insert(t) }
                 }
             }
         }
@@ -2371,6 +2542,37 @@ struct RefCatalog {
 
     func describe() -> String {
         screenshotGroups.keys.sorted().map { "\($0) (\(groups[$0] ?? "?"))" }.joined(separator: ", ")
+    }
+
+    /// The placement type for a creative asset: `preferred` if the reference data has it, else the only type whose ID
+    /// contains `word` (e.g. HEADER, SEARCH).
+    func placementType(_ preferred: String, containing word: String) -> String? {
+        let all = Set(typeGroups.keys).union(typeCategories.keys)
+        if all.contains(preferred) { return preferred }
+        let matches = all.filter { $0.contains(word) && !$0.contains("EVENT") }.sorted()
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    func hasGroups(_ type: String) -> Bool { !(typeGroups[type] ?? [:]).isEmpty }
+
+    /// The groups of `type` with a spec that takes this exact size (sorted; all of them get a placement).
+    func groups(forType type: String, width: Int, height: Int) -> [String] {
+        (typeGroups[type] ?? [:]).filter { _, ids in
+            ids.contains { id in
+                guard let s = specs[id] else { return false }
+                return s.0 <= width && width <= s.1 && s.2 <= height && height <= s.3
+            }
+        }.keys.sorted()
+    }
+
+    /// The asset category a type accepts (CREATIVE_ASSETS for the creative placements, per Apple's docs).
+    func category(for type: String) -> String {
+        let accepted = typeCategories[type] ?? []
+        return accepted.contains("CREATIVE_ASSETS") || accepted.isEmpty ? "CREATIVE_ASSETS" : accepted[0]
+    }
+
+    func describe(_ type: String) -> String {
+        (typeGroups[type] ?? [:]).keys.sorted().map { "\($0) (\(groups[$0] ?? "?"))" }.joined(separator: ", ")
     }
 }
 
@@ -2481,6 +2683,8 @@ func runValidate() -> Int32 {
     guard let m = loadMetadata(v) else { printValidation(v, steps: Set(allSteps)); return 1 }
     out("  \(m.locales.count) locales (\(m.locales.joined(separator: ", "))), \(m.achievements.count) achievements (\(m.achievements.map { $0.points }.reduce(0, +)) pts, \(m.achievements.filter { $0.image != nil }.count) badges), \(m.leaderboards.count) leaderboards (\(m.leaderboards.map { "\($0.vendorIdentifier) \($0.recurring ? "recurring" : "classic")" }.joined(separator: ", "))), screenshot sets: \(m.screenshots.map { "\($0.key)×\($0.files.count)" }.joined(separator: ", ")), nomination: \(m.nomination.map { $0.submit ? "submit" : "draft" } ?? "none")")
     if let from = inheritFrom { out("  copyright and App Review contact: inherited from \(from) at push time") }
+    let art = loadPlacements(placementsDirectory(nil), v)
+    out("  header/search art: \(art.isEmpty ? "none" : art.map { "\($0.spec.key) \($0.file.info.width)x\($0.file.info.height) (\($0.file.size / 1024) KB)" }.joined(separator: ", "))")
     printValidation(v, steps: Set(allSteps))
     if v.errors.isEmpty { out("OK: no errors (\(v.blockers.count) gaps, \(v.warnings.count) warnings)"); return 0 }
     out("\(v.errors.count) error(s)")
@@ -2558,6 +2762,14 @@ func runCheck() async -> Int32 {
                 for (key, size) in [("APP_IPHONE_67", (1320, 2868)), ("APP_IPHONE_61", (1179, 2556)), ("APP_IPHONE_61", (1206, 2622)), ("duoInner", (2007, 2853))] {
                     out("  \(key) \(size.0)x\(size.1) → \(cat.group(for: key, width: size.0, height: size.1) ?? "no group (skipped)")")
                 }
+                for (spec, size) in zip(placementSpecs, [(3840, 1646), (3840, 2560)]) {
+                    if let t = cat.placementType(spec.typeID, containing: spec.typeWord) {
+                        let g = cat.groups(forType: t, width: size.0, height: size.1)
+                        out("  \(spec.label): \(t), category \(cat.category(for: t)), \(size.0)x\(size.1) → \(g.isEmpty ? (cat.hasGroups(t) ? "no group takes that size" : "no placement group") : g.joined(separator: ", "))\(cat.versionTypes.isEmpty ? "" : (cat.versionTypes.contains(t) ? "; listed for App Store versions" : "; NOT listed for App Store versions"))")
+                    } else {
+                        out("  \(spec.label): no \(spec.typeID) placement type offered (upload by hand)")
+                    }
+                }
             }
         } else {
             out("asset library: not available (screenshots would need ASC_SCREENSHOT_API=legacy)")
@@ -2584,10 +2796,12 @@ func runCheck() async -> Int32 {
     return 0
 }
 
-func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?) async -> Int32 {
+func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?, placementsOnly: Bool = false,
+             placementsDir: String? = nil) async -> Int32 {
     let v = Validation()
     guard var meta = loadMetadata(v) else { printValidation(v, steps: Set(allSteps)); return 1 }
-    let steps: Set<String> = screenshotsOnly ? ["screenshots"] : selectedSteps()
+    let steps: Set<String> = placementsOnly ? ["placements"] : screenshotsOnly ? ["screenshots"] : selectedSteps()
+    let art = steps.contains("placements") ? loadPlacements(placementsDirectory(placementsDir), v) : []
     var sets = meta.screenshots
     if let dir = screenshotDir {
         do {
@@ -2620,7 +2834,7 @@ func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?) async 
         try await e.resolveApp()
         let needsInfo = !steps.isDisjoint(with: ["appinfo", "categories", "agerating"])
         if needsInfo { try await e.resolveAppInfo() }
-        let needsVersion = !steps.isDisjoint(with: ["version", "localizations", "review", "gamecenter", "attach", "screenshots"])
+        let needsVersion = !steps.isDisjoint(with: ["version", "localizations", "review", "gamecenter", "attach", "screenshots", "placements"])
         if needsVersion {
             try await e.resolveVersion(create: true)
             try await e.loadVersionLocalizations()
@@ -2638,6 +2852,7 @@ func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?) async 
     await e.step("gamecenter", "Game Center: enable, achievements, leaderboards, localizations, badges") { try await e.syncGameCenter() }
     await e.step("attach", "Game Center items into the 1.0 review submission (draft, never submitted)") { try await e.syncAttach() }
     await e.step("screenshots", "Screenshots") { try await e.syncScreenshots(sets) }
+    await e.step("placements", "Product page header and search results art") { try await e.syncPlacements(art) }
     await e.step("price", "Price and availability") { try await e.syncPrice() }
     await e.step("accessibility", "Accessibility Nutrition Labels") { try await e.syncAccessibility() }
     await e.step("nomination", "Featuring nomination") { try await e.syncNomination() }
@@ -2650,7 +2865,7 @@ func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?) async 
         out("Gaps (not pushed; fix the source and run push again):")
         for b in founderGaps { out("  • \(b.msg)") }
     }
-    if !screenshotsOnly {
+    if !screenshotsOnly && !placementsOnly {
         out("Still by hand in App Store Connect:")
         for m in e.manual + manualAlways { out("  • \(m)") }
     }
@@ -2667,6 +2882,9 @@ case "plan": status = await runSync(dryRun: true, screenshotsOnly: false, screen
 case "push": status = await runSync(dryRun: false, screenshotsOnly: false, screenshotDir: nil)
 case "upload-screenshots":
     status = await runSync(dryRun: env["ASC_DRY_RUN"] == "1", screenshotsOnly: true, screenshotDir: positional.first)
+case "upload-placements":
+    status = await runSync(dryRun: env["ASC_DRY_RUN"] == "1", screenshotsOnly: false, screenshotDir: nil,
+                           placementsOnly: true, placementsDir: positional.first)
 case "help", "-h", "--help": out(usage); status = 0
 default: out(usage); status = 2
 }

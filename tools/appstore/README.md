@@ -14,6 +14,7 @@ GitHub → **Actions** → **App Store Connect tool** → **Run workflow**:
 | `mode` | `check`: read-only status. `plan`: check plus a dry run, still read-only. `push`: check, plan, then write |
 | `only` | Optional step list, e.g. `nomination` or `gamecenter,attach` |
 | `store_run` | A green **App Store screenshots** run. Empty = `DEFAULT_STORE_RUN` in the workflow (40270623298, the final frames) |
+| `placements_run` | A store.yml run whose `store-placements` artifact holds the product page header and search results art (`docs/appstore/header-search.md`). Empty = the `placements` step leaves them alone. The `validate` job always checks `DEFAULT_PLACEMENTS_RUN` offline |
 | `ci_run` | A green **CI** run whose `screenshots` artifact holds `badges/`. Empty = the latest green run on `main` |
 | `inherit_from` | Default `com.pravegm.squish`. See "Personal data" |
 
@@ -43,6 +44,7 @@ The metadata file has no name, phone, email or legal name: `copyrightHolder` and
 | `gamecenter` | Enables Game Center for the app and version 1.0. Creates 10 achievements (700 points, only `brim.sandbar` hidden) with en-GB and en-US text and a badge each. Creates 2 leaderboards: `brim.rush.best` (classic) and `brim.daily.score` (recurring daily from 1 Nov 2026 00:00 UTC), both Integer, High to Low, best score, with " point"/" points" suffixes |
 | `attach` | Adds every achievement and leaderboard version to the draft iOS review submission. It never adds the build and never submits |
 | `screenshots` | 6.9": P1–P5. 6.1" class (1179 × 2556): P1–P5. iPhone Duo inner: D1, D2, D4, D5, D3 (D6 dropped), only if the API offers a Duo placement group (`check` says) |
+| `placements` | Only with `placements_run`: `header-3840x1646.png` and `search-3840x2560.png` uploaded once to the asset library as `CREATIVE_ASSETS`, then one placement each on the en-GB and en-US version localizations (types `PRODUCT_PAGE_HEADER_ASSET` and the search results type, read from the API's reference data; `check` lists them). They go to App Review with 1.0. `upload-placements <dir>` runs only this step |
 | `price` | £1.99, base territory United Kingdom; Apple equalises the rest. Available everywhere except China mainland and Vietnam |
 | `accessibility` | Nothing for 1.0: labels go on by hand on launch day |
 | `nomination` | The App Launch featuring nomination from `featuring-nomination.md`, publish date 17 Nov. It's **submitted** (`"submit": true`), not left as a draft |
@@ -61,7 +63,7 @@ Badges: the app draws them (`Brim/UI/AchievementArt.swift`). CI scenario `15-bad
 
 ## Files
 
-- `asc.swift`: the tool (Foundation and CryptoKit only). Commands: `validate`, `check`, `plan`, `push`, `upload-screenshots`. Run `xcrun swift tools/appstore/asc.swift help`.
+- `asc.swift`: the tool (Foundation and CryptoKit only). Commands: `validate`, `check`, `plan`, `push`, `upload-screenshots`, `upload-placements`. Run `xcrun swift tools/appstore/asc.swift help`.
 - `badges.swift`: collects and flattens the app-rendered badges.
 - `fixtures/asc-metadata.sample.json`: the validator's CI fixture.
 - `docs/appstore/asc-metadata.json`: generated from `metadata.md`, `review-notes.md`, `achievements.md` and `featuring-nomination.md`. Regenerate it when they change.
