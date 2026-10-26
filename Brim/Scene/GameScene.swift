@@ -51,7 +51,7 @@ final class GameScene: SKScene {
 
     /// The vessel on screen (the override's, else the shown venue's). Tests.
     var shownVesselForm: VesselForm { jug.form }
-    var shownVesselDecal: VesselDecal { jug.decal }
+    var shownVesselDecal: VesselDecal { jug.decalKind }
     /// Which signature parts the drawn vessel shows (lid, handle, opaque skin); nil until it has been built. Tests.
     var shownVesselParts: (lid: Bool, handle: Bool, skin: Bool)? {
         guard jug.isBuilt else { return nil }

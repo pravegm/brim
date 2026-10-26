@@ -326,7 +326,7 @@ final class SceneJug {
 
     /// The dressing in use (tests, and `GameScene.vesselOverride`).
     var form: VesselForm { style.form }
-    var decal: VesselDecal { style.decal }
+    var decalKind: VesselDecal { style.decal }
     /// Whether the static parts have been built for the current dressing (false until the next frame after a change).
     var isBuilt: Bool { !localOutline.isEmpty }
     /// Whether a lid / a handle is drawn (tests: the scoop is open; the tin and flask have no handle).
