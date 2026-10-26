@@ -324,6 +324,13 @@ struct CoverView: View {
         }
     }
 
+    /// The side insets the centred card keeps. In portrait none: the cover display reports its top-corner camera as a
+    /// ~84 pt trailing inset (Duo run 40343397399), which pushed the card off centre, and the card sits far below the
+    /// camera anyway. In landscape the camera is beside the card, so both are kept. Pure.
+    static func sideInsets(_ insets: EdgeInsets, landscape: Bool) -> (leading: CGFloat, trailing: CGFloat) {
+        landscape ? (insets.leading, insets.trailing) : (0, 0)
+    }
+
     /// "Pour here with touch": the cover display of a Duo, never a cramped window. Pure.
     static func offersCoverTouch(kind: Kind, hingeSeen: Bool) -> Bool {
         kind == .cover && hingeSeen
@@ -338,9 +345,12 @@ struct CoverView: View {
             LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.75)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
             GeometryReader { geo in
+                let side = Self.sideInsets(insets, landscape: geo.size.width > geo.size.height)
                 ScrollView(showsIndicators: false) {
                     card
                         .padding(.horizontal, 24)
+                        .padding(.leading, side.leading)
+                        .padding(.trailing, side.trailing)
                         .padding(.vertical, 20)
                         .frame(width: geo.size.width)
                         .frame(minHeight: geo.size.height)
@@ -349,8 +359,6 @@ struct CoverView: View {
             }
             .padding(.top, insets.top)
             .padding(.bottom, insets.bottom)
-            .padding(.leading, insets.leading)
-            .padding(.trailing, insets.trailing)
         }
         .onAppear { logCard() }
         .onChange(of: paused) { _, _ in logCard() }
