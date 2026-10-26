@@ -74,28 +74,48 @@ enum PoseRule {
         return short / long > 0.62 && short >= 600
     }
 
-    static func pose(canvas: CGSize, hingeSeen: Bool, isShut: Bool, bookTouchOverride: Bool) -> DevicePose {
+    /// QA-5 P1-1: a multitasking window (Split View, Slide Over, a resized window on the Duo's inner display, possible
+    /// since Release dropped UIRequiresFullScreen) is smaller than its screen. Sorted sides, so rotation order doesn't
+    /// matter. Pure.
+    static func isWindowed(canvas: CGSize, screen: CGSize?) -> Bool {
+        guard let screen, screen.width > 10, screen.height > 10, canvas.width > 10, canvas.height > 10 else { return false }
+        let c = (min(canvas.width, canvas.height), max(canvas.width, canvas.height))
+        let s = (min(screen.width, screen.height), max(screen.width, screen.height))
+        return c.0 < s.0 - 2 || c.1 < s.1 - 2
+    }
+
+    /// `screen`: the window scene's screen. The cover is a screen size, not a window size: a Split View half of the
+    /// inner display (≈475 × 669) is nearly the cover display's 466 × 678, so the canvas alone can't tell them apart.
+    /// A window on the inner display plays like any iPhone (touch, no fold: hinge play makes no sense in a shared
+    /// window).
+    static func pose(canvas: CGSize, hingeSeen: Bool, isShut: Bool, bookTouchOverride: Bool,
+                     screen: CGSize? = nil) -> DevicePose {
         if hingeSeen && isShut { return .cover }
-        if hingeSeen && canvas.width > 10 && canvas.height > 10 && max(canvas.width, canvas.height) < coverMaxSide {
+        let display = screen ?? canvas
+        if hingeSeen && display.width > 10 && display.height > 10 && max(display.width, display.height) < coverMaxSide {
             return .cover
         }
+        if isWindowed(canvas: canvas, screen: screen) { return .play }
         if canvas.width > canvas.height && !bookTouchOverride && (hingeSeen || looksLikeDuoInner(canvas)) {
             return .standUp
         }
         return .play
     }
 
-    /// A horizontal fold runs across the middle of a portrait Duo inner display.
-    static func hasFold(canvas: CGSize, hingeSeen: Bool) -> Bool {
+    /// A horizontal fold runs across the middle of a portrait Duo inner display (never in a multitasking window).
+    static func hasFold(canvas: CGSize, hingeSeen: Bool, screen: CGSize? = nil) -> Bool {
+        if isWindowed(canvas: canvas, screen: screen) { return false }
         guard canvas.height > canvas.width else { return false }
         if hingeSeen { return max(canvas.width, canvas.height) >= coverMaxSide }
         return looksLikeDuoInner(canvas)
     }
 
-    /// The game canvas: the whole screen in portrait; a centred portrait column on a landscape canvas (book pose with
-    /// "Play with touch instead").
+    /// The game canvas: the whole screen when it's no wider than the world (0.704 wide-to-tall: every phone, the Duo's
+    /// tabletop); otherwise a centred world-shaped column (book pose with "Play with touch instead", a wide Split View
+    /// window, which would otherwise crop the counter and the HUD).
     static func playRect(in canvas: CGSize) -> CGRect {
-        guard canvas.width > canvas.height else { return CGRect(origin: .zero, size: canvas) }
+        let worldWide = (canvas.height * WorldLayout.worldWidth / WorldLayout.worldHeight).rounded(.up)
+        guard canvas.width > worldWide else { return CGRect(origin: .zero, size: canvas) }
         let width = min(canvas.width, (canvas.height * 0.70).rounded())
         return CGRect(x: ((canvas.width - width) / 2).rounded(), y: 0, width: width, height: canvas.height)
     }

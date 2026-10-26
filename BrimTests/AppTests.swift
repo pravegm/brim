@@ -351,6 +351,25 @@ struct PoseRuleTests {
         #expect(PoseRule.playRect(in: iPhone) == CGRect(origin: .zero, size: iPhone))
     }
 
+    /// QA-5 P1-1: Split View halves are nearly the cover display's size; only the screen tells them apart.
+    @Test func multitaskingWindowsPlayByTouchNotAsTheCover() {
+        let inner = CGSize(width: 951, height: 669)
+        let half = CGSize(width: 475, height: 669)
+        #expect(PoseRule.isWindowed(canvas: half, screen: inner))
+        #expect(!PoseRule.isWindowed(canvas: inner, screen: inner))
+        #expect(!PoseRule.isWindowed(canvas: CGSize(width: 669, height: 951), screen: inner))   // rotated: same sides
+        #expect(!PoseRule.isWindowed(canvas: half, screen: nil))
+        #expect(PoseRule.pose(canvas: half, hingeSeen: true, isShut: false, bookTouchOverride: false, screen: inner) == .play)
+        #expect(!PoseRule.hasFold(canvas: half, hingeSeen: true, screen: inner))
+        #expect(PoseRule.pose(canvas: duoCover, hingeSeen: true, isShut: false, bookTouchOverride: false,
+                              screen: duoCover) == .cover)
+        #expect(PoseRule.pose(canvas: half, hingeSeen: true, isShut: true, bookTouchOverride: false, screen: inner) == .cover)
+        // A wide window gets a world-shaped column instead of cropping the counter; the tabletop stays full.
+        #expect(PoseRule.playRect(in: CGSize(width: 634, height: 669)).width == 468)
+        #expect(PoseRule.playRect(in: duoPortrait) == CGRect(origin: .zero, size: duoPortrait))
+        #expect(PoseRule.playRect(in: duoCover) == CGRect(origin: .zero, size: duoCover))
+    }
+
     @Test func orientationPolicy() {
         #expect(OrientationLock.allowsLandscape(hasHinge: true, screen: CGSize(width: 402, height: 874)))
         #expect(OrientationLock.allowsLandscape(hasHinge: false, screen: CGSize(width: 669, height: 951)))

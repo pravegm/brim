@@ -56,6 +56,8 @@ struct HomeView: View {
             header
             ChalkboardLayer(hud: controller.hud, store: store, info: info, today: today)
                 .opacity(appeared ? 1 : 0)
+            DemoTagLayer(hud: controller.hud, info: info)
+                .opacity(appeared ? 1 : 0)
             bottomRow
             if showCabinet {
                 CabinetSheet(store: store, info: info,
@@ -260,6 +262,70 @@ struct HomeView: View {
 private extension Level {
     /// 1-based venue number from the id ("2-3" → 2).
     var venueNumber: Int { Int(id.split(separator: "-").first ?? "") ?? 1 }
+}
+
+/// Founder (26 Oct, real Duo): "once the app starts the pouring already starts … I was surprised". The attract loop
+/// behind Home pours by itself, and nothing said it was a demo. A tag sits just above the jug (the union of every pose
+/// seen, like the chalkboard, so it never jumps as the jug tips): the moving thing is labelled where the eye goes.
+struct DemoTagLayer: View {
+    @ObservedObject var hud: HUDState
+    let info: CanvasInfo
+
+    @State private var footprint: CGRect? = nil
+
+    var body: some View {
+        ZStack {
+            if let spot {
+                DemoTag()
+                    .position(spot)
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: info.size.width, height: info.size.height)
+        .allowsHitTesting(false)
+        .onAppear { absorb(hud.anchors) }
+        .onChange(of: hud.anchors) { _, anchors in absorb(anchors) }
+    }
+
+    private func absorb(_ anchors: PlayAnchors?) {
+        guard let jug = anchors?.jug else { return }
+        let grown = footprint.map { $0.union(jug) } ?? jug
+        if let old = footprint, abs(old.minY - grown.minY) < 6, abs(old.midX - grown.midX) < 6 { return }
+        footprint = grown
+    }
+
+    private var spot: CGPoint? {
+        guard let footprint else { return nil }
+        let jug = info.mapper.rect(footprint)
+        let minY = info.hudTop + HUDMetrics.rowHeight + 18
+        let x = min(max(jug.midX, info.sidePad + 90), info.size.width - info.sidePad - 90)
+        return CGPoint(x: x, y: max(jug.minY - 20, minY))
+    }
+}
+
+/// "DEMO · press Play to pour": the attract loop's label (DemoTagLayer).
+struct DemoTag: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("DEMO")
+                .font(BrimTheme.text(12, .heavy))
+                .kerning(1.2)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(BrimTheme.goldDeep))
+                .foregroundStyle(BrimTheme.ink)
+            Text("Press Play to pour")
+                .font(BrimTheme.text(14, .heavy))
+                .foregroundStyle(BrimTheme.cream)
+        }
+        .padding(.leading, 5)
+        .padding(.trailing, 12)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(BrimTheme.ink.opacity(0.78)))
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Demo: the jug is pouring by itself. Press Play to start your own pour.")
+    }
 }
 
 /// Places the chalkboard beside the attract jug in the top half, on the side with room, when there is room (the Duo;

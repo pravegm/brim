@@ -35,8 +35,12 @@ struct RootView: View {
                 // (on by default) draws the game turned round on a Duo: the player turns the phone round, the glasses
                 // sit on the half that stays sharp, and the half they lift (the jug) takes the blur.
                 let fold = Self.activeDivision(in: geo)
-                let turned = turnsRound(geo.size)
-                content(canvas: geo.size, safe: Self.insets(merged(safe, windowInsets), turnedRound: turned))
+                // Demo `window=WxH`: CI frames a multitasking window (Split View) inside the full screen.
+                let canvas = demo?.window ?? geo.size
+                let turned = turnsRound(canvas)
+                content(canvas: canvas, safe: Self.insets(merged(safe, windowInsets), turnedRound: turned))
+                    .frame(width: canvas.width, height: canvas.height)
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
                     .rotationEffect(turned ? .degrees(180) : .zero)
                     .animation(nil, value: turned)
                     .onChange(of: fold ?? .zero) { _, frame in logFold(frame) }
@@ -86,7 +90,8 @@ struct RootView: View {
             case .play:
                 screenLayer(info)
                     .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)            case .standUp:
+                    .position(x: rect.midX, y: rect.midY)
+            case .standUp:
                 StandUpCard(insets: safe,
                             onTurnScreen: { OrientationLock.requestPortrait() },
                             onPlayWithTouch: { controller.chooseTouchInBookPose() })
@@ -125,12 +130,16 @@ struct RootView: View {
             if screen == .cover { return .cover }
         }
         return PoseRule.pose(canvas: canvas, hingeSeen: controller.hingeSeen, isShut: controller.isShut,
-                             bookTouchOverride: controller.bookTouchOverride)
+                             bookTouchOverride: controller.bookTouchOverride, screen: screenSize)
     }
 
     private func hasFold(_ canvas: CGSize) -> Bool {
-        PoseRule.hasFold(canvas: canvas, hingeSeen: controller.hingeSeen)
+        PoseRule.hasFold(canvas: canvas, hingeSeen: controller.hingeSeen, screen: screenSize)
     }
+
+    /// The window scene's screen, read live: it changes only with a display handover or a multitasking resize, and
+    /// both change the canvas, which re-renders.
+    private var screenSize: CGSize? { OrientationLock.windowScreenSize() }
 
     private func merged(_ a: EdgeInsets, _ b: EdgeInsets) -> EdgeInsets {
         EdgeInsets(top: max(a.top, b.top), leading: max(a.leading, b.leading),
@@ -181,6 +190,8 @@ struct RootView: View {
     }
 
     private func handleCanvas(_ canvas: CGSize) {
+        // Before setPose / updateCanvas, so the input is already right when the session adopts the canvas.
+        controller.setWindowed(PoseRule.isWindowed(canvas: canvas, screen: screenSize))
         let pose = self.pose(for: canvas)
         let fold = hasFold(canvas)
         logCanvas(canvas, hasFold: fold, pose: pose)

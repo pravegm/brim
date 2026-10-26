@@ -204,6 +204,19 @@ if [[ " $PASSES " == *" ui "* ]]; then
   store_wait ui-cabinet-mid "freezeOn=midpour" 6; shoot duo-ui-cabinet-mid inner
   # Book pose: no orient request, the sim's own landscape inner canvas → the "stand me up" card.
   launch ui-book "mode=shift:1-1;duo"; shoot duo-ui-book inner
+  # QA-5 P1-1: Split View halves (landscape inner display) play by touch in a column, never the cover card.
+  launch ui-split-half "mode=shift:1-1;autopilot=perfect;window=475x669;freezeOn=midpour"
+  store_wait ui-split-half "freezeOn=midpour" 6; shoot duo-ui-split-half inner
+  launch ui-split-wide "screen=menu;window=634x669;freezeOn=midpour"
+  store_wait ui-split-wide "freezeOn=midpour" 6; shoot duo-ui-split-wide inner
+  grep -hE "BRIM-T (windowed|canvas)" "$OUT_ABS/logs/ui-split-half.txt" "$OUT_ABS/logs/ui-split-wide.txt" >>"$RUNLOG" || true
+  if grep -q "pose=cover" "$OUT_ABS/logs/ui-split-half.txt" "$OUT_ABS/logs/ui-split-wide.txt"; then
+    log "SPLIT-VIEW FAIL: a window was read as the cover display"
+  else
+    log "SPLIT-VIEW PASS"
+  fi
+  hinge_set 160 || true
+  launch ui-book2 "mode=shift:1-1;duo"
   hinge_sweep 40 1.5; hinge_set 0; sleep 3; shoot duo-ui-cover cover
   hinge_set 170 || true
 fi

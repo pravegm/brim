@@ -74,6 +74,8 @@ import UIKit
 //                (HingeTiltSource) even in demo. Without `autopilot`/`duo` a demo game uses TouchTiltSource.
 // - `flip`       draw the game turned round (RootView.turnsRound), as the real app does on a Duo by default. Without
 //                it demo runs (store frames) keep the upright layout. Logs `BRIM-T turned round <0|1>`.
+// - `window=WxH` lay the app out in a W × H window centred in the full screen, as Split View / Slide Over does on
+//                the Duo's inner display (QA-5 P1-1). Logs `BRIM-T windowed 1`.
 // - `seed=N`     GameSession seed (default: day number for daily, 7 otherwise, so CI frames are stable).
 // - Round 9:
 //   `crowns=N`   on top of `progress=`: Flawless crowns on the first campaign shifts in play order (never the Sand Bar)
@@ -141,6 +143,8 @@ struct DemoConfig: Equatable {
     var duo = false
     /// `flip`: draw the game turned round, as the "Glasses on the sharp half" setting does on a real Duo.
     var flip = false
+    /// `window=WxH`: RootView lays the app out in a window of that size inside the full screen (Split View frames).
+    var window: CGSize?
     var seed: UInt64?
     var badges = false
     /// Round 9: `crowns=N`, `vessel=<venue>|house`, `jugFill=x`.
@@ -176,6 +180,9 @@ struct DemoConfig: Equatable {
             case "orient": config.orientPortrait = value == "portrait"
             case "duo": config.duo = value.isEmpty || value == "on" || value == "1" || value == "true"
             case "flip": config.flip = value.isEmpty || value == "on" || value == "1" || value == "true"
+            case "window":
+                let wh = value.split(separator: "x").compactMap { Double($0) }
+                if wh.count == 2, wh[0] > 10, wh[1] > 10 { config.window = CGSize(width: wh[0], height: wh[1]) }
             case "seed": config.seed = UInt64(value)
             case "crowns": config.crowns = Int(value).map { max($0, 0) }
             case "vessel": config.vessel = VenueID(rawValue: value)

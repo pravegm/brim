@@ -84,7 +84,8 @@ struct SettingsView: View {
                             Text("Brim \(version) · made by a tiny studio")
                                 .font(BrimTheme.text(13, .bold))
                                 .foregroundStyle(BrimTheme.inkFaint)
-                            if controller.hingeSeen {
+                            // QA-5 P2-1: a diagnostic for TestFlight and debug builds, never App Store players.
+                            if controller.hingeSeen && Self.isTestBuild {
                                 Text(OrientationLock.turnStatus())
                                     .font(BrimTheme.text(12))
                                     .foregroundStyle(BrimTheme.inkFaint)
@@ -110,6 +111,15 @@ struct SettingsView: View {
         } message: {
             Text("Stars, unlocked venues, bests and lifetime stats will be erased. Daily Pour results are kept. This can't be undone.")
         }
+    }
+
+    /// DEBUG, or a TestFlight install (its receipt is the sandbox one).
+    static var isTestBuild: Bool {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        #endif
     }
 
     private var header: some View {

@@ -618,10 +618,23 @@ final class GameController: ObservableObject, SceneDriver {
         // After a hinge has been seen, a nil is a display handover, never "no hinge" (research 02 §7).
     }
 
-    /// Chooses the play input: the hinge on a Duo, touch elsewhere (or when the player asked for touch).
+    /// QA-5 P1-1: Brim runs in a multitasking window on the Duo's inner display (Split View, Slide Over). It plays by
+    /// touch there, like any iPhone; a live run pauses first, so the input never switches under a pour.
+    @Published private(set) var isWindowed = false
+
+    func setWindowed(_ on: Bool) {
+        guard on != isWindowed else { return }
+        if on && isLiveRun && demo == nil && !isClosedPaused { setUserPaused(true) }
+        isWindowed = on
+        trace("BRIM-T windowed \(on ? 1 : 0)")
+        refreshInputMode()
+    }
+
+    /// Chooses the play input: the hinge on a Duo, touch elsewhere (or when the player asked for touch, or in a
+    /// multitasking window).
     func refreshInputMode() {
         let hasHinge = hingeSeen || hinge.hasHinge
-        let touchWanted = !hasHinge || settings.touchOnDuo || bookTouchOverride || runTouchOverride
+        let touchWanted = !hasHinge || settings.touchOnDuo || bookTouchOverride || runTouchOverride || isWindowed
         let wantsTouch: Bool
         if demo != nil, let demoSource, !runTouchOverride {
             wantsTouch = demoSource === touch

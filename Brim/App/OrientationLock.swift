@@ -159,6 +159,8 @@ enum OrientationLock {
     /// that answers with `mask(screen:)`, the same rule the app delegate uses.
     static func adoptMask(_ controller: UIViewController) {
         guard let cls = object_getClass(controller) else { return }
+        // QA-5 P2-3: only SwiftUI's host, never a system window's private controller that joins the scene.
+        guard NSStringFromClass(cls).contains("UIHostingController") else { return }
         let id = ObjectIdentifier(cls)
         guard !adopted.contains(id) else { return }
         let selector = #selector(getter: UIViewController.supportedInterfaceOrientations)
@@ -194,6 +196,12 @@ enum OrientationLock {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first(where: { $0.windows.contains(where: \.isKeyWindow) }) ?? scenes.first
         return scene?.effectiveGeometry.interfaceOrientation == .portraitUpsideDown
+    }
+
+    /// The key window's screen (its window scene's, not `UIScreen.main`, so it follows the cover ↔ inner handover).
+    static func windowScreenSize() -> CGSize? {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }
+        return (windows.first(where: { $0.isKeyWindow }) ?? windows.first)?.windowScene?.screen.bounds.size
     }
 
     /// The key window's real safe-area insets (Dynamic Island, rounded corners, the Duo's inner camera cut-out).
