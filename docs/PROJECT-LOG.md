@@ -156,3 +156,25 @@
   - evidence frames;
   - the failed-shift card;
   - stamp placement on tall glasses.
+- **Round 8 green** (259/259). REVIEW-7 scored 9.0 overall. QA-4 found no P0; its one P1 was the stamp over the
+  waiting glass. Balance pass 4 put the Sand Bar unlock at 105★ and softened the walls.
+- **Round 9 green** (268/268):
+  - stamp placement fixed;
+  - a visible sand-slide telegraph;
+  - Glass Cabinet frames, with the secret vessel kept secret;
+  - star wording by quality.
+- Final balance sweep (run 40266626417), all on target:
+  - casual clear rates: V1 .97, V2 .78, V3 .94, V4 .84, V5 .88, V6 .81;
+  - casual likely-3★ .70;
+  - experts reach 119.8★ after 10 tries, against 105 needed;
+  - Rush: casual reaches tier 3 .75 of runs (4.2 min), experts run 8.6 min;
+  - Daily: casual clears .75.
+- The Duo CLOSE-GUARD passed again on rounds 8 and 9.
+- **TestFlight 1.0 (4) failed** with "maximum number of certificates": automatic signing on CI made a new Apple
+  Development certificate every run, and Squish's CI does the same on the same account. Fix in `testflight.yml`:
+  - the archive is no longer development-signed;
+  - it is archived unsigned, then the entitlements are stamped on with an ad-hoc signature;
+  - the export signs for the App Store with Apple's cloud-managed **distribution** certificate.
+  
+  **TestFlight 1.0 (5) uploaded** that way, but without the Game Center entitlement; 1.0 (6) adds the ad-hoc stamp
+  to restore it.

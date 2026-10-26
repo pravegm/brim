@@ -47,6 +47,29 @@ jug moves. My own shortlist and an independent concept agent both picked this id
 - **QA:** a code audit found no crash-level bugs; its four P1s are fixed.
 - **Reviews:** `design/REVIEW-1…3.md` and `design/QA-1.md`.
 
+## Overnight (25–26 Oct): what changed while you slept
+
+**Install TestFlight 1.0 (6)**: it contains everything below. Builds 2, 3 and 5 are older, and 5 has no Game Center.
+
+| Round | What it fixed or added |
+|---|---|
+| 5 | Real-Duo fixes from the QA audit. The "lay it flat" gate opens at 168°, with a "Use touch instead" escape. Lifting quickly never re-locks the gate. The jug refills between glasses, not mid-pour. A new **OVER** verdict, so "SPILL" only appears when it really overflows. Venue achievements unlock on clearing a venue, not on opening it. |
+| 6 | The late game. A one-time intro card for each new mechanic. Shift and Rush tier banners. **Rush travels** to a new venue every 12 glasses. **Flawless crowns** for an all-Perfect shift. The Daily shows your streak and the week. Conveyor pour zone and belt queue. A ghost line in the Potion Shop. A desert Sand Bar with a slide warning and an hourglass glass. |
+| 7 | Intro cards pause the belt. Stamps leave with their glass. Rush hand-offs smoothed. |
+| 8 | Fairer Rush. An autopilot that can pour foam. The crown chase. The **Glass Cabinet**, where crowns unlock jugs for Rush and Practice. Ghost glasses on the failed-shift card. |
+| 9 | Stamps never cover the next glass. Star wording ("Clean / Great / Flawless shift"). The secret Sand Bar now unlocks at **105★** instead of 3★ on every shift. |
+| Balance | A simulated-player harness (novice, casual and expert) plays every level, Rush and the Daily on CI. Stars are now 3★ = no misses, 2★ = one miss, 1★ = cleared. Casual players clear about 80–97 % of each venue, Rush lasts about 4 minutes for a casual player, and the Sand Bar is reachable. |
+
+The critic's latest score is **9.0/10** (REVIEW-7). A QA lead read the code end to end three more times and found
+no crashes. There are 268 automated tests, all passing.
+
+**Signing problem found and fixed overnight (it affects Squish too).** The build at 04:00 failed with "maximum number
+of certificates": CI was creating a new Apple Development certificate on every run. Squish's TestFlight workflow
+does the same thing on the same Apple account, so **Squish's next TestFlight build will probably fail the same way.**
+Brim's workflow no longer creates certificates. It signs only with Apple's cloud-managed distribution certificate.
+You can tidy up by revoking the old "Created via API" *development* certificates at developer.apple.com →
+Certificates (optional; nothing in Brim needs them). Ask me to port the fix to Squish if you want it.
+
 ## What only you can do (about 1 hour total, click-by-click in `docs/LAUNCH-RUNBOOK.md`)
 
 0. ~~Unblock CI~~ **Done 26 Oct:** the repo is public.

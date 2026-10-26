@@ -204,9 +204,14 @@ jobs:
           gtimeout 300 xcrun simctl boot "$udid" || echo "::warning::simctl boot returned non-zero (bootstatus waits later)"
 
       - name: Install the hinge tool
-        timeout-minutes: 10
-        continue-on-error: true
-        run: gtimeout 300 brew install artemnovichkov/tap/hinge || echo "::warning::hinge install failed"
+        timeout-minutes: 25
+        run: |
+          # Store run 40268420280: one brew install timed out, the Duo stayed shut and every frame was the cover display.
+          for attempt in 1 2 3; do
+            gtimeout 420 brew install artemnovichkov/tap/hinge && break
+            echo "::warning::hinge install attempt $attempt failed"; sleep 10
+          done
+          command -v hinge >/dev/null || { echo "::error::hinge tool unavailable: the Duo cannot be opened"; exit 1; }
 
       - name: Generate project
         timeout-minutes: 10
