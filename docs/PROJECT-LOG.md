@@ -178,3 +178,8 @@
   
   **TestFlight 1.0 (5) uploaded** that way, but without the Game Center entitlement; 1.0 (6) adds the ad-hoc stamp
   to restore it.
+- **TestFlight 1.0 (6)** is VALID and IN_BETA_TESTING. Its archive mode is `unsigned+adhoc-entitlements`, and Game
+  Center is present in the signature.
+- The store set had all six Duo frames flagged because a Homebrew hinge-tool install timed out and the simulated Duo
+  stayed shut. Both workflows now retry the install and fail loudly without it.
+- Final store set (run 40270623298): **16 frames, 0 flagged**.

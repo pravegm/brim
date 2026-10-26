@@ -92,7 +92,7 @@ Certificates (optional; nothing in Brim needs them). Ask me to port the fix to S
 ## The store screenshots
 
 They're ready, captioned and at the exact slot sizes, in the artifacts of the **App Store screenshots** run
-https://github.com/pravegm/brim/actions/runs/40234263161 (final, 26 Oct):
+https://github.com/pravegm/brim/actions/runs/40270623298 (final, 26 Oct, morning: round-9 build):
 
 - `store-69` (6.9-inch);
 - `store-61` (6.1-inch);
