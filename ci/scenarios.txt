@@ -9,7 +9,7 @@
 05-soda-foam|mode=shift:2-1;autopilot=perfect;freezeOn=midpour|10
 06-shake|mode=shift:3-1;autopilot=perfect;freezeOn=midpour|10
 07-rush|mode=rush;autopilot=perfect;freezeOn=midpour;streak=7|12
-08-results|mode=shift:1-1;screen=results;progress=mid|6
+08-results|mode=shift:1-1;screen=results;autopilot=great;missAt=4|8
 09-venues|screen=venues;progress=mid|6
 10-settings|screen=settings|5
 11-standup|screen=standup|5
@@ -21,7 +21,7 @@
 17-potion|mode=shift:5-2;autopilot=perfect;freezeOn=midpour|12
 18-potion-late|mode=shift:5-7;autopilot=perfect;freezeOn=perfect|16
 19-sand|mode=shift:6-1;autopilot=perfect;freezeOn=midpour|12
-20-rush-late|mode=rush;autopilot=perfect;freezeOn=midpour;streak=18|30
+20-rush-late|mode=rush;autopilot=perfect;served=25;freezeOn=midpour|40
 21-daily-results|mode=daily;screen=results|8
 22-shift-failed|mode=shift:2-4;autopilot=spill;freezeOn=finished|40
 23-venues-full|screen=venues;progress=full|6
@@ -36,3 +36,22 @@
 # change), so the frame shows the new tier's glass alone under the banner, with no stamp from the glass before.
 # 24 holds the belt under its intro card now (QA-3 P1-3). 28: under the new star rule an all-Great run is 3★, so it
 # shows the Flawless crown line; under 3★ the line is "3★ needs every glass a hit. You had N misses." (AppTests).
+# Round 8 (REVIEW-6 N2/N6/N7; DemoMode keys `served`, `missAt`, `freezeOn=repose|faded|lowjug`):
+# - 08 is the ordinary 2★ card again: a real all-Great run of 1-1 on a fresh save whose 4th glass is poured over (one
+#   miss), so it shows the new rule ("3★ needs every glass a hit. You had 1 miss.") and no longer duplicates 27.
+# - 28 keeps its run (3★, no crown, mid save): its stats line is now the crown chase that replaced "N perfect · best
+#   streak N · N glasses" ("Flawless crown: every glass Perfect. You had N of 6. Best M."), and the mid save's best
+#   Perfects draw the cyan arcs on 09's 3★ bubbles.
+# - 20 is played (headless) to glass 25 whatever the verdicts (tiers follow the glass count, so `streak=18` no longer
+#   says where the run is), then frozen mid-pour in the Conveyor tier. If the run dies before glass 25 the frame and
+#   `BRIM-T served seeded … strikes=` say so honestly.
+# - 22 (failed card) now shows ghost outlines for the unserved glasses, a small "N pts" (none for 0) under the hero and
+#   only the Perfects/streak in its stats line.
+# - 24 on the phone: the compact intro card sits low over the floor (jug in view) and the shift banner waits for it.
+# - 32-hourglass is NOT captured yet: no level, Daily or practice pool serves the `hourglass` glass (Balance/Core), so
+#   there is no honest moment to freeze. Add `32-hourglass|mode=shift:<id>;autopilot=perfect;freezeOn=midpour|14` once
+#   one does.
+30-sand-slide|mode=shift:6-1;autopilot=perfect;freezeOn=repose|14
+31-potion-faded|mode=shift:5-3;autopilot=perfect;freezeOn=faded|16
+33-rush-low-jug|mode=rush;autopilot=great;served=10;freezeOn=lowjug|60
+32-hourglass|mode=shift:6-2;autopilot=perfect;freezeOn=midpour|14

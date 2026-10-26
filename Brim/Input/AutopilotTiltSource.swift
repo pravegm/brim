@@ -45,6 +45,74 @@ enum AutopilotStyle: String, CaseIterable, Sendable {
     }
 }
 
+/// Round 8 (REVIEW-6 N1): how the autopilot respects a foamy drink. Pure numbers and functions (no actor), so tests can
+/// check them directly. Heights are fractions of the glass's interior; flows are the jug's normalised outflow.
+enum AutopilotFoam {
+    /// The visible top (liquid + head) the hand lets a foamy glass reach: ~85 % of the rim.
+    static let baseRoomTop = 0.85
+    /// A high goal (`over`, `great` on a tall line) keeps at least this much room for the head above the final liquid…
+    static let minHeadRoom = 0.06
+    /// …but never lets the head closer to the rim than this.
+    static let maxRoomTop = 0.96
+    /// Kept clear under the room top by the planned head.
+    static let headMargin = 0.01
+    static let minFlow = 0.06
+    static let maxFlow = 0.85
+    /// Before the head has been seen: steady head per flow² ≈ this × foamPerVolume × foamSettle (a respectful guess).
+    static let priorGain = 2.0
+    /// Fill rate per unit flow (interior heights per second) assumed until this glass's is measured (low = careful).
+    static let fallbackFill = 0.3
+    /// Paused for the head, tip in again once the top has dropped this much (or this share of the head, if smaller)…
+    static let resumeDrop = 0.04
+    static let resumeShare = 0.4
+    /// …or after this long (well inside Core's 3 s foam cap, so a pause never ends the glass short).
+    static let maxPause = 1.4
+    static let pauseCaution = 1.1
+    static let overflowCaution = 1.25
+    static let maxCaution = 4.0
+    /// A clean foamy glass eases the caution back toward 1 by this factor.
+    static let cautionEase = 0.6
+
+    /// The visible top a glass may reach while pouring toward `goal` (signed, from the line at `lineFraction`).
+    static func roomTop(lineFraction: Double, goal: Double) -> Double {
+        let line = lineFraction.isFinite ? lineFraction : 0.8
+        let target = goal.isFinite ? goal : 0
+        return TiltMath.clamp(max(baseRoomTop, line + target + minHeadRoom), 0, maxRoomTop)
+    }
+
+    /// The most flow that keeps the head in: pouring on at f until the liquid reaches `finalLiquid`, the head (heading for
+    /// `headGain` × f² and settling over `settle`) must still fit between the final liquid and `roomTop` − `headMargin`.
+    /// Gentlest near the line; `minFlow` when there is no room at all.
+    static func flowCap(liquidTop: Double, head: Double, finalLiquid: Double, roomTop: Double, headGain: Double,
+                        fillPerFlow: Double, settle: Double) -> Double {
+        guard liquidTop.isFinite, head.isFinite, finalLiquid.isFinite, roomTop.isFinite else { return minFlow }
+        let limit = roomTop - headMargin - finalLiquid
+        guard limit > 0 else { return minFlow }
+        let gain = headGain.isFinite ? max(headGain, 0.02) : 1
+        let fill = fillPerFlow.isFinite && fillPerFlow > 0.05 ? fillPerFlow : fallbackFill
+        let tau = settle.isFinite ? max(settle, 0.05) : 1
+        let toGo = max(0, finalLiquid - liquidTop)
+        let headNow = max(head, 0)
+        var flow = maxFlow
+        while flow > minFlow {
+            let steady = gain * flow * flow
+            let pourTime = toGo / (fill * flow)
+            let end = steady + (headNow - steady) * exp(-pourTime / tau)
+            if end <= limit { return flow }
+            flow -= 0.01
+        }
+        return minFlow
+    }
+
+    /// One live estimate of the steady head per flow² from the head, its rate and the landing flow (first-order head:
+    /// d(head)/dt = gain × flow² / settle − head / settle). Nil when the stream is too thin to tell.
+    static func headGainSample(head: Double, headRate: Double, landing: Double, settle: Double) -> Double? {
+        guard head.isFinite, headRate.isFinite, landing.isFinite, settle.isFinite, landing > 0.1 else { return nil }
+        let sample = (max(settle, 0.05) * headRate + max(head, 0)) / (landing * landing)
+        return TiltMath.clamp(sample, 0.02, 60)
+    }
+}
+
 /// A tilt source that plays the game like a calm human, reading the last snapshot.
 ///
 /// It is a feedback controller on `telemetry.projectedDistanceToLine`, not a script tuned to Core's constants:
@@ -58,6 +126,16 @@ enum AutopilotStyle: String, CaseIterable, Sendable {
 ///   time (if the projection ever ignores liquid in the air, the lead grows to cover the fall);
 /// - tops up if it settled clearly short; the `spill` style keeps pouring ~0.4 s past the overflow so the disaster
 ///   reads (Core judges the spill live, the instant it overflows).
+/// Round 8 (REVIEW-6 N1): foamy drinks (`glass.liquid.foamPerVolume > 0`, every style but `spill`) get a bartender's
+/// care. The head is what overflows, so the hand
+/// - watches the visible head and learns live how big it gets per flow² (`headGain`: steady head ≈ gain × flow²,
+///   settling over `foamSettle`), then caps the flow so that, poured on until the liquid is in, the head would still
+///   fit under the room top (~85 % of the rim) above the final liquid (`AutopilotFoam.flowCap`): a gentler pour,
+///   gentlest near the line;
+/// - pauses (lays back) if the visible top still reaches the room top, and tips in again as the head settles (before it
+///   has settled enough for Core to judge the glass);
+/// - stops on the projection, which for foam is the settled-head projection (Core judges the liquid plus at most a
+///   settled head), with its own learned lead (`foamLeadTime`): the still-drink lead is never touched by a foamy glass.
 /// Its output goes through a critically damped spring and a speed limit, so it never jumps. Robust to a nil snapshot,
 /// finished runs, empty jugs (it backs off and waits for the swap) and conveyors.
 @MainActor
@@ -65,11 +143,13 @@ final class AutopilotTiltSource: TiltSource {
     let style: AutopilotStyle
     private let snapshot: () -> GameSnapshot?
 
-    private enum Stage { case waiting, reacting, pouring, stopped, resting, spilling }
+    private enum Stage { case waiting, reacting, pouring, stopped, resting, spilling, settling }
 
     private struct StopRecord {
         var projected: Double
         var rate: Double
+        /// Stopped on a foamy glass (the foam lead learns from it, the still lead doesn't).
+        var foamy: Bool
     }
 
     private var stage: Stage = .waiting
@@ -101,11 +181,35 @@ final class AutopilotTiltSource: TiltSource {
     /// The jug ran dry: laid back, waiting for the fresh one (round 5).
     private var waitingForJug = false
 
+    // Foam care (round 8), per glass.
+    /// The glass being poured is foamy and this style cares (every style but `spill`).
+    private var foamCare = false
+    /// The drink's head settle time (s), from the glass's liquid.
+    private var foamSettle = 1.0
+    /// Steady head (fraction of the interior) per flow², learned live from the visible head; starts at a guess.
+    private var headGain = 0.0
+    private var lastHead: Double?
+    /// d(head)/dt, smoothed (interior heights per second).
+    private var headRate = 0.0
+    /// The head when the hand last paused for it.
+    private var pauseHead = 0.0
+    /// A foamy glass is open (for the once-per-glass caution bookkeeping).
+    private var foamGlassOpen = false
+    /// This foamy glass needed a pause or ran over.
+    private var foamTroubled = false
+    private var foamLearnedStops = 0
+
     /// Seconds of the current approach rate still to come after the decision to stop (lay-back pour + anything the
     /// projection misses). Learned from every stop; starts at a calm human's guess.
     private(set) var leadTime = 0.14
+    /// The same, learned only on foamy glasses (the settled-head projection moves differently after the stop).
+    private(set) var foamLeadTime = 0.14
     /// Smoothed time from the lip to the glass for the last pours (diagnostics, and the lead's safety net).
     private(set) var observedFallTime: Double?
+    /// Scales the learned head gain up after a foamy glass needed a pause or ran over; eases back on clean glasses.
+    private(set) var foamCaution = 1.0
+    /// Pauses for the head so far (diagnostics and tests).
+    private(set) var foamPauses = 0
 
     /// Reaction time after a glass settles under the spout.
     static let reaction = 0.25
@@ -159,6 +263,11 @@ final class AutopilotTiltSource: TiltSource {
            let current = snap.glasses.first(where: { $0.id == id }), current.overflowing {
             overflowSince = time
             if style == .spill && stage == .pouring { enter(.spilling, at: time) }
+            if foamCare {
+                // The head ran over although the hand meant to keep it in: pour the next foamy glasses gentler.
+                foamTroubled = true
+                foamCaution = min(foamCaution * AutopilotFoam.overflowCaution, AutopilotFoam.maxCaution)
+            }
         }
         if stage == .spilling {
             if time - stageStart < Self.spillLinger {
@@ -192,9 +301,11 @@ final class AutopilotTiltSource: TiltSource {
             stopRecord = nil
             flowOnset = nil
             streamLanding = false
+            startFoamCare(glass)
         }
         let projected = telemetry.projectedDistanceToLine.isFinite ? telemetry.projectedDistanceToLine : -1
-        let goal = style.goal(lineFraction: Self.lineFraction(of: glass))
+        let line = Self.lineFraction(of: glass)
+        let goal = style.goal(lineFraction: line)
         if let previous = lastProjected, dt > 0 {
             let raw = (projected - previous) / dt
             projectedRate += (raw - projectedRate) * min(1, dt / 0.12)
@@ -211,6 +322,7 @@ final class AutopilotTiltSource: TiltSource {
                 fillPerFlow = sample
             }
         }
+        if foamCare { watchHead(glass, landing: landing, dt: dt) }
 
         // Round 5 (decision 3): a shift jug that runs dry mid-glass shows fill 0 and the stream stops; the fresh jug
         // only comes once the glass is served or the jug has been tipped back for 0.4 s (and a refill that lands while
@@ -243,7 +355,10 @@ final class AutopilotTiltSource: TiltSource {
         case .stopped:
             command = 0
             let streamDone = flow < 0.004 && time - stageStart > 0.1
-            if style != .spill, topUps < 2, streamDone, goal - projected > style.topUpMargin {
+            // A foamy glass tops up only once the head has room again.
+            let room = AutopilotFoam.roomTop(lineFraction: line, goal: goal)
+            let roomy = !foamCare || Self.visibleTop(of: glass) < room - AutopilotFoam.resumeDrop
+            if style != .spill, topUps < 2, streamDone, roomy, goal - projected > style.topUpMargin {
                 learnFromStop(final: projected)
                 topUps += 1
                 beginPour(at: time)
@@ -251,6 +366,14 @@ final class AutopilotTiltSource: TiltSource {
         case .resting:
             command = 0
             if time - stageStart > 1.5 { beginPour(at: time) }
+        case .settling:
+            // Paused for the head: tip in again as it settles (well before Core would judge the glass).
+            command = 0
+            let drop = min(AutopilotFoam.resumeDrop, AutopilotFoam.resumeShare * pauseHead)
+            let room = AutopilotFoam.roomTop(lineFraction: line, goal: goal)
+            if Self.visibleTop(of: glass) <= room - drop || time - stageStart >= AutopilotFoam.maxPause {
+                beginPour(at: time)
+            }
         case .spilling:
             break
         }
@@ -259,8 +382,20 @@ final class AutopilotTiltSource: TiltSource {
     private func pour(snap: GameSnapshot, glass: GlassState, projected: Double, goal: Double, flow: Double,
                       time: TimeInterval, dt: Double) {
         if shouldStop(projected: projected, goal: goal, glass: glass, time: time) {
-            stopRecord = StopRecord(projected: projected, rate: max(projectedRate, 0))
+            stopRecord = StopRecord(projected: projected, rate: max(projectedRate, 0), foamy: foamCare)
             enter(.stopped, at: time)
+            command = 0
+            searching = false
+            return
+        }
+        let line = Self.lineFraction(of: glass)
+        if foamCare && Self.visibleTop(of: glass) >= AutopilotFoam.roomTop(lineFraction: line, goal: goal) {
+            // The head is nearly at the rim: lay the jug back and let it settle.
+            pauseHead = Self.head(of: glass)
+            foamPauses += 1
+            foamTroubled = true
+            foamCaution = min(foamCaution * AutopilotFoam.pauseCaution, AutopilotFoam.maxCaution)
+            enter(.settling, at: time)
             command = 0
             searching = false
             return
@@ -286,7 +421,17 @@ final class AutopilotTiltSource: TiltSource {
             }
             // Remaining distance net of what the lead says is still to come: a bigger lead slows the hand earlier.
             let remaining = goal - projected - max(projectedRate, 0) * max(effectiveLead, 0)
-            let wanted = style == .spill ? 0.8 : wantedFlow(remaining: remaining)
+            var wanted = style == .spill ? 0.8 : wantedFlow(remaining: remaining)
+            if foamCare {
+                let liquidTop = Self.liquidTop(of: glass)
+                let cap = AutopilotFoam.flowCap(liquidTop: liquidTop, head: Self.head(of: glass),
+                                                finalLiquid: TiltMath.clamp(line + goal, liquidTop, 1),
+                                                roomTop: AutopilotFoam.roomTop(lineFraction: line, goal: goal),
+                                                headGain: headGain * foamCaution,
+                                                fillPerFlow: fillPerFlow ?? AutopilotFoam.fallbackFill,
+                                                settle: foamSettle)
+                wanted = min(wanted, cap)
+            }
             // Viscous drinks answer slowly: a gentler hand so it doesn't hunt.
             let gain = 70 / (1 + 4 * liquidLag)
             var push = TiltMath.clamp((wanted - flow) * gain, -45, 45)
@@ -334,6 +479,11 @@ final class AutopilotTiltSource: TiltSource {
     /// The lead in use: the learned one, but until a stop has been measured at least a guess that grows with the
     /// drink's viscosity (thick drinks keep coming for a moment after the jug lays back).
     private var effectiveLead: Double {
+        if foamCare {
+            // Foamy glasses keep their own lead (round 8): the still-drink lead is learned on still drinks only.
+            if foamLearnedStops > 0 { return foamLeadTime }
+            return max(foamLeadTime, Self.initialLead + 0.35 * liquidLag)
+        }
         if learnedStops > 0 { return leadTime }
         return max(leadTime, Self.initialLead + 0.35 * liquidLag)
     }
@@ -364,6 +514,60 @@ final class AutopilotTiltSource: TiltSource {
         projectedRate = 0
         flowOnset = nil
         streamLanding = false
+        lastHead = nil
+        headRate = 0
+    }
+
+    // MARK: - Foam care (round 8)
+
+    /// A new glass: is it foamy, and how does its head settle? The head gain starts at a respectful guess.
+    private func startFoamCare(_ glass: GlassState) {
+        let perVolume = glass.liquid.foamPerVolume.isFinite ? max(glass.liquid.foamPerVolume, 0) : 0
+        let settle = glass.liquid.foamSettle
+        foamSettle = settle.isFinite ? TiltMath.clamp(settle, 0.05, 10) : 1
+        foamCare = perVolume > 0 && style != .spill
+        headGain = AutopilotFoam.priorGain * perVolume * foamSettle
+        lastHead = nil
+        headRate = 0
+        pauseHead = 0
+        foamGlassOpen = foamCare
+        foamTroubled = false
+    }
+
+    /// Watches the head and learns how big it gets per flow² (rises fast, falls slowly: better too careful).
+    private func watchHead(_ glass: GlassState, landing: Double, dt: Double) {
+        let head = Self.head(of: glass)
+        if let previous = lastHead, dt > 0 {
+            let raw = (head - previous) / dt
+            headRate += (raw - headRate) * min(1, dt / 0.15)
+        }
+        lastHead = head
+        guard stage == .pouring, dt > 0,
+              let sample = AutopilotFoam.headGainSample(head: head, headRate: headRate, landing: landing,
+                                                        settle: foamSettle) else { return }
+        let tau = sample > headGain ? 0.2 : 0.8
+        headGain += (sample - headGain) * min(1, dt / tau)
+    }
+
+    /// The head above the liquid, as a fraction of the interior.
+    private static func head(of glass: GlassState) -> Double {
+        let interior = Double(glass.shape.interiorHeight)
+        guard interior > 0 else { return 0 }
+        let head = Double(glass.foamHeight) / interior
+        return head.isFinite ? max(head, 0) : 0
+    }
+
+    /// The liquid's top, as a fraction of the interior.
+    private static func liquidTop(of glass: GlassState) -> Double {
+        let interior = Double(glass.shape.interiorHeight)
+        guard interior > 0 else { return 0 }
+        let top = Double(glass.liquidHeight) / interior
+        return top.isFinite ? max(top, 0) : 0
+    }
+
+    /// What the eye sees: liquid plus head, as a fraction of the interior.
+    private static func visibleTop(of glass: GlassState) -> Double {
+        liquidTop(of: glass) + head(of: glass)
     }
 
     // MARK: - Learning
@@ -372,6 +576,11 @@ final class AutopilotTiltSource: TiltSource {
     private func finishGlass() {
         if let final = lastProjected { learnFromStop(final: final) }
         stopRecord = nil
+        if foamGlassOpen {
+            // Once per foamy glass: a clean one eases the caution back toward 1.
+            foamGlassOpen = false
+            if !foamTroubled { foamCaution = 1 + (foamCaution - 1) * AutopilotFoam.cautionEase }
+        }
     }
 
     /// Where the glass settled vs. the projection when the hand decided to stop → the lead that would have been exact.
@@ -379,6 +588,15 @@ final class AutopilotTiltSource: TiltSource {
         guard let record = stopRecord else { return }
         stopRecord = nil
         guard style != .spill else { return }
+        if record.foamy {
+            // A foamy glass: the head, not the lead, decides an overflow (its caution grew when it ran over). Otherwise
+            // the settled-head projection teaches the foam lead, never the still one.
+            guard overflowSince == nil, final.isFinite, record.rate > 0.015 else { return }
+            let observed = TiltMath.clamp((final - record.projected) / record.rate, Self.minLead, Self.maxLead)
+            foamLeadTime = foamLearnedStops == 0 ? observed : foamLeadTime + (observed - foamLeadTime) * 0.5
+            foamLearnedStops += 1
+            return
+        }
         if overflowSince != nil {
             // It ran over although the hand meant to stop (the `over` style near the brim, a hidden lag): the settled
             // level says nothing (liquid was lost), but the lead was clearly too short. Grow it.
@@ -417,7 +635,11 @@ final class AutopilotTiltSource: TiltSource {
             observedFallTime = fall
         }
         if projected - onset.projected < 0.003 {
-            leadTime = max(leadTime, min(fall + 0.1, Self.maxLead))
+            if foamCare {
+                foamLeadTime = max(foamLeadTime, min(fall + 0.1, Self.maxLead))
+            } else {
+                leadTime = max(leadTime, min(fall + 0.1, Self.maxLead))
+            }
         }
     }
 

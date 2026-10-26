@@ -978,3 +978,323 @@ struct InputTests {
         TiltInputLog.shared.clear()
     }
 }
+
+// MARK: - Foam (round 8, REVIEW-6 N1)
+
+/// A drink for the foam toy bar: what the pilot is shown (`foamPerVolume`, `foamSettle`) and what the toy really does
+/// (`headGain`: head made per landed glass-height × emission flow, so a steady head grows with flow²).
+private struct FoamToyDrink {
+    var foamPerVolume: Double
+    var foamSettle: Double
+    var headGain: Double
+    var line: Double
+    var fillPerFlow: Double = 0.55
+    var patience: Double?
+}
+
+/// The toy bar with a toy head (deliberately NOT Core's numbers): landing liquid makes head ∝ landed × emission flow,
+/// the head settles as exp(−t / foamSettle), the visible top is liquid + head and only that over the rim is a spill.
+/// A glass is judged once the head has settled (≤ 0.02) or after 3 s idle, at liquid + min(head, 0.02); the projection
+/// is the settled-head one (liquid + air + at most a settled head). Optional patience (judged as it stands) and a
+/// "surge" that multiplies the head once the liquid passes `surgeAbove` (a head the pilot can't have learned yet).
+@MainActor
+private final class FoamToyBar {
+    let drinks: [FoamToyDrink]
+    let fall = 0.4
+    let decline: Double
+    let pourPoint = 12.0
+    let settledHead = 0.02
+    let surgeAbove: Double
+    let surge: Double
+    var drink: FoamToyDrink
+    var time = 0.0
+    var glassID = 1
+    var volume = 0.0
+    var head = 0.0
+    var air: [(land: Double, amount: Double, flow: Double)] = []
+    var flow = 0.0
+    var landing = 0.0
+    var idle = 0.0
+    var phase: GlassPhase = .arriving
+    var phaseTime = 0.0
+    var result: Judgement?
+    var overflowing = false
+    var finals: [(judgement: Judgement, distance: Double, glass: Int, foamy: Bool)] = []
+    var overflowTimes: [Double] = []
+    var maxTop = 0.0
+    var lastLanding = 0.0
+    /// Per glass: seconds from its arrival to the last drop landing (the pour was done by then).
+    var pourDone: [Double] = []
+    var timerJudged = 0
+
+    init(drinks: [FoamToyDrink], decline: Double = 0.12, surgeAbove: Double = Double.infinity, surge: Double = 1) {
+        self.drinks = drinks
+        self.drink = drinks[0]
+        self.decline = decline
+        self.surgeAbove = surgeAbove
+        self.surge = surge
+    }
+
+    var liquid: Liquid {
+        Liquid(id: drink.foamPerVolume > 0 ? .rootBeer : .water, name: "Toy", top: RGBA(0.5, 0.3, 0.1),
+               bottom: RGBA(0.3, 0.15, 0.05), foam: nil, lagTau: 0.04, foamPerVolume: drink.foamPerVolume,
+               foamSettle: drink.foamSettle, reposeDegrees: 0, opacity: 0.9, fizzy: drink.foamPerVolume > 0)
+    }
+
+    var snapshot: GameSnapshot {
+        var airborne = 0.0
+        for drop in air { airborne += drop.amount }
+        let later = (head + drink.headGain * airborne * flow) * exp(-0.5 / drink.foamSettle)
+        let projected = phase == .filling ? volume + airborne + min(later, settledHead) - drink.line : -1
+        let shape = GlassShape(id: "tumbler", name: "Tumbler", style: .tumbler,
+                               profile: [CGPoint(x: 55, y: 0), CGPoint(x: 62, y: 120)], baseThickness: 8, wall: 3)
+        let glass = GlassState(id: glassID, shape: shape, liquid: liquid, x: 335, phase: phase,
+                               liquidHeight: CGFloat(volume * 120), foamHeight: CGFloat(head * 120),
+                               lineHeight: CGFloat(drink.line * 120), lineOpacity: 1, inPerfectBand: false,
+                               overflowing: overflowing, patienceLeft: nil, patienceTotal: nil, result: result)
+        let jug = JugState(liquid: liquid, angle: 0, fill: 1, outline: [], liquidPolygon: [], lip: .zero, pivot: .zero,
+                           flow: flow)
+        let telemetry = PourTelemetry(flow: flow, landingRate: landing, activeFill: min(volume + head, 1),
+                                      distanceToLine: volume + head - drink.line, projectedDistanceToLine: projected,
+                                      liquid: liquid.id)
+        return GameSnapshot(time: time, phase: .playing, mode: .practice, jug: jug, stream: [], droplets: [],
+                            glasses: [glass], puddles: [], score: 0, streak: 0, multiplier: 1, strikes: 0, maxStrikes: 3,
+                            ordersDone: 0, ordersTotal: nil, perfects: 0, telemetry: telemetry)
+    }
+
+    private func judge(_ d: Double) -> Judgement {
+        let a = abs(d)
+        if a <= 0.025 { return .perfect }
+        if a <= 0.06 { return .great }
+        if a <= 0.12 { return .good }
+        return d < 0 ? .short : .over
+    }
+
+    private func finish(_ j: Judgement, _ d: Double) {
+        result = j
+        finals.append((judgement: j, distance: d, glass: glassID, foamy: drink.foamPerVolume > 0))
+        pourDone.append(lastLanding)
+        phaseTime = 0
+    }
+
+    func step(tilt: Double, dt: Double) {
+        time += dt
+        phaseTime += dt
+        let target = min(max((tilt - pourPoint) / 45, 0), 1)
+        let tau = target > flow ? 0.05 : decline
+        flow += (target - flow) * (1 - exp(-dt / tau))
+        if flow < 0.003 && target == 0 { flow = 0 }
+        let emitted = flow * drink.fillPerFlow * dt
+        if emitted > 0 { air.append((land: time + fall, amount: emitted, flow: flow)) }
+        let gainNow = volume > surgeAbove ? drink.headGain * surge : drink.headGain
+        var landed = 0.0
+        var made = 0.0
+        var aloft: [(land: Double, amount: Double, flow: Double)] = []
+        for drop in air {
+            if drop.land <= time {
+                landed += drop.amount
+                made += gainNow * drop.amount * drop.flow
+            } else {
+                aloft.append(drop)
+            }
+        }
+        air = aloft
+        landing += (landed / dt / drink.fillPerFlow - landing) * (1 - exp(-dt / 0.08))
+        if head > 0 {
+            head *= exp(-dt / drink.foamSettle)
+            if head < 1e-4 { head = 0 }
+        }
+        switch phase {
+        case .arriving:
+            if phaseTime >= 0.45 {
+                phase = .filling
+                phaseTime = 0
+            }
+        case .filling:
+            volume += landed
+            head += made
+            guard result == nil else {
+                if phaseTime >= 0.75 {
+                    glassID += 1
+                    drink = drinks[(glassID - 1) % drinks.count]
+                    volume = 0
+                    head = 0
+                    result = nil
+                    overflowing = false
+                    phaseTime = 0
+                    idle = 0
+                    lastLanding = 0
+                }
+                return
+            }
+            if landed > 0 { lastLanding = phaseTime }
+            maxTop = max(maxTop, volume + head)
+            if volume + head > 1 && !overflowing {
+                overflowing = true
+                overflowTimes.append(time)
+                finish(.spill, volume - drink.line)
+            } else if let patience = drink.patience, phaseTime >= patience {
+                timerJudged += 1
+                let d = volume + min(head, settledHead) - drink.line
+                finish(judge(d), d)
+            } else if flow < 0.004 && air.isEmpty && volume > 0.05 {
+                idle += dt
+                if idle >= 0.35 && (head <= settledHead || idle >= 3.0) {
+                    let d = volume + min(head, settledHead) - drink.line
+                    finish(judge(d), d)
+                }
+            } else {
+                idle = 0
+            }
+        case .served, .leaving:
+            break
+        }
+    }
+}
+
+/// Runs the pilot against the foam bar at 60 Hz; returns the tilt of every frame.
+@MainActor
+private func runFoamToyBar(_ bar: FoamToyBar, _ pilot: AutopilotTiltSource, seconds: Double) -> [Double] {
+    var tilts: [Double] = []
+    let dt = 1.0 / 60
+    var frame = 0
+    while Double(frame) * dt < seconds {
+        let tilt = pilot.tilt(at: Double(frame) * dt)
+        tilts.append(tilt)
+        bar.step(tilt: tilt, dt: dt)
+        frame += 1
+    }
+    return tilts
+}
+
+/// Toy drinks sized like Rush's Fizz tier: a big slow head, a fizzy one and a light one, each with a patience ring.
+private let foamToyStout = FoamToyDrink(foamPerVolume: 1.3, foamSettle: 2.0, headGain: 3.7, line: 0.68,
+                                        fillPerFlow: 0.5, patience: 10.4)
+private let foamToyFizz = FoamToyDrink(foamPerVolume: 0.9, foamSettle: 1.4, headGain: 2.6, line: 0.7,
+                                       fillPerFlow: 0.52, patience: 10.2)
+private let foamToyCream = FoamToyDrink(foamPerVolume: 0.4, foamSettle: 0.9, headGain: 1.13, line: 0.7,
+                                        fillPerFlow: 0.59, patience: 9.6)
+private let foamToyStill = FoamToyDrink(foamPerVolume: 0, foamSettle: 1, headGain: 0, line: 0.8)
+
+@MainActor
+struct InputFoamTests {
+    @Test func autopilotPerfectsFoamyGlassesAndNeverOverflows() {
+        for drink in [foamToyStout, foamToyFizz, foamToyCream] {
+            let bar = FoamToyBar(drinks: [drink])
+            let pilot = AutopilotTiltSource(style: .perfect) { bar.snapshot }
+            let tilts = runFoamToyBar(bar, pilot, seconds: 60)
+            let summary = bar.finals.map { "\($0.judgement) \($0.distance)" }
+            #expect(bar.finals.count >= 4, "only \(bar.finals.count) glasses (head gain \(drink.headGain))")
+            #expect(bar.overflowTimes.isEmpty)
+            // Every glass, the first included, is a genuine Perfect, judged on the settled head.
+            #expect(bar.finals.allSatisfy { $0.judgement == .perfect }, "\(summary)")
+            // The head never got near the rim, and the liquid was in well inside the patience ring.
+            #expect(bar.maxTop < 0.9, "max top \(bar.maxTop)")
+            let patience = drink.patience ?? 0
+            #expect(bar.pourDone.allSatisfy { $0 < patience - 1.0 }, "pour done at \(bar.pourDone)")
+            var biggestStep = 0.0
+            for index in 1..<tilts.count { biggestStep = max(biggestStep, abs(tilts[index] - tilts[index - 1])) }
+            #expect(biggestStep <= 160.0 / 60 + 1e-9)
+        }
+    }
+
+    @Test func autopilotPausesForASurgingHeadAndStillPerfects() {
+        // Past 45 % the head suddenly comes three times as big: the visible top reaches the room top, the pilot lays
+        // back, lets it settle and tips in again; nothing runs over and the glasses are still Perfect.
+        let bar = FoamToyBar(drinks: [foamToyFizz], surgeAbove: 0.45, surge: 3)
+        let pilot = AutopilotTiltSource(style: .perfect) { bar.snapshot }
+        _ = runFoamToyBar(bar, pilot, seconds: 45)
+        #expect(pilot.foamPauses > 0)
+        #expect(bar.overflowTimes.isEmpty)
+        #expect(bar.maxTop < 0.97, "max top \(bar.maxTop)")
+        let summary = bar.finals.map { "\($0.judgement)" }
+        #expect(bar.finals.count >= 3)
+        #expect(bar.finals.allSatisfy { $0.judgement == .perfect }, "\(summary)")
+    }
+
+    @Test func autopilotFoamLeavesTheStillLeadAlone() {
+        // Foamy glasses learn their own lead; the still-drink lead keeps its calm human's guess.
+        let bar = FoamToyBar(drinks: [foamToyStout, foamToyFizz, foamToyCream])
+        let pilot = AutopilotTiltSource(style: .perfect) { bar.snapshot }
+        _ = runFoamToyBar(bar, pilot, seconds: 45)
+        #expect(bar.finals.count >= 4)
+        #expect(pilot.leadTime == AutopilotTiltSource.initialLead)
+        #expect(pilot.foamLeadTime != AutopilotTiltSource.initialLead)
+        #expect(bar.overflowTimes.isEmpty)
+    }
+
+    @Test func autopilotPoursStillAndFoamyGlassesInTurn() {
+        let bar = FoamToyBar(drinks: [foamToyStill, foamToyStout, foamToyFizz, foamToyStill, foamToyCream])
+        let pilot = AutopilotTiltSource(style: .perfect) { bar.snapshot }
+        _ = runFoamToyBar(bar, pilot, seconds: 60)
+        let summary = bar.finals.map { "\($0.judgement) \($0.distance)" }
+        #expect(bar.finals.count >= 6)
+        #expect(bar.overflowTimes.isEmpty)
+        #expect(bar.finals.allSatisfy { $0.judgement == .perfect }, "\(summary)")
+        #expect(bar.finals.contains { !$0.foamy })
+        #expect(bar.finals.contains { $0.foamy })
+    }
+
+    @Test func autopilotOverAndShortStylesKeepAFoamyHeadInTheGlass() {
+        for style in [AutopilotStyle.over, AutopilotStyle.short, AutopilotStyle.great] {
+            let bar = FoamToyBar(drinks: [foamToyCream, foamToyFizz])
+            let pilot = AutopilotTiltSource(style: style) { bar.snapshot }
+            _ = runFoamToyBar(bar, pilot, seconds: 40)
+            #expect(bar.finals.count >= 3, "\(style): \(bar.finals.count) glasses")
+            #expect(bar.overflowTimes.isEmpty, "\(style) ran over")
+        }
+    }
+
+    @Test func autopilotSpillsForRealOnAFoamyGlass() {
+        // The spill style ignores foam care: it pours on until the glass really overflows, and keeps pouring after.
+        let bar = FoamToyBar(drinks: [foamToyStout])
+        let pilot = AutopilotTiltSource(style: .spill) { bar.snapshot }
+        let tilts = runFoamToyBar(bar, pilot, seconds: 8)
+        #expect(!bar.overflowTimes.isEmpty)
+        guard let overflow = bar.overflowTimes.first else { return }
+        let index = min(Int(((overflow + 0.3) * 60).rounded()), tilts.count - 1)
+        #expect(tilts[index] > 20)
+        #expect(bar.finals.first?.judgement == .spill)
+        #expect(pilot.foamPauses == 0)
+    }
+
+    @Test func foamFlowCapIsGentlerForBiggerHeadsAndHasNoRoomAtTheRim() {
+        let light = AutopilotFoam.flowCap(liquidTop: 0.1, head: 0, finalLiquid: 0.7, roomTop: 0.85, headGain: 0.6,
+                                          fillPerFlow: 0.55, settle: 0.9)
+        let heavy = AutopilotFoam.flowCap(liquidTop: 0.1, head: 0, finalLiquid: 0.7, roomTop: 0.85, headGain: 3.7,
+                                          fillPerFlow: 0.55, settle: 2.0)
+        #expect(heavy < light)
+        #expect(heavy >= AutopilotFoam.minFlow)
+        #expect(light <= AutopilotFoam.maxFlow)
+        // A tall line under the same head leaves less room: gentler.
+        let tall = AutopilotFoam.flowCap(liquidTop: 0.1, head: 0, finalLiquid: 0.8, roomTop: 0.85, headGain: 3.7,
+                                         fillPerFlow: 0.55, settle: 2.0)
+        #expect(tall < heavy)
+        // A head already standing near the end: much gentler than over flat liquid.
+        let foamed = AutopilotFoam.flowCap(liquidTop: 0.6, head: 0.15, finalLiquid: 0.7, roomTop: 0.85, headGain: 3.7,
+                                           fillPerFlow: 0.55, settle: 2.0)
+        let flat = AutopilotFoam.flowCap(liquidTop: 0.6, head: 0, finalLiquid: 0.7, roomTop: 0.85, headGain: 3.7,
+                                         fillPerFlow: 0.55, settle: 2.0)
+        #expect(foamed < flat * 0.6)
+        let noRoom = AutopilotFoam.flowCap(liquidTop: 0.5, head: 0, finalLiquid: 0.9, roomTop: 0.85, headGain: 1,
+                                           fillPerFlow: 0.55, settle: 1)
+        #expect(noRoom == AutopilotFoam.minFlow)
+        let broken = AutopilotFoam.flowCap(liquidTop: Double.nan, head: 0, finalLiquid: 0.7, roomTop: 0.85,
+                                           headGain: Double.infinity, fillPerFlow: 0, settle: 0)
+        #expect(broken == AutopilotFoam.minFlow)
+    }
+
+    @Test func foamRoomTopAndHeadGainSample() {
+        #expect(AutopilotFoam.roomTop(lineFraction: 0.7, goal: AutopilotStyle.perfect.stopDistance) == 0.85)
+        let high = AutopilotFoam.roomTop(lineFraction: 0.8, goal: 0.12)
+        #expect(high > 0.85)
+        #expect(high <= AutopilotFoam.maxRoomTop)
+        #expect(AutopilotFoam.roomTop(lineFraction: Double.nan, goal: 0).isFinite)
+        // A steady head of 0.2 at landing flow 0.5 → 0.8 per flow²; a rising head means more.
+        let steady = AutopilotFoam.headGainSample(head: 0.2, headRate: 0, landing: 0.5, settle: 1.4) ?? 0
+        #expect(abs(steady - 0.8) < 1e-9)
+        let rising = AutopilotFoam.headGainSample(head: 0.2, headRate: 0.1, landing: 0.5, settle: 1.4) ?? 0
+        #expect(rising > steady)
+        #expect(AutopilotFoam.headGainSample(head: 0.2, headRate: 0, landing: 0.05, settle: 1.4) == nil)
+    }
+}

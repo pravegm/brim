@@ -100,7 +100,7 @@ enum CoreTuning {
     /// short of it until the hand has tipped back once (nothing gushes from a jug that arrives already tipped).
     static let tipBackHoldMargin: Double = 0.5
     /// Rush: a Perfect refills this fraction of the jug's capacity, a Great `rushRefillGreat`.
-    /// Budget (tier-0 orders need ~14,000 pt²; the Rush jug holds ~121,000): a decent player (50 % Perfect, 30 % Great)
+    /// Budget (tier-0 orders need ~14,000 pt²; the Rush jug held ~121,000, ~138,000 since round 8): a decent player (50 % Perfect, 30 % Great)
     /// nets −3,700 per glass → ~33 glasses ≈ 2.4 min; a strong one (75 % Perfect) runs 4+ min until the tiers bite;
     /// a beginner (30 % / 30 %) ~17 glasses ≈ 75 s.
     /// Round 6 (BALANCE.md §7, founder): 0.14 / 0.05 → 0.20 / 0.10 with 12-glass tiers and only rim spills striking,
@@ -109,8 +109,11 @@ enum CoreTuning {
     static let rushRefillGreat: Double = 0.10
     /// Rush's "one big shared jug": same drawn shape (scale 1.0 keeps it inside x 130…540 and under the HUD band at
     /// every angle), but it holds `rushVolumeBoost` × the standard jug.
+    /// Round 8 (REVIEW-6 N1, BALANCE.md §10): 1.4 → 1.6. Half the model casual's Fizz-tier deaths were a dry jug, not
+    /// foam (the Lemonade tier alone drains ~half a 1.4 jug); with the Fizz changes below, casual runs reaching tier 3
+    /// go 0.23 → ~0.8.
     static let rushJugScale: Double = 1.0
-    static let rushVolumeBoost: Double = 1.4
+    static let rushVolumeBoost: Double = 1.6
 
     // MARK: Sand (angle of repose)
 
@@ -285,6 +288,12 @@ enum CoreTuning {
     static let rushTierEvery: Int = 12
     /// Rush patience scales with √(volume to the line / this).
     static let rushPatienceVolumeRef: Double = 11000
+    /// Round 8 (REVIEW-6 N1, BALANCE.md §10): Rush's Fizz tiers (Soda Fountain) cap lines at this minus
+    /// `rushFizzLineCapPerFoam` × (foamPerVolume − 0.4): cream soda 0.70, cola 0.65, root beer 0.61 …
+    static let rushFizzLineCap: Double = 0.70
+    static let rushFizzLineCapPerFoam: Double = 0.1
+    /// … and give each glass this many extra seconds of patience (a slow pour and a top-up fit).
+    static let rushFizzPatienceBonus: Double = 2.0
     /// Belts were tuned for round-1 glasses; ×1.5 bigger glasses get ×1.5 faster belts (same window in seconds).
     static let beltScale: Double = 1.5
 }

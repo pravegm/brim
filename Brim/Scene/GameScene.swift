@@ -41,6 +41,23 @@ final class GameScene: SKScene {
         didSet { if venue != oldValue { paletteChanged() } }
     }
 
+    /// Round 8 (Glass Cabinet lite, REVIEW-6 #6): the vessel the player picked for Rush / Practice. When set, the jug
+    /// is drawn as that venue's signature vessel (pitcher, soda dispenser, shake tin, potion flask, copper scoop)
+    /// around the same interior outline, whatever venue the backdrop shows (Rush keeps it through its tier travel).
+    /// nil = each venue's own vessel. Core's jug geometry and physics are unchanged.
+    var vesselOverride: VenueID? {
+        didSet { if vesselOverride != oldValue { paletteChanged() } }
+    }
+
+    /// The vessel on screen (the override's, else the shown venue's). Tests.
+    var shownVesselForm: VesselForm { jug.form }
+    var shownVesselDecal: VesselDecal { jug.decal }
+    /// Which signature parts the drawn vessel shows (lid, handle, opaque skin); nil until it has been built. Tests.
+    var shownVesselParts: (lid: Bool, handle: Bool, skin: Bool)? {
+        guard jug.isBuilt else { return nil }
+        return (jug.drawsLid, jug.drawsHandle, jug.drawsSkin)
+    }
+
     /// Rush's dusk look (string lights, indigo-to-peach wall). Also switched on automatically in `.rush` mode.
     var rushLook: Bool = false {
         didSet { if rushLook != oldValue { paletteChanged() } }
@@ -1149,6 +1166,7 @@ final class GameScene: SKScene {
     private func paletteChanged(animated: Bool = false) {
         var p = ScenePalette.forVenue(effectiveVenue)
         if effectiveRush { p = p.duskified() }
+        if let v = vesselOverride { p.vessel = ScenePalette.forVenue(v).vessel }
         let oldVessel = palette.vessel
         let oldTexture = backdrop.texture
         let changedVenue = p.venue != palette.venue

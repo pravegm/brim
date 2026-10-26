@@ -28,7 +28,7 @@ import UIKit
 //               Not a Screen case (only sets `badges`), so the app itself opens on the menu.
 // - `mode=shift:<id>|rush|daily|practice`   e.g. `mode=shift:1-2`. `daily` = today's Daily Pour.
 // - `autopilot=perfect|great|short|spill`   AutopilotTiltSource plays the run.
-// - `freezeOn=midpour|perfect|spill|finished`
+// - `freezeOn=midpour|perfect|spill|finished|intro|tier|repose|faded|lowjug`
 //     Stops calling GameSession.step (the scene's cosmetics run on the session clock, so the frame holds) and logs
 //     `BRIM-T freeze <reason> t=… served=… score=… streak=…`:
 //     midpour   the stream is non-empty and the active glass's visible top is ≥ 55 % of its line.
@@ -42,9 +42,24 @@ import UIKit
 //               latest 1.2 s after it, so the frame never shows the old glass's stamp riding out. Pair it with
 //               `streak=11` (tiers change every `CoreTuning.rushTierEvery` = 12 glasses) so the change comes a glass
 //               or two into the live frames. Logs `BRIM-T tier <n> venue=<v>` too.
+//     repose    round 8 (REVIEW-6 N6, frame 30): sand only: the jug's `reposeProgress` is in 0.85…1 (the slide is
+//               telegraphed: trickle, sight-glass creep, rustle) but the sand still holds. After 3 glasses served
+//               without catching that window, any `reposeProgress` ≥ 0.85 will do.
+//     faded     round 8 (frame 31): the glass under the spout has a line that has fully faded (`lineOpacity` 0, the
+//               ghost tick on): 1 s after the fade, or sooner (≥ 0.3 s after it) once that glass is being poured
+//               and is ≥ 60 % of the way to its line.
+//     lowjug    round 8 (frame 33, Rush): mid-pour with the jug under 20 % full.
 // - `streak=N`     the run is really PLAYED up to an N-Perfect streak (perfect autopilot, headless, at launch) before
 //                  the live frames, leaving at least one order; score, served count and streak agree. Logs
 //                  `BRIM-T streak seeded <n> (asked N) score=… served=…`.
+// - `served=N`     round 8 (REVIEW-6 N1/N7): the run is really PLAYED (headless, at launch, the `autopilot=` style,
+//                  default perfect) until N glasses are served, whatever their verdicts, leaving the run live (a shift
+//                  keeps one order; Rush stops early once its jug is under 30 %). For late-Rush frames: Rush tiers
+//                  follow the glass count, so a long Perfect streak is no longer needed to get there. Ignored when
+//                  `streak` is given. Logs `BRIM-T served seeded <n> (asked N) score=… tier=… fill=… strikes=…`.
+// - `missAt=N`     round 8 (REVIEW-6 N7): glass N (1-based) is poured by the `over` autopilot (always past the Good
+//                  band), every other glass by `autopilot=` (results runs, live runs and `served` seeding), so a 2★
+//                  card is a real one-miss run.
 // - `progress=fresh|mid|full`   in-memory progress (demo runs never write UserDefaults). Default fresh.
 // - `hints=fresh|off`           onboarding hints shown from scratch, or never. Default in demo: off.
 // - `orient=portrait`   asks the window scene for portrait (requestGeometryUpdate), re-asking every 2 s, and logs
@@ -91,7 +106,7 @@ enum DemoAutopilot: String, Equatable { case perfect, great, short, over, spill 
 
 struct DemoConfig: Equatable {
     enum Screen: String, Equatable { case menu, venues, results, settings, game, standup, cover, icon }
-    enum Freeze: String, Equatable { case midpour, perfect, spill, finished, intro, tier }
+    enum Freeze: String, Equatable { case midpour, perfect, spill, finished, intro, tier, repose, faded, lowjug }
     enum ProgressPreset: String, Equatable { case fresh, mid, full }
     enum HintsPreset: String, Equatable { case fresh, off }
 
@@ -101,6 +116,9 @@ struct DemoConfig: Equatable {
     var autopilot: DemoAutopilot?
     var freezeOn: Freeze?
     var streak: Int?
+    /// Round 8: `served=N`, `missAt=N`.
+    var served: Int?
+    var missAt: Int?
     var progress: ProgressPreset?
     var hints: HintsPreset?
     var orientPortrait = false
@@ -129,6 +147,8 @@ struct DemoConfig: Equatable {
             case "autopilot": config.autopilot = DemoAutopilot(rawValue: value)
             case "freezeOn": config.freezeOn = Freeze(rawValue: value)
             case "streak": config.streak = Int(value)
+            case "served": config.served = Int(value)
+            case "missAt": config.missAt = Int(value)
             case "progress": config.progress = ProgressPreset(rawValue: value)
             case "hints": config.hints = HintsPreset(rawValue: value)
             case "orient": config.orientPortrait = value == "portrait"
@@ -187,9 +207,15 @@ struct DemoConfig: Equatable {
             }
             // Round 6: one Flawless crown, so the Venues frame shows what one looks like.
             if let first = LevelCatalog.levels(in: .lemonadeStand).first { data.crowns.insert(first.id) }
+            // Round 8 (REVIEW-6 N2): best Perfects per shift, so the 3★ bubbles show how far each is from its crown.
+            let shortOfCrown = [0, 1, 3, 2, 4, 1, 2, 3]
+            for (i, level) in LevelCatalog.levels(in: .lemonadeStand).enumerated() {
+                data.bestPerfects[level.id] = max(level.orders.count - shortOfCrown[i % shortOfCrown.count], 1)
+            }
             for (i, level) in LevelCatalog.levels(in: .sodaFountain).prefix(3).enumerated() {
                 data.stars[level.id] = [3, 2, 2][i]
                 data.bestScores[level.id] = 1100 + 120 * i
+                data.bestPerfects[level.id] = max(level.orders.count - [2, 3, 4][i], 1)
             }
             data.rushBest = 2140
             let today = LevelCatalog.dayNumber(for: Date())
@@ -206,6 +232,10 @@ struct DemoConfig: Equatable {
             for level in LevelCatalog.levels(in: .lemonadeStand) { data.crowns.insert(level.id) }
             for (i, level) in LevelCatalog.levels(in: .sodaFountain).enumerated() where i % 2 == 0 {
                 data.crowns.insert(level.id)
+            }
+            // Round 8: every uncrowned shift is a Perfect or three short of its crown.
+            for (i, level) in LevelCatalog.levels.enumerated() where level.venue != .sandBar {
+                data.bestPerfects[level.id] = max(level.orders.count - (1 + i % 3), 1)
             }
             data.rushBest = 5320
             data.stats = LifetimeStats(poured: 2_150_000, perfects: 412, bestStreak: 27, glasses: 980, runs: 160)

@@ -16,6 +16,8 @@ struct HomeView: View {
     @State private var appeared = false
     /// QA-1 P2-23: re-read every 30 s, so the Daily button rolls over at UTC midnight while Home stays open.
     @State private var today = LevelCatalog.dayNumber(for: Date())
+    /// Round 8 (REVIEW-6 #6): the Glass Cabinet sheet is open.
+    @State private var showCabinet = false
 
     /// Wide enough for the full-label row (the Duo's 669 pt).
     static let roomyWidth: CGFloat = 560
@@ -52,8 +54,15 @@ struct HomeView: View {
             ChalkboardLayer(hud: controller.hud, store: store, info: info, today: today)
                 .opacity(appeared ? 1 : 0)
             bottomRow
+            if showCabinet {
+                CabinetSheet(store: store, info: info,
+                             onChoose: { controller.chooseVessel($0) },
+                             onClose: { showCabinet = false })
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
         .frame(width: info.size.width, height: info.size.height, alignment: .topLeading)
+        .animation(BrimTheme.settle(reduceMotion), value: showCabinet)
         .onAppear {
             withAnimation(BrimTheme.pop(reduceMotion).delay(0.05)) { appeared = true }
         }
@@ -78,8 +87,14 @@ struct HomeView: View {
                     .padding(.leading, 3)
             }
             Spacer()
-            RoundIconButton(systemName: "gearshape.fill", size: 46, accessibility: "Settings") {
-                controller.showSettings()
+            HStack(spacing: 10) {
+                // Round 8 (REVIEW-6 #6): the Glass Cabinet (vessels for Rush and Practice, unlocked by crowns).
+                RoundIconButton(systemName: "cabinet.fill", size: 46, accessibility: "Glass Cabinet") {
+                    showCabinet = true
+                }
+                RoundIconButton(systemName: "gearshape.fill", size: 46, accessibility: "Settings") {
+                    controller.showSettings()
+                }
             }
         }
         .padding(.leading, info.sidePad + 4)

@@ -37,24 +37,51 @@ enum VenueIntroCard {
         return LevelCatalog.title(of: venue)
     }
 
+    /// Round 8 (REVIEW-6 N4): the phone's compact card (the diagram, the instruction, the footer; no venue name: the
+    /// HUD chip says it), estimated height.
+    static let compactHeight: CGFloat = 136
+    /// The phone card's widest.
+    static let compactMaxWidth: CGFloat = 300
+    /// A world height the glass rim is assumed at when no glass is known yet (a tumbler's rim on the counter).
+    static let assumedRimHeight: CGFloat = 150
+
+    /// The card's height on this canvas: the full card on a Duo, the compact one on a phone.
+    static func height(for info: CanvasInfo) -> CGFloat { info.hasFold ? estimatedHeight : compactHeight }
+
     /// Where the card goes and how wide it is. Duo: the raised half, beside the jug (the hint rules), else centred in the
-    /// raised half under the banner lane; never on the crease. Phone: the open air in the middle of the screen (between
-    /// the jug and the glass), under the banner lane.
-    static func spot(height: CGFloat = estimatedHeight, anchors: PlayAnchors?, info: CanvasInfo)
+    /// raised half under the banner lane; never on the crease. Phone (round 8, REVIEW-6 N4): low, over the empty floor
+    /// between the back of the counter (the world's crease line) and the rim of the glass under the spout (and of a
+    /// waiting glass it would overlap), so the whole jug and its badge stay in view; if that floor is too short, as low
+    /// as it can sit above the rim. `height` nil = `height(for:)`.
+    static func spot(height: CGFloat? = nil, anchors: PlayAnchors?, info: CanvasInfo)
         -> (center: CGPoint, width: CGFloat) {
+        let h = height ?? Self.height(for: info)
         let laneTop = info.hudTop + HUDMetrics.rowHeight + bannerLane
         if info.hasFold {
             let width = min(max(info.size.width * 0.36, 210), 250)
-            let s = HintSpot.place(size: CGSize(width: width, height: height), anchors: anchors, info: info,
+            let s = HintSpot.place(size: CGSize(width: width, height: h), anchors: anchors, info: info,
                                    topGap: bannerLane)
             if !s.compact { return (s.center, s.width) }
             let bottom = info.topHalfHeight - 8
-            let y = max(min((laneTop + bottom) / 2, bottom - height / 2), laneTop + height / 2)
+            let y = max(min((laneTop + bottom) / 2, bottom - h / 2), laneTop + h / 2)
             return (CGPoint(x: info.size.width / 2, y: y), width)
         }
-        let width = min(info.size.width - 2 * info.sidePad, 320)
-        let bottom = info.size.height - max(info.insets.bottom, 12)
-        let y = max(min(info.topHalfHeight, bottom - height / 2), laneTop + height / 2)
+        let width = min(info.size.width - 2 * info.sidePad, compactMaxWidth)
+        let m = info.mapper
+        let cardMinX = (info.size.width - width) / 2, cardMaxX = (info.size.width + width) / 2
+        var rimTop = m.y(anchors?.glass?.rimY ?? (WorldLayout.counter + assumedRimHeight))
+        if let waiting = anchors?.waiting {
+            let r = m.rect(waiting)
+            if r.maxX > cardMinX && r.minX < cardMaxX { rimTop = min(rimTop, r.minY) }
+        }
+        let floorTop = info.bottomHalfTop + 6
+        let bottom = min(rimTop - 10, info.size.height - max(info.insets.bottom, 12))
+        let y: CGFloat
+        if bottom - floorTop >= h {
+            y = (floorTop + bottom) / 2
+        } else {
+            y = max(bottom - h / 2, laneTop + h / 2)
+        }
         return (CGPoint(x: info.size.width / 2, y: y), width)
     }
 }
@@ -80,7 +107,7 @@ struct VenueIntroOverlay: View {
                     FeedbackDirector.shared.uiTap()
                     onDismiss()
                 } label: {
-                    VenueIntroCardView(hint: hint)
+                    VenueIntroCardView(hint: hint, compact: !info.hasFold)
                 }
                 .buttonStyle(PressScaleStyle())
                 .frame(width: spot.width)
@@ -98,24 +125,35 @@ struct VenueIntroOverlay: View {
 
 struct VenueIntroCardView: View {
     let hint: HintKind
+    /// Round 8 (REVIEW-6 N4): the phone's card: a smaller diagram, no venue name (the HUD chip has it), tighter.
+    var compact: Bool = false
 
     private var accent: Color { hint.introVenue.map { BrimTheme.color(for: $0) } ?? BrimTheme.gold }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-        return VStack(spacing: 7) {
-            VenueIntroArt(hint: hint)
-                .frame(width: 150, height: 64)
-            Text(VenueIntroCard.title(for: hint).uppercased())
-                .font(BrimTheme.text(12, .heavy))
-                .kerning(1)
-                .foregroundStyle(BrimTheme.inkSoft)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+        let shape = RoundedRectangle(cornerRadius: compact ? 18 : 20, style: .continuous)
+        return VStack(spacing: compact ? 5 : 7) {
+            if compact {
+                VenueIntroArt(hint: hint)
+                    .frame(width: 150, height: 64)
+                    .scaleEffect(0.78)
+                    .frame(width: 118, height: 50)
+            } else {
+                VenueIntroArt(hint: hint)
+                    .frame(width: 150, height: 64)
+                Text(VenueIntroCard.title(for: hint).uppercased())
+                    .font(BrimTheme.text(12, .heavy))
+                    .kerning(1)
+                    .foregroundStyle(BrimTheme.inkSoft)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             Text(VenueIntroCard.line(for: hint))
-                .font(BrimTheme.text(16, .heavy))
+                .font(BrimTheme.text(compact ? 15 : 16, .heavy))
                 .foregroundStyle(BrimTheme.ink)
                 .multilineTextAlignment(.center)
+                .lineLimit(compact ? 3 : nil)
+                .minimumScaleFactor(compact ? 0.85 : 1)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Pour to start, or tap to close")
                 .font(BrimTheme.text(11, .bold))
@@ -124,7 +162,7 @@ struct VenueIntroCardView: View {
                 .minimumScaleFactor(0.7)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 13)
+        .padding(.vertical, compact ? 10 : 13)
         .frame(maxWidth: .infinity)
         .background(
             shape.fill(BrimTheme.card)

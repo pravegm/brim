@@ -93,6 +93,8 @@ final class SceneGlass {
     private var profile: [CGPoint] = []
     private(set) var rimY: CGFloat = 0
     private(set) var rimHW: CGFloat = 0
+    /// The rim ellipse's vertical radius (its far arc rises this far above `rimY`).
+    private var rimRY: CGFloat = 3.5
     private var wallW: CGFloat = 3
     private(set) var base: CGFloat = 6
     private var footHW: CGFloat = 20
@@ -1322,15 +1324,7 @@ final class SceneGlass {
             stampHolder.alpha = max(0, stampHolder.alpha - f.dt * SceneGlass.stampLeaveFade)
             if stampHolder.alpha <= 0.001 { stamp.isHidden = true }
         } else if !stamp.isHidden {
-            // Just above the rim, kept inside the crop and BELOW the crease keep-out (ROUND-3 decision 3): tall glasses
-            // get the stamp over their upper body instead of on the fold. Computed from the live root (Perfect hop).
-            let sy = max(front.yScale, 0.01)
-            let limit = (f.keepOutTop - front.position.y) / sy
-            let full = stampFullSize == .zero ? stamp.size : stampFullSize       // settled size, not the pop-in scale
-            let top = full.height * SceneGlass.labelTopFrac * 1.2                // 1.2: the pop overshoot
-            let desired = rimY + 12 + full.height * 0.5
-            stamp.position = CGPoint(x: clampedLocalX(halfWidth: full.width * 0.5, f),
-                                     y: min(desired, limit - top))
+            placeStamp(f)
             // The `.streak` event arrives in the same step as `.served`, before the snapshot carrying the result is
             // drawn, so a pop placed then didn't know where the stamp would go and landed on it (round-3 Duo frame
             // store-s2). It waits here until the stamp is in place.
@@ -1341,6 +1335,121 @@ final class SceneGlass {
         }
     }
 
+    /// Where the stamp goes this frame (it sits in `stampHolder`; the stamp node itself stays at the holder's origin so
+    /// its pop-in actions own its scale). Above the rim with a clear gap, inside the crop and BELOW the crease keep-out
+    /// (ROUND-3 decision 3). Round 8 (REVIEW-6 N5, frame 18): on a glass too tall for that — flute, highball, soda
+    /// glass — the old clamp pressed PERFECT down onto the rim over the line tab; now it stands beside the glass
+    /// instead (left first, inside `safeX`, scaled down to fit). Computed from the live root (Perfect hop).
+    private func placeStamp(_ f: GlassFrame) {
+        let full = stampFullSize == .zero ? stamp.size : stampFullSize       // settled size, not the pop-in scale
+        let ks = max(displayScale, 0.01)
+        let sy = max(front.yScale, 0.01)
+        let liveLimit = (f.keepOutTop - front.position.y) / sy
+        let inkHalfH = full.height * SceneGlass.labelTopFrac
+        let popTop = inkHalfH * 1.2                                          // 1.2: the pop overshoot
+        // Decide on the glass at rest, allowing for the Perfect hop (≤ 13 pt up, ~3 % stretch), so the stamp never
+        // jumps from above the rim to beside the glass mid-hop.
+        let restBase = counterY - dropY + base * ks
+        let decisionLimit = (f.keepOutTop - restBase - SceneGlass.stampHopAllowance) / (ks * 1.03)
+        let rimTop = rimY + rimRY + 1
+        let floorY = rimTop + SceneGlass.stampRimGap / ks
+        // Above the rim: the scale at which the ink (bottom ≥ gap over the rim, pop top ≤ the keep-out) still fits;
+        // a little smaller is fine (REVIEW-6 N5: 0.85), much smaller is not — then it goes beside.
+        let fit = (decisionLimit - floorY) / max(inkHalfH + popTop, 1)
+        let above = min(1, fit)
+        if above >= SceneGlass.stampMinAboveScale {
+            let minCentre = floorY + inkHalfH * above
+            let desired = rimY + 12 + full.height * 0.5 * above
+            stampCentre = CGPoint(x: clampedLocalX(halfWidth: full.width * 0.5 * above * ks, f) / ks,
+                                  y: max(minCentre, min(desired, liveLimit - popTop * above)))
+            stampScale = above
+            stampSide = 0
+        } else {
+            // Beside the glass (world units): clear of its walls, foot, mug handle and plinth on the left; of the walls
+            // and the fill-line tab on the right.
+            let margin = SceneGlass.stampSideMargin
+            let reach = sideReach
+            let leftReach = reach.left * ks
+            let rightReach = reach.right * ks
+            let w = max(full.width, 1)
+            let leftRoom = (x - leftReach - margin) - f.safeX.lowerBound
+            let rightRoom = f.safeX.upperBound - (x + rightReach + margin)
+            let sL = min(1, leftRoom / w), sR = min(1, rightRoom / w)
+            let side: CGFloat
+            if sL >= SceneGlass.stampMinSideScale || sL >= sR { side = -1 } else { side = 1 }
+            let s = max(SceneGlass.stampFloorScale, side < 0 ? sL : sR)
+            var wx = side < 0 ? x - leftReach - margin - w * s * 0.5 : x + rightReach + margin + w * s * 0.5
+            let lo = f.safeX.lowerBound + w * s * 0.5, hi = f.safeX.upperBound - w * s * 0.5
+            if lo <= hi { wx = min(max(wx, lo), hi) }
+            let local = s / ks
+            // Level with the rim (reads as "this glass"), never above the keep-out.
+            stampCentre = CGPoint(x: (wx - x) / ks, y: min(rimY, liveLimit - popTop * local))
+            stampScale = local
+            stampSide = side
+        }
+        stampHolder.position = stampCentre
+        stampHolder.setScale(stampScale)
+        stamp.position = .zero
+    }
+
+    /// The stamp's settled ink bottom clears the rim's top by at least this (world pt).
+    static let stampRimGap: CGFloat = 10
+    /// World pt the Perfect hop may lift the glass (13) plus a point of slack.
+    static let stampHopAllowance: CGFloat = 14
+    /// Above the rim the stamp may shrink this far to keep its gap before it moves beside the glass instead.
+    static let stampMinAboveScale: CGFloat = 0.8
+    /// A stamp beside the glass keeps this far (world pt) from it.
+    static let stampSideMargin: CGFloat = 8
+    /// Beside the glass the stamp shrinks to fit, the left side winning down to this scale…
+    static let stampMinSideScale: CGFloat = 0.4
+    /// …and never below this one.
+    static let stampFloorScale: CGFloat = 0.25
+    /// How far the fill-line tab reaches past the outer wall (`buildLine`: 8 + 2 + 31), plus a point.
+    static let tabReach: CGFloat = 42
+
+    /// The stamp holder's spot and scale in the glass's local frame, and which side of the glass it stands on
+    /// (0 = above the rim, -1 = left, 1 = right).
+    private var stampCentre: CGPoint = .zero
+    private var stampScale: CGFloat = 1
+    private var stampSide: CGFloat = 0
+    /// Whether the stamp stands beside the glass (not above the rim) this frame. Tests.
+    var stampBeside: Bool { !stamp.isHidden && stampSide != 0 }
+    /// The stamp's settled visible ink, world (glass at rest; no pop overshoot); nil when no stamp shows. Tests.
+    var stampInkWorldRect: CGRect? {
+        if stamp.isHidden { return nil }
+        let full = stampFullSize == .zero ? stamp.size : stampFullSize
+        let hw = full.width * SceneGlass.labelSideFrac * stampScale * front.xScale
+        let hh = full.height * SceneGlass.labelTopFrac * stampScale * front.yScale
+        let cx = front.position.x + front.xScale * stampCentre.x
+        let cy = front.position.y + front.yScale * stampCentre.y
+        return CGRect(x: cx - hw, y: cy - hh, width: hw * 2, height: hh * 2)
+    }
+    /// World y of the top of the drawn rim (its far arc). Tests.
+    var rimTopWorld: CGFloat { counterY - dropY + (base + rimY + rimRY + 1) * displayScale }
+    /// World x range the glass occupies at rest, plinth and mug handle included (left) and the line tab (right). Tests.
+    var bodyWorldXRange: ClosedRange<CGFloat> {
+        let k = displayScale
+        let reach = sideReach
+        let l = x - reach.left * k
+        let r = x + reach.right * k
+        return l...max(l, r)
+    }
+
+    /// How far (local) the glass reaches left (walls, foot, mug handle, plinth) and right (walls, foot, plinth, the
+    /// line tab) of its centre line. Cached per shape (`woodReach` measures paths).
+    private var sideReach: (left: CGFloat, right: CGFloat) {
+        if sideReachShape != shapeID {
+            sideReachShape = shapeID
+            let wood = woodReach
+            sideReachCache = (max(localLeftHalfWidth, wood), max(maxHW + SceneGlass.tabReach, max(footHW, wood)))
+        }
+        return sideReachCache
+    }
+    private var sideReachShape = "\u{0}"
+    private var sideReachCache: (left: CGFloat, right: CGFloat) = (0, 0)
+    /// The stamp's current scale relative to its full size (world). Tests.
+    var stampWorldScale: CGFloat { stampScale * displayScale }
+
     private var pendingStreak: (n: Int, reduceMotion: Bool, safeX: ClosedRange<CGFloat>, keepOutTop: CGFloat)?
     /// The glass is leaving: the stamp rides out with it and fades (per second of simulation: gone in ~0.12 s).
     private var stampRidingOut = false
@@ -1348,7 +1457,7 @@ final class SceneGlass {
     /// The stamp's world x this frame (its ink centre); nil when no stamp shows. Tests.
     var stampWorldX: CGFloat? {
         if stamp.isHidden { return nil }
-        return front.position.x + front.xScale * stamp.position.x
+        return front.position.x + front.xScale * stampCentre.x
     }
     /// The ride-out fade (1 = not fading). Tests.
     var stampLeaveAlpha: CGFloat { stampHolder.alpha }
@@ -1360,7 +1469,8 @@ final class SceneGlass {
     /// Highest world y the stamp's ink reaches (with its pop overshoot); nil when no stamp shows. For tests and UI.
     var stampReachWorld: CGFloat? {
         if stamp.isHidden { return nil }
-        let top = stamp.position.y + (stampFullSize == .zero ? stamp.size : stampFullSize).height * SceneGlass.labelTopFrac * 1.2
+        let top = stampCentre.y
+            + (stampFullSize == .zero ? stamp.size : stampFullSize).height * SceneGlass.labelTopFrac * 1.2 * stampScale
         return front.position.y + front.yScale * top
     }
 
@@ -1382,10 +1492,10 @@ final class SceneGlass {
         let popTop = size.height * SceneGlass.labelTopFrac * 1.3
         let halfW = size.width * SceneGlass.labelSideFrac
         let hasStamp = !stamp.isHidden
-        let sc = hasStamp ? stamp.position : CGPoint(x: 0, y: rimY + 4)
+        let sc = hasStamp ? stampCentre : CGPoint(x: 0, y: rimY + 4)
         // 1.2: the stamp's pop overshoot.
-        let sTop = hasStamp ? stampFullSize.height * SceneGlass.labelTopFrac * 1.2 : 0
-        let sHalfW = hasStamp ? stampFullSize.width * SceneGlass.labelSideFrac * 1.2 : 0
+        let sTop = hasStamp ? stampFullSize.height * SceneGlass.labelTopFrac * 1.2 * stampScale : 0
+        let sHalfW = hasStamp ? stampFullSize.width * SceneGlass.labelSideFrac * 1.2 * stampScale : 0
         func clampX(_ lx: CGFloat) -> CGFloat {
             let lo = safeX.lowerBound + halfW - x, hi = safeX.upperBound - halfW - x
             return lo <= hi ? min(max(lx, lo), hi) : lx
@@ -1397,13 +1507,14 @@ final class SceneGlass {
         }
         // B. Beside the stamp on the flat half (right first: the next glass waits on the left).
         let sideY = min(sc.y, limit - popTop)
+        // A stamp standing beside the glass (round 8): only further out on its side, never back over the glass.
         let wx = x + sc.x
         let rightCentre = wx + sHalfW + 10 + halfW
-        if rightCentre + halfW <= safeX.upperBound {
+        if !(hasStamp && stampSide < 0) && rightCentre + halfW <= safeX.upperBound {
             return (CGPoint(x: rightCentre - x, y: sideY), min(12, max(0, limit - popTop - sideY)))
         }
         let leftCentre = wx - sHalfW - 10 - halfW
-        if leftCentre - halfW >= safeX.lowerBound {
+        if !(hasStamp && stampSide > 0) && leftCentre - halfW >= safeX.lowerBound {
             return (CGPoint(x: leftCentre - x, y: sideY), min(12, max(0, limit - popTop - sideY)))
         }
         // C. No clean spot: with a stamp showing, skip the pop. Under the stamp it overprinted PERFECT (final Duo store
@@ -1581,6 +1692,7 @@ final class SceneGlass {
         // Rim ellipse: far arc behind the liquid, near arc in front.
         let rx = rimHW + wallW * 0.5
         let ry = min(9, max(3.5, rx * 0.12))
+        rimRY = ry
         let rc = CGPoint(x: 0, y: rimY)
         rimBack.path = ScenePaths.polygon(ScenePaths.ellipseArc(center: rc, rx: rx, ry: ry, from: 0, to: .pi, segments: 20), closed: false)
         rimFront.path = ScenePaths.polygon(ScenePaths.ellipseArc(center: rc, rx: rx, ry: ry, from: .pi, to: 2 * .pi, segments: 20), closed: false)

@@ -50,6 +50,20 @@ struct VenuesView: View {
         return "\(min(max(crowns, 0), shifts))/\(shifts)"
     }
 
+    /// Round 8 (REVIEW-6 N2): the venue's best Perfects against its glasses, "41/52" beside the crowns. nil until a
+    /// Perfect is on file. Pure; tested.
+    static func perfectLine(best: Int, glasses: Int) -> String? {
+        guard glasses > 0, best > 0 else { return nil }
+        return "\(min(best, glasses))/\(glasses)"
+    }
+
+    /// Round 8 (REVIEW-6 N2): how much of a 3★ bubble's cyan arc is drawn: its best Perfects of its glasses. 0 = no
+    /// arc (under 3★, crowned, nothing on file). Pure; tested.
+    static func crownArc(stars: Int, crowned: Bool, bestPerfects: Int, glasses: Int) -> Double {
+        guard stars >= 3, !crowned, glasses > 0, bestPerfects > 0 else { return 0 }
+        return min(Double(bestPerfects) / Double(glasses), 1)
+    }
+
     /// Pure (tested): venues two to a screen, one per half (the first screen's top half also holds the header).
     static func duoPages(_ venues: [VenueID]) -> [[VenueID]] {
         var pages: [[VenueID]] = []
@@ -181,6 +195,18 @@ private struct VenueCard: View {
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel("\(store.data.crownsEarned(in: venue)) of \(levels.count) flawless crowns")
                             }
+                            // Round 8 (REVIEW-6 N2): the best Perfects per shift, summed: how far the crowns are.
+                            let earned = store.data.perfectsEarned(in: venue)
+                            if let perfects = VenuesView.perfectLine(best: earned.best, glasses: earned.glasses) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "sparkle").foregroundStyle(BrimTheme.cyan)
+                                    Text(perfects)
+                                        .font(BrimTheme.number(13))
+                                        .foregroundStyle(BrimTheme.ink)
+                                }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Best Perfects \(earned.best) of \(earned.glasses) glasses")
+                            }
                         }
                         .font(.system(size: 11, weight: .heavy))
                         .padding(.top, 1)
@@ -192,7 +218,8 @@ private struct VenueCard: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 12) {
                     ForEach(levels) { level in
                         ShiftBubble(level: level, stars: store.stars(for: level.id), playable: store.isPlayable(level),
-                                    accent: accent, crowned: store.hasCrown(level.id)) {
+                                    accent: accent, crowned: store.hasCrown(level.id),
+                                    bestPerfects: store.bestPerfects(for: level.id)) {
                             if store.isPlayable(level) {
                                 onPick(level)
                             } else {
@@ -244,7 +271,15 @@ private struct ShiftBubble: View {
     let accent: Color
     /// Round 6: the Flawless crown (every glass Perfect): a cyan ring and a crown on the bubble.
     var crowned: Bool = false
+    /// Round 8 (REVIEW-6 N2): the most Perfects poured in one run of this shift.
+    var bestPerfects: Int = 0
     let action: () -> Void
+
+    /// The thin cyan arc on a 3★ bubble: how close the shift is to its crown.
+    private var arc: Double {
+        playable ? VenuesView.crownArc(stars: stars, crowned: crowned, bestPerfects: bestPerfects,
+                                       glasses: level.orders.count) : 0
+    }
 
     var body: some View {
         Button {
@@ -257,6 +292,14 @@ private struct ShiftBubble: View {
                         .fill(playable ? accent : BrimTheme.creamDeep)
                         .overlay(Circle().stroke(crowned ? BrimTheme.cyan : BrimTheme.ink.opacity(playable ? 0.12 : 0.06),
                                                  lineWidth: crowned ? 3.5 : 2))
+                        .overlay {
+                            if arc > 0 {
+                                Circle()
+                                    .trim(from: 0, to: CGFloat(arc))
+                                    .stroke(BrimTheme.cyan, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                    .rotationEffect(.degrees(-90))
+                            }
+                        }
                         .shadow(color: BrimTheme.ink.opacity(playable ? 0.15 : 0), radius: 4, y: 3)
                     if crowned && playable {
                         CrownMark(size: 20)
@@ -279,6 +322,8 @@ private struct ShiftBubble: View {
             }
         }
         .buttonStyle(PressScaleStyle())
-        .accessibilityLabel("Shift \(level.index), \(stars) stars\(crowned ? ", flawless crown" : "")\(playable ? "" : ", locked")")
+        .accessibilityLabel("Shift \(level.index), \(stars) stars\(crowned ? ", flawless crown" : "")"
+                            + "\(arc > 0 ? ", best \(bestPerfects) of \(level.orders.count) Perfect" : "")"
+                            + "\(playable ? "" : ", locked")")
     }
 }

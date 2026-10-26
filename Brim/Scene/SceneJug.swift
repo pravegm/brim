@@ -324,6 +324,16 @@ final class SceneJug {
 
     private var hasSkin: Bool { style.form == .shakeTin || style.form == .scoop }
 
+    /// The dressing in use (tests, and `GameScene.vesselOverride`).
+    var form: VesselForm { style.form }
+    var decal: VesselDecal { style.decal }
+    /// Whether the static parts have been built for the current dressing (false until the next frame after a change).
+    var isBuilt: Bool { !localOutline.isEmpty }
+    /// Whether a lid / a handle is drawn (tests: the scoop is open; the tin and flask have no handle).
+    var drawsLid: Bool { !lid.isHidden }
+    var drawsHandle: Bool { !handleOutline.isHidden }
+    var drawsSkin: Bool { !skin.isHidden }
+
     private func applyStyleColors() {
         let ink = SceneColor.ink
         interior.fillColor = style.glassTint

@@ -21,13 +21,35 @@ final class GameSession {
     /// Round 4 (REVIEW-3 P1-4 fallback): the order after the glass at the stop, when it is known without drawing from
     /// the RNG: the waiting glass's, else a plan already generated, else the next fixed order (shifts, Daily). Lets
     /// the HUD show a small "next" icon when no waiting glass fits on screen (no `isWaitingInSlot` glass in the
-    /// snapshot). nil after the last order, and in Rush / practice until the next plan exists.
+    /// snapshot). nil after the last order, and in practice until the next plan exists. Round 8: `upcomingOrders.first`.
     var upcomingOrder: GlassOrder? {
-        if let wi = waitingIndex() { return glasses[wi].order }
-        if let p = peekedPlan { return p.order }
-        if fixedOrderCount != nil && nextPlanIndex < plans.count { return plans[nextPlanIndex].order }
-        return nil
+        return upcomingOrders.first
     }
+
+    /// Round 8 (QA-3 / ROUND-8 Core row): up to `upcomingDepth` (2) orders after the glass at the stop, in the order
+    /// they will appear: the waiting glass's, then plans already generated, then the next fixed orders (shifts, Daily).
+    /// Rush generates its plans two ahead as each glass is placed (`topUpRushPeek`), so this is filled in every tier,
+    /// the Conveyor's included. Reading it never draws from the RNG: a run is the same whether or not anyone looks.
+    var upcomingOrders: [GlassOrder] {
+        var out: [GlassOrder] = []
+        if let wi = waitingIndex() { out.append(glasses[wi].order) }
+        var k: Int = 0
+        while out.count < GameSession.upcomingDepth && k < peekedPlans.count {
+            out.append(peekedPlans[k].order)
+            k += 1
+        }
+        if fixedOrderCount != nil {
+            var n: Int = nextPlanIndex
+            while out.count < GameSession.upcomingDepth && n < plans.count {
+                out.append(plans[n].order)
+                n += 1
+            }
+        }
+        return out
+    }
+
+    /// How many upcoming orders `upcomingOrders` names (and Rush keeps generated ahead).
+    static let upcomingDepth: Int = 2
 
     /// Round 7 (QA-3 P1-3): true while the App holds the run behind a venue intro card (`setStartHold(_:)`). Belts,
     /// patience and line-fade clocks are frozen exactly as behind the flat gate; pouring is allowed and releases it.
@@ -201,7 +223,8 @@ final class GameSession {
     private var nextGlassID: Int = 1
     private var nextPlanIndex: Int = 0
     private var generated: Int = 0
-    private var peekedPlan: Plan? = nil
+    /// Plans generated (or taken from the fixed list) but not yet placed, oldest first.
+    private var peekedPlans: [Plan] = []
     private var idleTime: Double = 0
     /// Round 6: Rush: the tier (1…) of the glass last sent to the stop; 0 outside Rush (`GameSnapshot.rushTier`).
     private var rushTierNow: Int = 0
@@ -1290,18 +1313,27 @@ final class GameSession {
 
     /// The next plan without consuming it (Rush/practice generate it now and keep it).
     private func peekPlan() -> Plan? {
-        if let p = peekedPlan { return p }
-        let p: Plan? = nextPlan()
-        peekedPlan = p
+        if let p = peekedPlans.first { return p }
+        guard let p = nextPlan() else { return nil }
+        peekedPlans.append(p)
         return p
     }
 
     private func takePlan() -> Plan? {
-        if let p = peekedPlan {
-            peekedPlan = nil
-            return p
-        }
+        if !peekedPlans.isEmpty { return peekedPlans.removeFirst() }
         return nextPlan()
+    }
+
+    /// Round 8: Rush keeps its next `upcomingDepth` plans generated, so `upcomingOrders` knows them in every tier (no
+    /// slot glass on the Conveyor). Called only where a plan is consumed (a glass placed), at fixed points of the
+    /// simulation, never from a getter: the RNG sequence depends on the seed and inputs alone. Plans are generated in
+    /// the same order and with the same index (`generated`, which sets the tier) as before; only earlier.
+    private func topUpRushPeek() {
+        if !isRush { return }
+        while peekedPlans.count < GameSession.upcomingDepth {
+            guard let p = nextPlan() else { return }
+            peekedPlans.append(p)
+        }
     }
 
     private func waitingIndex() -> Int? {
@@ -1369,12 +1401,13 @@ final class GameSession {
         if let si = stopIndex { stop = (x: glasses[si].arriveX, shape: glasses[si].shape) }
         let shape: GlassShape = GlassCatalog.shape(plan.order.glass)
         guard let x = NextGlassSlot.x(for: shape, layout: layout, stop: stop) else { return }
-        peekedPlan = nil
+        peekedPlans.removeFirst()
         var g: Glass = makeGlass(plan)
         g.waiting = true
         g.arriveX = x
         g.lineOpacity = 0
         glasses.append(g)
+        topUpRushPeek()
     }
 
     private func spawnNextGlass(events: inout [GameEvent], initial: Bool) {
@@ -1383,6 +1416,7 @@ final class GameSession {
         guard let plan = takePlan() else { return }
         glasses.append(makeGlass(plan))
         sendToStop(glasses.count - 1, initial: initial, events: &events)
+        topUpRushPeek()
     }
 
     /// Decides the jug for this glass's drink and slides it from where it stands to its stop under the spout.
@@ -1499,7 +1533,7 @@ final class GameSession {
         let tier: Int = step + 1
         let venue: VenueID = Rules.rushVenue(tier: tier)
         let menu: (liquids: [LiquidID], glasses: [String]) = GameSession.rushMenu(venue)
-        let liquid: LiquidID = rng.pick(menu.liquids)
+        let liquid: LiquidID = rng.pick(GameSession.rushLiquidPool(venue, step: step))
         let glass: String = rng.pick(menu.glasses)
         let drink: Liquid = LiquidCatalog.liquid(liquid)
         let onBelt: Bool = venue == .conveyor
@@ -1510,13 +1544,19 @@ final class GameSession {
             line = rng.range(0.45, step >= 2 ? 0.9 : 0.85)
             let headCap: Double = drink.foamPerVolume > 1.0 ? 0.68 : (drink.foamPerVolume > 0.3 ? 0.8 : 0.95)
             line = min(line, headCap)
+            if venue == .sodaFountain {
+                // Round 8 (REVIEW-6 N1): Fizz lines ≤ 0.70, lower for bigger heads (cola 0.65, root beer 0.61).
+                let foamOver: Double = max(0, drink.foamPerVolume - 0.4)
+                line = min(line, CoreTuning.rushFizzLineCap - CoreTuning.rushFizzLineCapPerFoam * foamOver)
+            }
         }
         line = round2(line)
         let shape: GlassShape = GlassCatalog.shape(glass)
         let needed: Double = Double(GlassMath.volume(shape, upTo: shape.interiorHeight * CGFloat(line)))
         let sizeFactor: Double = CoreMath.clamp((needed / CoreTuning.rushPatienceVolumeRef).squareRoot(), 0.8, 1.5)
         let viscosity: Double = 1 + drink.lagTau
-        var patience: Double? = max(5.0, 9.5 - 0.7 * Double(step)) * sizeFactor * viscosity
+        let fizzBonus: Double = venue == .sodaFountain ? CoreTuning.rushFizzPatienceBonus : 0
+        var patience: Double? = max(5.0, 9.5 - 0.7 * Double(step)) * sizeFactor * viscosity + fizzBonus
         var belt: Double? = nil
         if onBelt {
             belt = min(40, 18 + 4 * Double(max(0, step - 2))) * CoreTuning.beltScale
@@ -1528,6 +1568,18 @@ final class GameSession {
         let order: GlassOrder = GlassOrder(glass: glass, liquid: liquid, line: line, patience: patience,
                                            lineFadesAfter: nil, prefill: prefill)
         return Plan(order: order, belt: belt, band: band, tier: tier)
+    }
+
+    /// Round 8 (REVIEW-6 N1, BALANCE.md §10): the weighted drink pool a Rush tier draws from (one `pick`, as before;
+    /// always drinks of `rushMenu(venue)`). The Fizz tiers lean on cream soda, the smallest head: the first visit
+    /// (tier 2) pours cream soda 4 : 1 cola and no root beer, which the model casual spilled 40 % of the time even at
+    /// 0.6 lines; later visits (tiers 6, 10, …: experts) bring root beer back, 3 : 1 : 1. Other venues: their menu.
+    static func rushLiquidPool(_ venue: VenueID, step: Int) -> [LiquidID] {
+        if venue == .sodaFountain {
+            if step <= 1 { return [.creamSoda, .creamSoda, .creamSoda, .creamSoda, .cola] }
+            return [.creamSoda, .creamSoda, .creamSoda, .cola, .rootBeer]
+        }
+        return rushMenu(venue).liquids
     }
 
     /// Round 6: what a Rush tier in this venue serves (drinks and glasses, drawn independently). Tier 1's Lemonade

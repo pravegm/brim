@@ -1292,9 +1292,10 @@ struct Round6AppTests {
         let phoneLane = PlayBannerView.lane(info: phone)
         #expect(phoneLane.minY >= phone.hudTop + HUDMetrics.rowHeight)
         let p = VenueIntroCard.spot(anchors: nil, info: phone)
+        let phoneHeight = VenueIntroCard.height(for: phone)
         #expect(p.width <= phone.size.width - 2 * phone.sidePad + 0.5)
-        #expect(p.center.y - VenueIntroCard.estimatedHeight / 2 >= phoneLane.maxY - 0.5)
-        #expect(p.center.y + VenueIntroCard.estimatedHeight / 2 <= phone.size.height)
+        #expect(p.center.y - phoneHeight / 2 >= phoneLane.maxY - 0.5)
+        #expect(p.center.y + phoneHeight / 2 <= phone.size.height)
     }
 
     // Decision 1: venue intro cards are hints (stored by raw value), one per venue with a new idea.
@@ -1320,10 +1321,12 @@ struct Round6AppTests {
                                store: store)
         c.start(mode: .shift("4-1"))
         #expect(c.activeHint == HintKind.belt)
-        #expect(c.hud.banner?.kind == PlayBanner.Kind.shift)
+        // Round 8 (REVIEW-6 N4): on a phone the shift banner waits for the card, then follows it.
+        #expect(c.hud.banner == nil)
         c.dismissHint()
         #expect(store.hasSeenHint("belt"))
         #expect(c.activeHint != HintKind.belt)
+        #expect(c.hud.banner?.kind == PlayBanner.Kind.shift)
         c.restart()
         #expect(c.activeHint != HintKind.belt)
         // The Lemonade Stand has no card: the first run's lift hint instead.
@@ -1491,5 +1494,353 @@ struct Round7AppTests {
         #expect(GameController.tierFreezeReady(sinceChange: 0.5, oldGlassLeaving: false))
         #expect(GameController.tierFreezeReady(sinceChange: GameController.tierFreezeLatest, oldGlassLeaving: true))
         #expect(GameController.tierFreezeLatest < GameController.tierBannerSeconds)
+    }
+}
+
+// MARK: - Round 8: REVIEW-6 #2–#6 (ROUND-8 App row)
+
+@MainActor
+struct Round8AppTests {
+    private let phone = CGSize(width: 402, height: 874)
+
+    private func makeController(_ args: String, canvas: CGSize = CGSize(width: 669, height: 951), fold: Bool = true,
+                                store: ProgressStore? = nil) -> GameController {
+        let c = GameController(store: store ?? ProgressStore(inMemory: ProgressData()),
+                               settings: SettingsStore(defaults: nil),
+                               demo: DemoConfig.parse(args, today: 33))
+        c.updateCanvas(canvas, hasFold: fold)
+        return c
+    }
+
+    private func shift(_ id: String, _ judgements: [Judgement], stars: Int, cleared: Bool = true,
+                       bestStreak: Int = 0, score: Int = 1000) -> RunResult {
+        RunResult(mode: .shift(id), score: score, stars: stars,
+                  perfects: judgements.filter { $0 == .perfect }.count, bestStreak: bestStreak,
+                  judgements: judgements, poured: 0, cleared: cleared)
+    }
+
+    /// A save with Flawless crowns on the first `count` campaign shifts.
+    private func crowned(_ count: Int) -> ProgressData {
+        var data = ProgressData()
+        for level in LevelCatalog.levels.prefix(count) { data.crowns.insert(level.id) }
+        return data
+    }
+
+    // #2 (N2): the best Perfects of each shift are kept (any run of it), capped at its glasses.
+    @Test func bestPerfectsPerShiftAreKeptAndCapped() throws {
+        let level = try #require(LevelCatalog.levels(in: .lemonadeStand).first)
+        let total = level.orders.count
+        try #require(total >= 4)
+        var data = ProgressData()
+        var two = Array(repeating: Judgement.great, count: total)
+        two[0] = .perfect
+        two[1] = .perfect
+        let first = data.record(shift(level.id, two, stars: 3), today: 1)
+        #expect(first.previousBestPerfects == 0)
+        #expect(first.bestPerfects == 2)
+        #expect(data.bestPerfects(for: level.id) == 2)
+        let worse = data.record(shift(level.id, Array(repeating: .great, count: total), stars: 3), today: 1)
+        #expect(worse.previousBestPerfects == 2)
+        #expect(worse.bestPerfects == 2)
+        // A struck-out run's Perfects count too.
+        let failedRun = shift(level.id, [.perfect, .perfect, .perfect, .spill, .spill, .spill], stars: 0, cleared: false)
+        let failed = data.record(failedRun, today: 1)
+        #expect(failed.bestPerfects == min(3, total))
+        // Never more than the shift's glasses.
+        let overfull = data.record(shift(level.id, Array(repeating: .perfect, count: total + 4), stars: 3), today: 1)
+        #expect(overfull.bestPerfects == total)
+        #expect((data.bestPerfects[level.id] ?? 0) <= total)
+        // Rush doesn't touch it.
+        let rush = RunResult(mode: .rush, score: 10, stars: 0, perfects: 5, bestStreak: 5,
+                             judgements: Array(repeating: .perfect, count: 5), poured: 0, cleared: true)
+        _ = data.record(rush, today: 1)
+        #expect(data.bestPerfects.count == 1)
+    }
+
+    // A round-6/7 save has crowns but no best Perfects: a crowned shift counts every glass.
+    @Test func aCrownCountsAsEveryGlassPerfect() throws {
+        let level = try #require(LevelCatalog.levels(in: .lemonadeStand).first)
+        var data = ProgressData()
+        data.crowns = [level.id]
+        #expect(data.bestPerfects(for: level.id) == level.orders.count)
+        let sums = data.perfectsEarned(in: .lemonadeStand)
+        #expect(sums.best == level.orders.count)
+        #expect(sums.glasses == LevelCatalog.levels(in: .lemonadeStand).reduce(0) { $0 + $1.orders.count })
+        let mid = DemoConfig.progressData(.mid)
+        #expect(mid.perfectsEarned(in: .lemonadeStand).best > 0)
+    }
+
+    // Tolerant decode: older saves have neither field; a bad value costs only itself.
+    @Test func bestPerfectsAndVesselDecodeTolerantly() throws {
+        let old = try JSONDecoder().decode(ProgressData.self,
+                                           from: Data(#"{"stars": {"1-1": 3}, "crowns": ["1-1"]}"#.utf8))
+        #expect(old.bestPerfects.isEmpty)
+        #expect(old.vessel == nil)
+        #expect(old.hasCrown("1-1"))
+        let bad = try JSONDecoder().decode(ProgressData.self, from: Data(
+            #"{"stars": {"1-1": 2}, "bestPerfects": "lots", "vessel": "teapot"}"#.utf8))
+        #expect(bad.bestPerfects.isEmpty)
+        #expect(bad.vessel == nil)
+        #expect(bad.stars(for: "1-1") == 2)
+        let wrongType = try JSONDecoder().decode(ProgressData.self, from: Data(#"{"vessel": 7}"#.utf8))
+        #expect(wrongType.vessel == nil)
+        var data = ProgressData()
+        data.bestPerfects = ["1-1": 4, "2-3": 2]
+        data.vessel = .potionShop
+        let encoded = try JSONEncoder().encode(data)
+        let back = try JSONDecoder().decode(ProgressData.self, from: encoded)
+        #expect(back == data)
+        #expect(back.vessel == VenueID.potionShop)
+    }
+
+    @Test func bestPerfectsAndVesselPersistThroughTheStore() throws {
+        let suite = "brim.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ProgressStore(defaults: defaults)
+        let three = Array(LevelCatalog.levels(in: .lemonadeStand).prefix(3))
+        try #require(three.count == 3)
+        for level in three {
+            store.record(shift(level.id, Array(repeating: .perfect, count: level.orders.count), stars: 3), today: 2)
+        }
+        #expect(store.data.totalCrowns == 3)
+        store.setVessel(.sandBar)                 // 14 crowns: refused
+        #expect(store.data.vessel == nil)
+        store.setVessel(.sodaFountain)
+        #expect(store.data.vessel == VenueID.sodaFountain)
+        let reloaded = ProgressStore(defaults: defaults)
+        #expect(reloaded.data.vessel == VenueID.sodaFountain)
+        #expect(reloaded.data.activeVessel == VenueID.sodaFountain)
+        #expect(reloaded.bestPerfects(for: three[0].id) == three[0].orders.count)
+        reloaded.resetProgress()
+        #expect(reloaded.data.vessel == nil)
+        #expect(reloaded.data.bestPerfects.isEmpty)
+    }
+
+    // #6: the Glass Cabinet's vessels open with crowns.
+    @Test func cabinetUnlocksVesselsByCrowns() {
+        #expect(GlassCabinet.crownsNeeded(nil) == 0)
+        #expect(GlassCabinet.crownsNeeded(.sodaFountain) == 3)
+        #expect(GlassCabinet.crownsNeeded(.milkshakeDiner) == 6)
+        #expect(GlassCabinet.crownsNeeded(.potionShop) == 10)
+        #expect(GlassCabinet.crownsNeeded(.sandBar) == 14)
+        #expect(GlassCabinet.crownsNeeded(.conveyor) == nil)
+        #expect(GlassCabinet.isUnlocked(nil, crowns: 0))
+        #expect(!GlassCabinet.isUnlocked(.sodaFountain, crowns: 2))
+        #expect(GlassCabinet.isUnlocked(.sodaFountain, crowns: 3))
+        #expect(!GlassCabinet.isUnlocked(.conveyor, crowns: 99))
+        #expect(GlassCabinet.nextUnlock(crowns: 4)?.vessel.venue == VenueID.milkshakeDiner)
+        #expect(GlassCabinet.nextUnlock(crowns: 4)?.missing == 2)
+        #expect(GlassCabinet.nextUnlock(crowns: 14) == nil)
+        #expect(GlassCabinet.nextLine(crowns: 0) == "3 more 👑 for the Soda dispenser")
+        #expect(GlassCabinet.nextLine(crowns: 20) == nil)
+        let soda = GlassCabinet.vessels[1]
+        #expect(CabinetSheet.caption(for: soda, crowns: 1, chosen: nil) == "3 👑")
+        #expect(CabinetSheet.caption(for: soda, crowns: 3, chosen: nil) == "Tap to use")
+        #expect(CabinetSheet.caption(for: soda, crowns: 3, chosen: .sodaFountain) == "In use")
+        // The pick falls back to the house jug while the crowns don't hold it; unknown level ids don't count.
+        var data = ProgressData()
+        data.vessel = .potionShop
+        #expect(data.activeVessel == nil)
+        data = crowned(10)
+        data.vessel = .potionShop
+        data.crowns.insert("9-99")
+        #expect(data.totalCrowns == 10)
+        #expect(data.activeVessel == VenueID.potionShop)
+    }
+
+    // The cabinet sits off the fold: in the flat half on a Duo.
+    @Test func cabinetSheetStaysOffTheFold() {
+        let duo = CanvasInfo(size: CGSize(width: 669, height: 951),
+                             insets: EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0), hasFold: true)
+        #expect(CabinetSheet.margins(info: duo).top > duo.bottomHalfTop)
+        let phoneInfo = CanvasInfo(size: phone, insets: EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0),
+                                   hasFold: false)
+        #expect(CabinetSheet.margins(info: phoneInfo).bottom >= 34)
+    }
+
+    // #6: the scene draws the cabinet's vessel in Rush and Practice, never in a shift or the Daily.
+    @Test func theVesselDrawsInRushAndPracticeOnly() {
+        #expect(GameController.vesselOverride(for: .rush, chosen: .potionShop) == VenueID.potionShop)
+        #expect(GameController.vesselOverride(for: .practice, chosen: .sandBar) == VenueID.sandBar)
+        #expect(GameController.vesselOverride(for: .shift("1-1"), chosen: .potionShop) == nil)
+        #expect(GameController.vesselOverride(for: .daily(3), chosen: .potionShop) == nil)
+        #expect(GameController.vesselOverride(for: .rush, chosen: nil) == nil)
+        var data = crowned(3)
+        data.vessel = .sodaFountain
+        let store = ProgressStore(inMemory: data)
+        let c = makeController("mode=rush", canvas: phone, fold: false, store: store)
+        c.start(mode: .rush)
+        #expect(c.scene != nil)
+        #expect(c.scene?.vesselOverride == VenueID.sodaFountain)
+        c.start(mode: .shift("1-1"))
+        #expect(c.scene != nil)
+        #expect(c.scene?.vesselOverride == nil)
+        c.start(mode: .rush)
+        c.chooseVessel(nil)
+        #expect(c.scene?.vesselOverride == nil)
+        #expect(store.data.vessel == nil)
+    }
+
+    // #2 (N2) and #4 (N3): the line under the score.
+    @Test func statsLineIsTheCrownChaseAndNeverAZero() throws {
+        let level = try #require(LevelCatalog.levels(in: .lemonadeStand).first)
+        let total = level.orders.count
+        try #require(total >= 3)
+        let allGreat = shift(level.id, Array(repeating: .great, count: total), stars: 3)
+        let chase = ResultsView.statsLine(for: allGreat, hasCrown: false, bestPerfects: 0)
+        #expect(chase == "Flawless crown: every glass Perfect. You had 0 of \(total).")
+        #expect(!(chase ?? "").contains("streak"))
+        let withBest = ResultsView.statsLine(for: allGreat, hasCrown: false, bestPerfects: 2)
+        #expect(withBest == "Flawless crown: every glass Perfect. You had 0 of \(total). Best 2.")
+        var oneShort = Array(repeating: Judgement.perfect, count: total)
+        oneShort[0] = .short
+        let underThree = ResultsView.statsLine(for: shift(level.id, oneShort, stars: 2, bestStreak: total - 1),
+                                               hasCrown: false, bestPerfects: total)
+        #expect(underThree == "3★ needs every glass a hit. You had 1 miss.")
+        let flawless = shift(level.id, Array(repeating: .perfect, count: total), stars: 3, bestStreak: total)
+        #expect(ResultsView.statsLine(for: flawless, hasCrown: true, bestPerfects: total)
+                == "\(total) of \(total) Perfect · best streak \(total)")
+        // Struck out: no glass count (the hero has it) and no zeros.
+        let noPerfects = shift(level.id, [.great, .spill, .spill, .spill], stars: 0, cleared: false)
+        #expect(ResultsView.statsLine(for: noPerfects, hasCrown: false, bestPerfects: 0) == nil)
+        let twoPerfects = shift(level.id, [.perfect, .perfect, .spill, .spill, .spill], stars: 0, cleared: false,
+                                bestStreak: 2)
+        #expect(ResultsView.statsLine(for: twoPerfects, hasCrown: false, bestPerfects: 2) == "2 Perfect · best streak 2")
+        // Rush: glasses first, no "0 perfect", a streak only from 2.
+        let rushPlain = RunResult(mode: .rush, score: 900, stars: 0, perfects: 0, bestStreak: 1,
+                                  judgements: Array(repeating: .great, count: 5), poured: 0, cleared: true)
+        #expect(ResultsView.statsLine(for: rushPlain, hasCrown: false, bestPerfects: 0) == "5 glasses")
+        let rushGood = RunResult(mode: .rush, score: 900, stars: 0, perfects: 3, bestStreak: 3,
+                                 judgements: [.perfect, .perfect, .perfect, .great, .spill], poured: 0, cleared: true)
+        #expect(ResultsView.statsLine(for: rushGood, hasCrown: false, bestPerfects: 0)
+                == "5 glasses · 3 Perfect · best streak 3")
+    }
+
+    // #4 (N3): ghost outlines for the unserved glasses, and no orphan "0".
+    @Test func aStruckOutShiftShowsItsUnservedGlassesAndNoOrphanZero() throws {
+        let level = try #require(LevelCatalog.level("2-4"))
+        try #require(level.orders.count > 4)
+        let failed = shift(level.id, [.good, .spill, .spill, .spill], stars: 0, cleared: false, score: 0)
+        let ghosts = ResultsView.ghostRecap(for: failed)
+        #expect(ghosts.count == level.orders.count - 4)
+        #expect(ghosts.allSatisfy { $0.ghost && $0.level == 0 })
+        #expect(ghosts.first?.line == level.orders[4].line)
+        #expect(ghosts.first?.shape.id == level.orders[4].glass)
+        #expect(ResultsView.ghostRecap(for: shift(level.id, [.good], stars: 1)).isEmpty)
+        let rush = RunResult(mode: .rush, score: 1, stars: 0, perfects: 0, bestStreak: 0, judgements: [.spill],
+                             poured: 0, cleared: false)
+        #expect(ResultsView.ghostRecap(for: rush).isEmpty)
+        #expect(ResultsView.scoreText(0, hasHero: true) == nil)
+        #expect(ResultsView.scoreText(1240, hasHero: true) == "1,240 pts")
+        #expect(ResultsView.scoreText(0, hasHero: false) == "0")
+        #expect(RecapGlyph.accessibilityText(ghosts).contains("\(ghosts.count) not served"))
+    }
+
+    // #2 (N2): Venues show the best Perfects and a cyan arc on 3★ shifts without a crown.
+    @Test func venuesShowBestPerfectsAndTheCrownArc() {
+        #expect(VenuesView.perfectLine(best: 0, glasses: 52) == nil)
+        #expect(VenuesView.perfectLine(best: 41, glasses: 52) == "41/52")
+        #expect(VenuesView.perfectLine(best: 60, glasses: 52) == "52/52")
+        #expect(VenuesView.crownArc(stars: 3, crowned: false, bestPerfects: 3, glasses: 6) == 0.5)
+        #expect(VenuesView.crownArc(stars: 2, crowned: false, bestPerfects: 3, glasses: 6) == 0)
+        #expect(VenuesView.crownArc(stars: 3, crowned: true, bestPerfects: 6, glasses: 6) == 0)
+        #expect(VenuesView.crownArc(stars: 3, crowned: false, bestPerfects: 0, glasses: 6) == 0)
+    }
+
+    // #5 (N4): the phone card is compact and sits low, between the counter's back edge and the glass rim.
+    @Test func thePhoneIntroCardSitsLowAndLeavesTheJugInView() {
+        let phoneInfo = CanvasInfo(size: phone, insets: EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0),
+                                   hasFold: false)
+        let h = VenueIntroCard.height(for: phoneInfo)
+        #expect(h < VenueIntroCard.estimatedHeight)
+        let glass = GlassAnchor(id: 1, x: 335, lineY: 200, halfWidthAtLine: 40, rimY: 264, baseY: 104, filling: false)
+        let jug = CGRect(x: 250, y: 520, width: 200, height: 250)
+        let spot = VenueIntroCard.spot(anchors: PlayAnchors(jug: jug, glass: glass, waiting: nil), info: phoneInfo)
+        let card = CGRect(x: spot.center.x - spot.width / 2, y: spot.center.y - h / 2, width: spot.width, height: h)
+        #expect(card.minY >= phoneInfo.bottomHalfTop - 0.5)
+        #expect(!card.intersects(phoneInfo.mapper.rect(jug)))
+        #expect(card.maxY <= phoneInfo.mapper.y(glass.rimY) + 0.5)
+        #expect(spot.width <= VenueIntroCard.compactMaxWidth)
+        let duo = CanvasInfo(size: CGSize(width: 669, height: 951), insets: EdgeInsets(), hasFold: true)
+        #expect(VenueIntroCard.height(for: duo) == VenueIntroCard.estimatedHeight)
+    }
+
+    // #5 (N4): the banner waits for the card on a phone only, and never leaks into the next run.
+    @Test func theShiftBannerWaitsForTheCardOnAPhoneOnly() {
+        #expect(GameController.defersShiftBanner(hasFold: false, introCardUp: true))
+        #expect(!GameController.defersShiftBanner(hasFold: true, introCardUp: true))
+        #expect(!GameController.defersShiftBanner(hasFold: false, introCardUp: false))
+        let duo = makeController("mode=shift:4-1;hints=fresh")
+        duo.start(mode: .shift("4-1"))
+        #expect(duo.activeHint == HintKind.belt)
+        #expect(duo.hud.banner?.kind == PlayBanner.Kind.shift)
+        let p = makeController("mode=shift:4-1;hints=fresh", canvas: phone, fold: false)
+        p.start(mode: .shift("4-1"))
+        #expect(p.activeHint == HintKind.belt)
+        #expect(p.hud.banner == nil)
+        p.start(mode: .rush)
+        #expect(p.hud.banner == nil)
+    }
+
+    // #3: the evidence keys.
+    @Test func demoParsesTheRound8Keys() {
+        let c = DemoConfig.parse("mode=rush;autopilot=great;served=25;missAt=3;freezeOn=lowjug", today: 1)
+        #expect(c.served == Int(25))
+        #expect(c.missAt == Int(3))
+        #expect(c.freezeOn == DemoConfig.Freeze.lowjug)
+        #expect(DemoConfig.parse("freezeOn=repose", today: 1).freezeOn == DemoConfig.Freeze.repose)
+        #expect(DemoConfig.parse("freezeOn=faded", today: 1).freezeOn == DemoConfig.Freeze.faded)
+        let bad = DemoConfig.parse("served=x;missAt=", today: 1)
+        #expect(bad.served == nil)
+        #expect(bad.missAt == nil)
+    }
+
+    @Test func theNewFreezesWaitForTheirMoment() {
+        #expect(!GameController.reposeFreezeReady(progress: 0.5, servedSoFar: 0))
+        #expect(GameController.reposeFreezeReady(progress: 0.9, servedSoFar: 0))
+        #expect(!GameController.reposeFreezeReady(progress: 1.0, servedSoFar: 0))
+        #expect(GameController.reposeFreezeReady(progress: 1.0, servedSoFar: GameController.reposeFreezeGiveUp))
+        #expect(!GameController.reposeFreezeReady(progress: .nan, servedSoFar: 9))
+        #expect(!GameController.fadedFreezeReady(sinceFade: 0.2, pouring: true, fillOfLine: 0.9))
+        #expect(GameController.fadedFreezeReady(sinceFade: 0.5, pouring: true, fillOfLine: 0.7))
+        #expect(!GameController.fadedFreezeReady(sinceFade: 0.5, pouring: false, fillOfLine: 0.7))
+        #expect(GameController.fadedFreezeReady(sinceFade: 1.0, pouring: false, fillOfLine: 0))
+        #expect(GameController.lowJugFreezeBelow > 0 && GameController.lowJugFreezeBelow < 0.5)
+        #expect(DemoMissPilot.pouringMissGlass(ordersDone: 2, missAt: 3))
+        #expect(!DemoMissPilot.pouringMissGlass(ordersDone: 3, missAt: 3))
+        #expect(!DemoMissPilot.pouringMissGlass(ordersDone: 0, missAt: 0))
+    }
+
+    // Frame 08: a real all-Great run whose 4th glass is poured over is a one-miss card, not 3★.
+    @Test func theMissPilotMakesAnHonestOneMissRun() throws {
+        let played = DemoRunner.playRun(mode: .shift("1-1"), style: .great, seed: 7, missAt: 4)
+        let result = played.0
+        try #require(result.judgements.count >= 4)
+        #expect(!result.judgements[3].isHit)
+        #expect(result.stars <= 2)
+    }
+
+    // `served=N` leaves a live run behind it.
+    @Test func theServedSeedLeavesTheRunLive() {
+        let session = GameSession(mode: .rush, layout: DemoRunner.headlessLayout, seed: 7)
+        let progress = DemoRunner.playUpToServed(session, served: 3, style: .perfect)
+        #expect(progress.served >= 1)
+        #expect(!session.isFinished)
+        #expect(session.snapshot.ordersDone == 3 || session.snapshot.jug.fill < DemoRunner.rushJugFloor)
+    }
+
+    // ROUND-8 Core row: Rush's belt queue takes up to two peeked orders, belt tiers only.
+    @Test func rushBeltQueueTakesUpToTwoBeltOrders() throws {
+        let every = CoreTuning.rushTierEvery
+        let orders = try #require(LevelCatalog.levels(in: .conveyor).first?.orders)
+        try #require(orders.count >= 3)
+        let a = orders[0], b = orders[1], c = orders[2]
+        #expect(GameController.rushBeltQueue(next: [a, b], nextIndex: 2 * every, slotGlassWaiting: false) == [a, b])
+        #expect(GameController.rushBeltQueue(next: [a, b, c], nextIndex: 2 * every, slotGlassWaiting: false) == [a, b])
+        #expect(GameController.rushBeltQueue(next: [a, b], nextIndex: 3 * every - 1, slotGlassWaiting: false) == [a])
+        #expect(GameController.rushBeltQueue(next: [a, b], nextIndex: 2 * every - 1, slotGlassWaiting: false).isEmpty)
+        #expect(GameController.rushBeltQueue(next: [a, b], nextIndex: 2 * every, slotGlassWaiting: true).isEmpty)
+        #expect(GameController.rushBeltQueue(next: [GlassOrder](), nextIndex: 2 * every, slotGlassWaiting: false).isEmpty)
     }
 }

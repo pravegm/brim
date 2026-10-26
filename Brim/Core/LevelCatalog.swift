@@ -303,9 +303,14 @@ enum LevelCatalog {
                 o("highball", .cola, 0.65, p: 12, pre: 0.2),
             ]),
             // The slow-pour exam: every glass root beer, lines just under the head's comfort zone, time to pour slowly.
+            // Round 8 balance pass (stars = no misses, Sand Bar = all 120): the model expert cleared it every time but
+            // never 3-starred it (0 of 12: root beer to 0.72–0.75 in a pint and 0.62 in a jar spilled 26–31 % even
+            // for experts), a wall in front of the Sand Bar. Lines now 0.5–0.65 (the jar lowest): expert 3★ ~0.45 a
+            // try, casual clear 0.53 → ~0.7. Still the venue's hardest foam shift. Same glass/drink pairs as before
+            // (mug, pint, highball, jar), so `dailyMenu`, and with it every Daily, is unchanged.
             lv(v, 7, "Root of the Problem", jug: 1.0, band: 0.026, [
-                o("mug", .rootBeer, 0.55), o("pint", .rootBeer, 0.72, p: 15), o("highball", .rootBeer, 0.65, p: 15),
-                o("pint", .rootBeer, 0.75, p: 15), o("jar", .rootBeer, 0.62, p: 15), o("mug", .rootBeer, 0.68, p: 15),
+                o("mug", .rootBeer, 0.55), o("pint", .rootBeer, 0.58, p: 15), o("highball", .rootBeer, 0.62, p: 15),
+                o("jar", .rootBeer, 0.5, p: 15), o("highball", .rootBeer, 0.65, p: 15), o("mug", .rootBeer, 0.62, p: 15),
             ]),
             lv(v, 8, "Fizz Finale", jug: 0.8, band: 0.025, [
                 o("flute", .cola, 0.72, p: 11), o("mug", .rootBeer, 0.62, p: 11), o("pint", .creamSoda, 0.78, p: 11),
@@ -454,6 +459,11 @@ enum LevelCatalog {
     }
 
     // Secret — sand: nothing moves until ~30° of extra tip, then it avalanches.
+    //
+    // Round 8 balance pass: the hourglass (GlassCatalog, round 6) is served in 6-2…6-4. Its lines sit in a bulb, never
+    // on the shoulders or the waist (≈ 0.4–0.55 of its height), where the level races and the model's casual over-pours
+    // a quarter of the time: lower bulb ≈ 0.3–0.35, upper bulb 0.65–0.8 (model: like a jar there). 6-2 opens on one
+    // (a clean first frame for the store/CI capture), 6-3 has one in each bulb, 6-4 one in the upper bulb.
     private static func sandBar() -> [Level] {
         let v: VenueID = .sandBar
         return [
@@ -462,16 +472,17 @@ enum LevelCatalog {
                 o("beaker", .sand, 0.5),
             ]),
             lv(v, 2, "Grain Check", jug: 0.9, band: 0.028, [
-                o("shot", .sand, 0.6), o("jar", .sand, 0.55), o("bowl", .sand, 0.5), o("vial", .sand, 0.6),
+                o("hourglass", .sand, 0.75), o("jar", .sand, 0.55), o("shot", .sand, 0.6), o("vial", .sand, 0.6),
                 o("beaker", .sand, 0.7), o("shot", .sand, 0.75),
             ]),
             lv(v, 3, "Shifting Sands", jug: 0.8, band: 0.025, [
-                o("tumbler", .sand, 0.7, p: 14), o("flute", .sand, 0.65, p: 14), o("jar", .sand, 0.6, p: 14, pre: 0.2),
-                o("bowl", .sand, 0.6, p: 14), o("vial", .sand, 0.8, p: 14), o("beaker", .sand, 0.55, p: 14),
+                o("tumbler", .sand, 0.7, p: 14), o("hourglass", .sand, 0.32, p: 14),
+                o("jar", .sand, 0.6, p: 14, pre: 0.2), o("bowl", .sand, 0.6, p: 14), o("vial", .sand, 0.8, p: 14),
+                o("hourglass", .sand, 0.75, p: 14),
             ]),
             lv(v, 4, "Sands of Time", jug: 0.7, band: 0.022, [
                 o("beaker", .sand, 0.7, p: 12), o("vial", .sand, 0.65, p: 12), o("flute", .sand, 0.8, p: 12),
-                o("jar", .sand, 0.5, p: 12), o("shot", .sand, 0.6, p: 12), o("bowl", .sand, 0.65, p: 12),
+                o("hourglass", .sand, 0.72, p: 12), o("shot", .sand, 0.6, p: 12), o("bowl", .sand, 0.65, p: 12),
                 o("tumbler", .sand, 0.75, p: 12, pre: 0.25), o("beaker", .sand, 0.85, p: 12),
             ]),
         ]

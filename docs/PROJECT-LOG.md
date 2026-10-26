@@ -133,3 +133,26 @@
   bigger refills, and only rim spills strike in Rush. `serveIdle` went to 0.5 s so players can top up. Level 2-7 was
   rebuilt (it was a wall). `balance.yml` runs the full sweep.
 - Round 6 compiled first try: 219/220 tests, with one stale test value fixed.
+- **REVIEW-6:** overall 8.8, late game 8.2 (was 7.0). All of REVIEW-5's top 8 landed. The "perfect" autopilot
+  struck out in Rush's Fizz tier; simulated human experts average 53 glasses, so the problem is mostly the bot's
+  weakness with foam.
+- **Balance pass 2:**
+  - stars are now 3★ = no misses, 2★ = one miss, 1★ = cleared, with the Flawless crown for all-Perfect;
+  - casual players are likely to get 3★ on 0.61 of shifts (was 0.09);
+  - novices clear 1-1…1-4 85–93 % of the time;
+  - the soda and conveyor entries are smoother;
+  - casual players clear the Daily about 82 % of the time.
+- **QA-3:** no P0. Its P1s, fixed in round 7:
+  - a stamp lingered over the next glass;
+  - the intro card didn't hold the belt (`setStartHold`);
+  - the results chase line didn't match the new star rule.
+- Round 7 + balance: **231/231 tests green.**
+- **TestFlight 1.0 (3) uploaded** (run 40255370648).
+- **Round 8** (`design/ROUND-8.md`), in progress:
+  - Rush Fizz tier and an autopilot that handles foam;
+  - a belt queue that looks ahead;
+  - the crown chase;
+  - a Glass Cabinet of unlockable vessels;
+  - evidence frames;
+  - the failed-shift card;
+  - stamp placement on tall glasses.

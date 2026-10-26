@@ -1003,6 +1003,173 @@ final class SceneTests: XCTestCase {
         XCTAssertEqual(scene.backdropRenderCount, painted + 2)
         XCTAssertLessThanOrEqual(scene.cachedLookCount, 3)
     }
+
+    // MARK: Round 8 (REVIEW-6)
+
+    /// N5 (frame 18): the stamp never sits on a tall glass's rim. For every glass, on the Duo and phones, once the pop
+    /// and the Perfect hop have settled: either it is above the rim with its ink ≥ 10 pt clear of it (at ≥ 0.8 size),
+    /// or it stands beside the glass (clear of its walls, foot, handle, plinth and line tab), inside the crop. Never
+    /// above the crease keep-out.
+    @MainActor
+    func testStampClearsTheRimOrStandsBesideTheGlass() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let keepOut = layout.creaseMinY - 8
+        let cases: [(CGFloat, ClosedRange<CGFloat>)] = [(372, 14...656), (340, 130...540), (418, 130...540)]
+        var besideIDs: Set<String> = []
+        for shape in GlassCatalog.all {
+            for (x, safe) in cases {
+                for verdict in [Judgement.perfect, .spill, .good] {
+                    let glass = SceneGlass(id: 1, darkBackdrop: false)
+                    let state = GlassState(id: 1, shape: shape, liquid: LiquidCatalog.liquid(.lemonade), x: x,
+                                           phase: .served, liquidHeight: shape.interiorHeight * 0.9, foamHeight: 0,
+                                           lineHeight: shape.interiorHeight * 0.9, lineOpacity: 1, inPerfectBand: true,
+                                           overflowing: false, patienceLeft: nil, patienceTotal: nil, result: verdict)
+                    var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: false, tail: nil,
+                                       advanced: true, reduceMotion: false, band: 0.025, projected: nil, safeX: safe,
+                                       keepOutTop: keepOut)
+                    glass.update(state, f)
+                    if verdict == .perfect { glass.celebrate() }
+                    for k in 1...45 {
+                        f.time = 1 + Double(k) / 60
+                        glass.update(state, f)
+                        XCTAssertLessThanOrEqual(glass.stampReachWorld ?? 0, keepOut + 0.5, "\(shape.id) crease")
+                    }
+                    let tag = "\(shape.id) \(verdict) at x \(x)"
+                    guard let ink = glass.stampInkWorldRect else {
+                        XCTFail("\(tag): no stamp")
+                        continue
+                    }
+                    XCTAssertGreaterThanOrEqual(ink.minX, safe.lowerBound - 0.5, "\(tag): inside the crop")
+                    XCTAssertLessThanOrEqual(ink.maxX, safe.upperBound + 0.5, "\(tag): inside the crop")
+                    if glass.stampBeside {
+                        if x == 372 { besideIDs.insert(shape.id) }
+                        let body = glass.bodyWorldXRange
+                        let clear = ink.maxX <= body.lowerBound + 0.5 || ink.minX >= body.upperBound - 0.5
+                        XCTAssertTrue(clear, "\(tag): beside, not over the glass (ink \(ink), body \(body))")
+                        XCTAssertGreaterThanOrEqual(glass.stampWorldScale, SceneGlass.stampFloorScale - 0.001, tag)
+                        if x == 372 { XCTAssertLessThan(ink.midX, x, "\(tag): the Duo has room on the left") }
+                    } else {
+                        XCTAssertGreaterThanOrEqual(ink.minY, glass.rimTopWorld + SceneGlass.stampRimGap - 0.25,
+                                                    "\(tag): ≥ 10 pt over the rim")
+                        XCTAssertGreaterThanOrEqual(glass.stampWorldScale, SceneGlass.stampMinAboveScale - 0.001, tag)
+                    }
+                }
+            }
+        }
+        // Frame 18's glass goes beside; an everyday tumbler keeps its stamp over the rim.
+        XCTAssertTrue(besideIDs.contains("flute"))
+        XCTAssertTrue(besideIDs.contains("highball"))
+        XCTAssertFalse(besideIDs.contains("tumbler"))
+        XCTAssertFalse(besideIDs.contains("shot"))
+    }
+
+    /// N5: a stamp beside the glass rides out with it like any other (QA-3 P1-1), and a streak pop never lands back
+    /// over the glass.
+    @MainActor
+    func testBesideStampRidesOutAndStreakStaysOffTheGlass() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let keepOut = layout.creaseMinY - 8
+        let shape = GlassCatalog.shape("flute")
+        let glass = SceneGlass(id: 3, darkBackdrop: false)
+        var state = GlassState(id: 3, shape: shape, liquid: LiquidCatalog.liquid(.lemonade), x: 372, phase: .served,
+                               liquidHeight: shape.interiorHeight * 0.9, foamHeight: 0,
+                               lineHeight: shape.interiorHeight * 0.9, lineOpacity: 1, inPerfectBand: true,
+                               overflowing: false, patienceLeft: nil, patienceTotal: nil, result: .perfect)
+        var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: false, tail: nil,
+                           advanced: true, reduceMotion: false, band: 0.025, projected: nil, safeX: 14...656,
+                           keepOutTop: keepOut)
+        glass.update(state, f)
+        glass.showStreak(4, reduceMotion: false, safeX: 14...656, keepOutTop: keepOut)
+        for k in 1...20 {
+            f.time = 1 + Double(k) / 60
+            glass.update(state, f)
+        }
+        XCTAssertTrue(glass.stampBeside)
+        XCTAssertLessThanOrEqual(glass.lastStreakReachWorld ?? 0, keepOut + 0.5)
+        guard let x0 = glass.stampWorldX else { return XCTFail("a stamp shows") }
+        let local = x0 - state.x
+        XCTAssertLessThan(local, 0, "left of the glass")
+        state.phase = .leaving
+        for k in 1...6 {
+            state.x = 372 + CGFloat(k) * 18
+            f.time += 1.0 / 60.0
+            glass.update(state, f)
+            if let sx = glass.stampWorldX { XCTAssertEqual(sx - state.x, local, accuracy: 0.01) }
+        }
+    }
+
+    /// #6 Glass Cabinet lite: `vesselOverride` draws the chosen venue's signature vessel around the same interior,
+    /// whatever the backdrop; nil restores the venue's own.
+    @MainActor
+    func testVesselOverrideDrawsEachVenuesVessel() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .practice, layout: layout, seed: 7)
+        let scene = GameScene(layout: layout)
+        let driver = SceneTestDriver(session)
+        scene.driver = driver
+        scene.venue = .lemonadeStand
+        scene.reset(for: session.snapshot)
+        var t: TimeInterval = 100
+        func step(_ n: Int) {
+            for _ in 0..<n {
+                t += 1.0 / 60.0
+                scene.update(t)
+            }
+        }
+        driver.tilt = 0
+        step(30)
+        driver.tilt = 48                    // mid-pour: the tipped vessel with its stream
+        step(30)
+        let backdrop = scene.shownVenue
+        XCTAssertEqual(scene.shownVesselForm, ScenePalette.forVenue(backdrop).vessel.form)
+        XCTAssertFalse(scene.jugWorldBounds.isNull)
+        for v in VenueID.allCases {
+            scene.vesselOverride = v
+            step(12)
+            let want = ScenePalette.forVenue(v).vessel
+            XCTAssertEqual(scene.shownVesselForm, want.form, "\(v)")
+            XCTAssertEqual(scene.shownVesselDecal, want.decal, "\(v)")
+            XCTAssertEqual(scene.shownVenue, backdrop, "\(v): the backdrop stays")
+            XCTAssertFalse(scene.jugWorldBounds.isNull, "\(v) draws")
+            guard let parts = scene.shownVesselParts else {
+                XCTFail("\(v): vessel not built")
+                continue
+            }
+            switch want.form {
+            case .pitcher, .dispenser:
+                XCTAssertTrue(parts.lid && parts.handle && !parts.skin, "\(v)")
+            case .shakeTin:
+                XCTAssertTrue(parts.lid && !parts.handle && parts.skin, "\(v)")
+            case .flask:
+                XCTAssertTrue(parts.lid && !parts.handle && !parts.skin, "\(v)")
+            case .scoop:
+                XCTAssertTrue(!parts.lid && parts.handle && parts.skin, "\(v)")
+            }
+        }
+        scene.vesselOverride = nil
+        step(4)
+        XCTAssertEqual(scene.shownVesselForm, ScenePalette.forVenue(scene.shownVenue).vessel.form)
+    }
+
+    /// #6: in Rush the chosen vessel travels with the player through every tier's venue (no vessel cross-fade).
+    @MainActor
+    func testVesselOverrideHoldsThroughRushTravel() {
+        guard let c = scriptedRush(venue: .lemonadeStand) else { return XCTFail("no glass") }
+        var t: TimeInterval = 5
+        c.scene.vesselOverride = .potionShop
+        drive(c.scene, c.driver, frames: 3, dx: 0, t: &t)
+        XCTAssertEqual(c.scene.shownVesselForm, .flask)
+        for v in [VenueID.sodaFountain, .milkshakeDiner, .conveyor, .sandBar] {
+            c.driver.snapshot.venue = v
+            drive(c.scene, c.driver, frames: 3, dx: 0, t: &t)
+            XCTAssertEqual(c.scene.shownVenue, v)
+            XCTAssertEqual(c.scene.shownVesselForm, .flask, "\(v)")
+            XCTAssertEqual(c.scene.shownVesselDecal, .moon, "\(v)")
+        }
+        c.scene.vesselOverride = nil
+        drive(c.scene, c.driver, frames: 2, dx: 0, t: &t)
+        XCTAssertEqual(c.scene.shownVesselForm, .scoop)
+    }
 }
 
 /// Steps a real GameSession for the scene smoke test.

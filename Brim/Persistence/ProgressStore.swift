@@ -67,6 +67,9 @@ struct RecordOutcome: Equatable {
     var crownEarned = false
     /// The shift holds its Flawless crown after this run (earned now or earlier).
     var hasCrown = false
+    /// Round 8 (REVIEW-6 N2): the shift's best Perfect count before this run, and after it.
+    var previousBestPerfects = 0
+    var bestPerfects = 0
 
     /// The results card's NEW BEST badge (REVIEW-2 P2-6): only when this run beat an earlier best, never on the first
     /// run of a shift or of Rush.
@@ -96,6 +99,12 @@ struct ProgressData: Codable, Equatable {
     var hintsSeen: Set<String> = []
     /// Round 6 (decision 4, REVIEW-5 §9 #3): shift level ids cleared with every glass Perfect (the Flawless crown).
     var crowns: Set<String> = []
+    /// Round 8 (REVIEW-6 N2): the most Perfects poured in one run of each shift (level id → count, capped at the
+    /// shift's glasses): the crown chase under a 3★ bubble ("4/6") and on the venue card ("✦ 41/52").
+    var bestPerfects: [String: Int] = [:]
+    /// Round 8 (REVIEW-6 #6, Glass Cabinet lite): the vessel chosen for Rush and Practice (a venue's jug, unlocked by
+    /// Flawless crowns); nil = the house jug. Stored as the venue's raw value; an unknown one decodes as nil.
+    var vessel: VenueID? = nil
 
     static let pouredPerLitre: Double = 40_000
 
@@ -117,6 +126,35 @@ struct ProgressData: Codable, Equatable {
     static func isFlawless(_ result: RunResult) -> Bool {
         guard case .shift = result.mode, result.cleared, !result.judgements.isEmpty else { return false }
         return result.judgements.allSatisfy { $0 == .perfect }
+    }
+
+    /// Crowns on shifts that exist (the Glass Cabinet's currency).
+    var totalCrowns: Int { crowns.filter { LevelCatalog.level($0) != nil }.count }
+
+    // MARK: Best Perfects per shift (round 8, REVIEW-6 N2)
+
+    /// The shift's best Perfect count (a crowned shift counts every glass, so a round-6/7 save reads right).
+    func bestPerfects(for levelID: String) -> Int {
+        let total = LevelCatalog.level(levelID)?.orders.count ?? 0
+        let stored = max(bestPerfects[levelID] ?? 0, 0)
+        if crowns.contains(levelID) && total > 0 { return total }
+        return total > 0 ? min(stored, total) : stored
+    }
+
+    /// The venue's best Perfects summed over its shifts, against its glasses ("✦ 41/52").
+    func perfectsEarned(in venue: VenueID) -> (best: Int, glasses: Int) {
+        let levels = LevelCatalog.levels(in: venue)
+        let best = levels.reduce(0) { $0 + bestPerfects(for: $1.id) }
+        let glasses = levels.reduce(0) { $0 + $1.orders.count }
+        return (best, glasses)
+    }
+
+    // MARK: Glass Cabinet (round 8, REVIEW-6 #6)
+
+    /// The chosen vessel while the crowns still hold it (nil = the house jug).
+    var activeVessel: VenueID? {
+        guard let vessel, GlassCabinet.isUnlocked(vessel, crowns: totalCrowns) else { return nil }
+        return vessel
     }
 
     // MARK: Daily week strip (round 6, decision 5)
@@ -212,6 +250,12 @@ struct ProgressData: Codable, Equatable {
                 outcome.crownEarned = true
             }
             outcome.hasCrown = crowns.contains(id)
+            // Round 8 (REVIEW-6 N2): the shift's best Perfects (any run of it, capped at its glasses).
+            outcome.previousBestPerfects = max(bestPerfects[id] ?? 0, 0)
+            var runPerfects = result.judgements.filter { $0 == .perfect }.count
+            if let total = LevelCatalog.level(id)?.orders.count, total > 0 { runPerfects = min(runPerfects, total) }
+            if runPerfects > outcome.previousBestPerfects { bestPerfects[id] = runPerfects }
+            outcome.bestPerfects = bestPerfects(for: id)
         case .rush:
             outcome.previousBest = rushBest
             outcome.isNewBest = result.score > rushBest && result.score > 0
@@ -346,6 +390,56 @@ extension ProgressData {
         hintsSeen = (try? c.decodeIfPresent(Set<String>.self, forKey: .hintsSeen)) ?? []
         // Round 6: tolerant like the rest (an older save has no crowns; a bad value never costs the stars).
         crowns = (try? c.decodeIfPresent(Set<String>.self, forKey: .crowns)) ?? []
+        // Round 8: tolerant too (an older save has neither; a bad value costs only itself).
+        bestPerfects = (try? c.decodeIfPresent([String: Int].self, forKey: .bestPerfects)) ?? [:]
+        if let raw = try? c.decodeIfPresent(String.self, forKey: .vessel) {
+            vessel = VenueID(rawValue: raw)
+        }
+    }
+}
+
+// MARK: - Glass Cabinet lite (round 8, REVIEW-6 #6)
+
+/// Venue vessels the player unlocks with Flawless crowns and picks for Rush and Practice (the scene draws that venue's
+/// jug: `GameScene.vesselOverride`). Shifts and the Daily keep their venue's own jug. Pure; tested.
+enum GlassCabinet {
+    struct Vessel: Equatable, Identifiable {
+        /// The venue whose jug this is; nil = the house jug (each venue's own, as before).
+        var venue: VenueID?
+        var name: String
+        /// Flawless crowns needed.
+        var crowns: Int
+        var id: String { venue?.rawValue ?? "house" }
+    }
+
+    static let vessels: [Vessel] = [
+        Vessel(venue: nil, name: "House jug", crowns: 0),
+        Vessel(venue: .sodaFountain, name: "Soda dispenser", crowns: 3),
+        Vessel(venue: .milkshakeDiner, name: "Shake tin", crowns: 6),
+        Vessel(venue: .potionShop, name: "Potion flask", crowns: 10),
+        Vessel(venue: .sandBar, name: "Copper scoop", crowns: 14),
+    ]
+
+    /// Crowns `venue`'s vessel needs (nil for a venue with no vessel in the cabinet).
+    static func crownsNeeded(_ venue: VenueID?) -> Int? {
+        vessels.first(where: { $0.venue == venue })?.crowns
+    }
+
+    static func isUnlocked(_ venue: VenueID?, crowns: Int) -> Bool {
+        guard let need = crownsNeeded(venue) else { return false }
+        return crowns >= need
+    }
+
+    /// The next vessel still locked, and how many crowns it needs (nil once all are open).
+    static func nextUnlock(crowns: Int) -> (vessel: Vessel, missing: Int)? {
+        guard let next = vessels.first(where: { $0.crowns > crowns }) else { return nil }
+        return (next, next.crowns - max(crowns, 0))
+    }
+
+    /// "3 more 👑 for the Shake tin" (nil once everything is open).
+    static func nextLine(crowns: Int) -> String? {
+        guard let next = nextUnlock(crowns: crowns) else { return nil }
+        return "\(next.missing) more 👑 for the \(next.vessel.name)"
     }
 }
 
@@ -399,6 +493,7 @@ final class ProgressStore: ObservableObject {
     func dailyStreak(today: Int) -> Int { data.dailyStreak(today: today) }
     func hasSeenHint(_ id: String) -> Bool { data.hintsSeen.contains(id) }
     func hasCrown(_ levelID: String) -> Bool { data.hasCrown(levelID) }
+    func bestPerfects(for levelID: String) -> Int { data.bestPerfects(for: levelID) }
 
     /// The shift after `levelID` in play order, if it is playable now.
     func nextLevel(after levelID: String) -> Level? {
@@ -461,6 +556,14 @@ final class ProgressStore: ObservableObject {
     func markHintSeen(_ id: String) {
         guard !data.hintsSeen.contains(id) else { return }
         data.hintsSeen.insert(id)
+        save()
+    }
+
+    /// Round 8 (Glass Cabinet): picks the Rush/Practice vessel (nil = the house jug). A locked vessel is refused.
+    func setVessel(_ venue: VenueID?) {
+        if let venue, !GlassCabinet.isUnlocked(venue, crowns: data.totalCrowns) { return }
+        guard data.vessel != venue else { return }
+        data.vessel = venue
         save()
     }
 

@@ -13,6 +13,8 @@ import Testing
 //
 // It prints one machine-readable line per level/profile, Rush profile and Daily profile:
 //   BRIM-BAL level=1-3 profile=casual clear=0.83 stars=2.1 three=0.17 perfect=0.41 ... short=0.05 dur=48.2 n=6
+// plus a `BRIM-BAL stars` summary (likely-3★ shares, Sand Bar unlock walls) and, on Rush lines, `reachTier3` (share
+// of runs whose tier-3 glass reached the stop, i.e. that got through the Fizz tier).
 // Assertions are LOOSE sanity bounds (CI stays green while numbers move); the target curve is printed as WARN lines.
 //
 // Cost: CI runs ~2,900–5,700 debug-build GameSession frames/s across its cores (run 40248384068), so a full sweep (44 levels × 3 profiles × N,
@@ -689,6 +691,8 @@ struct BalanceAttempt {
     var duration: Double
     var capped: Bool
     var frames: Int
+    /// Rush: the highest tier whose glass reached the stop (`GameSnapshot.rushTier`); 0 outside Rush.
+    var topTier: Int = 0
 }
 
 /// One player's sequence of attempts (learning carries from one to the next). Mutated only by the thread running it.
@@ -723,10 +727,13 @@ struct BalanceStats {
     var spill: Int = 0
     var duration: Double = 0
     var score: Int = 0
+    /// Rush runs whose tier-3 glass reached the stop (survived the Fizz tier).
+    var reachedTier3: Int = 0
 
     mutating func add(_ a: BalanceAttempt) {
         attempts += 1
         if a.cleared { clears += 1 }
+        if a.topTier >= 3 { reachedTier3 += 1 }
         stars += a.stars
         if a.stars >= 3 { threeStars += 1 }
         if a.capped { capped += 1 }
@@ -763,6 +770,7 @@ struct BalanceStats {
         spill += o.spill
         duration += o.duration
         score += o.score
+        reachedTier3 += o.reachedTier3
     }
 
     func per(_ n: Int) -> Double {
@@ -779,6 +787,7 @@ struct BalanceStats {
     var meanDuration: Double { return attempts > 0 ? duration / Double(attempts) : 0 }
     var meanGlasses: Double { return per(glasses) }
     var meanScore: Double { return per(score) }
+    var reachTier3Rate: Double { return per(reachedTier3) }
 }
 
 enum BalanceRun {
@@ -809,8 +818,10 @@ enum BalanceRun {
         var now: Double = 0
         var frames: Int = 0
         var judged: [Judgement] = []
+        var topTier: Int = 0
         while !s.isFinished && now < spec.cap {
             let before: GameSnapshot = s.snapshot
+            topTier = max(topTier, before.rushTier)
             human.perceive(before, now: now)
             human.decide(before, now: now, dt: dt)
             let tilt: Double = human.output(now: now, dt: dt)
@@ -822,12 +833,14 @@ enum BalanceRun {
             now += dt
             frames += 1
         }
+        let last: GameSnapshot = s.snapshot
+        topTier = max(topTier, last.rushTier)
         if let r = s.result {
             return BalanceAttempt(cleared: r.cleared, stars: r.stars, judgements: judged, score: r.score,
-                                  duration: s.snapshot.time, capped: false, frames: frames)
+                                  duration: last.time, capped: false, frames: frames, topTier: topTier)
         }
-        return BalanceAttempt(cleared: false, stars: 0, judgements: judged, score: s.snapshot.score, duration: now,
-                              capped: true, frames: frames)
+        return BalanceAttempt(cleared: false, stars: 0, judgements: judged, score: last.score, duration: now,
+                              capped: true, frames: frames, topTier: topTier)
     }
 
     /// Runs the chains breadth-first: round r plays every chain's r-th attempt, in parallel. A round that starts
@@ -1011,11 +1024,21 @@ struct BalanceTests {
         var expertLevels: Int = 0
         var expertAnyClear: Int = 0
         var expertClearSum: Double = 0
+        // Round 8: the Sand Bar opens at 120 stars (every campaign shift 3★). An expert should be able to 3★ each
+        // campaign shift within ten tries; a shift where that is unlikely is a wall in front of the secret venue.
+        var expertThreeLikely: Int = 0
+        var expertCampaign: Int = 0
+        var sandWalls: [String] = []
         for l in LevelCatalog.levels {
             if let s = stats(l.id, 1), s.attempts >= 2 {
                 casualLevels += 1
                 // Chance of a 3★ within five tries.
                 if 1 - pow(1 - s.threeRate, 5) >= 0.5 { casualThreeLikely += 1 }
+            }
+            if let s = stats(l.id, 2), s.attempts >= 2, l.venue != .sandBar {
+                expertCampaign += 1
+                if 1 - pow(1 - s.threeRate, 5) >= 0.5 { expertThreeLikely += 1 }
+                if 1 - pow(1 - s.threeRate, 10) < 0.5 { sandWalls.append(l.id) }
             }
             if let s = stats(l.id, 2) {
                 expertLevels += 1
@@ -1033,6 +1056,15 @@ struct BalanceTests {
             if share < 0.4 || share > 0.8 {
                 BalanceRun.warn("casual likely 3★ (within 5 tries) on \(BalanceRun.f2(share)) of levels, target 0.4–0.8")
             }
+        }
+        if casualLevels > 0 || expertCampaign > 0 {
+            var line: String = "BRIM-BAL stars casualLikely3=\(BalanceRun.f2(casualLevels > 0 ? Double(casualThreeLikely) / Double(casualLevels) : 0))"
+            line += " expertLikely3=\(BalanceRun.f2(expertCampaign > 0 ? Double(expertThreeLikely) / Double(expertCampaign) : 0))"
+            line += " sandWalls=\(sandWalls.count) n=\(casualLevels)/\(expertCampaign)"
+            BalanceRun.say(line)
+        }
+        if expertCampaign >= 20 && !sandWalls.isEmpty {
+            BalanceRun.warn("Sand Bar unlock: expert unlikely to 3★ within 10 tries: \(sandWalls.joined(separator: ","))")
         }
         if expertLevels >= 10 && expertClearSum / Double(expertLevels) < 0.9 {
             BalanceRun.warn("expert mean clear \(BalanceRun.f2(expertClearSum / Double(expertLevels))) < 0.90")
@@ -1095,13 +1127,19 @@ struct BalanceTests {
             line += " dur=\(BalanceRun.f1(st.meanDuration)) perfect=\(BalanceRun.f2(st.frac(st.perfect)))"
             line += " spill=\(BalanceRun.f2(st.frac(st.spill))) over=\(BalanceRun.f2(st.frac(st.over)))"
             line += " short=\(BalanceRun.f2(st.frac(st.short))) score=\(Int(st.meanScore.rounded())) capped=\(st.capped)"
+            line += " reachTier3=\(BalanceRun.f2(st.reachTier3Rate))"
             BalanceRun.say(line)
             if tier != .smoke {
-                if name == "casual" && (st.meanDuration < 120 || st.meanDuration > 180) {
-                    BalanceRun.warn("rush casual run \(BalanceRun.f1(st.meanDuration)) s, target 120–180")
+                // Round 8 (REVIEW-6 N1, BALANCE.md §10): ≥ 70 % of casual runs get through the Fizz tier to the
+                // Conveyor, which puts a casual run at 3–5 min (was 2–3, which assumed most runs ended in tier 2).
+                if name == "casual" && st.attempts >= 4 && st.reachTier3Rate < 0.7 {
+                    BalanceRun.warn("rush casual reachTier3 \(BalanceRun.f2(st.reachTier3Rate)) < 0.70")
                 }
-                if name == "expert" && (st.meanDuration < 300 || st.meanDuration > 480) {
-                    BalanceRun.warn("rush expert run \(BalanceRun.f1(st.meanDuration)) s, target 300–480")
+                if name == "casual" && (st.meanDuration < 180 || st.meanDuration > 300) {
+                    BalanceRun.warn("rush casual run \(BalanceRun.f1(st.meanDuration)) s, target 180–300")
+                }
+                if name == "expert" && (st.meanDuration < 300 || st.meanDuration > 540) {
+                    BalanceRun.warn("rush expert run \(BalanceRun.f1(st.meanDuration)) s, target 300–540")
                 }
             }
         }

@@ -145,7 +145,10 @@ final class GameController: ObservableObject, SceneDriver {
     /// no belt, patience or line fade runs under the card. Any change of hint (dismiss, first pour, a new run) re-syncs.
     @Published private(set) var activeHint: HintKind? {
         didSet {
-            if activeHint != oldValue { syncStartHold() }
+            guard activeHint != oldValue else { return }
+            syncStartHold()
+            // Round 8 (REVIEW-6 N4): a phone's shift banner waits for the venue intro card to go.
+            if activeHint?.isVenueIntro != true { releaseDeferredShiftBanner() }
         }
     }
     /// A hinge has reported this launch (or on an earlier launch of this device), or demo `duo`.
@@ -236,6 +239,14 @@ final class GameController: ObservableObject, SceneDriver {
     /// The venue the scene was last told to show (nil = not yet).
     private var shownVenue: VenueID?
 
+    // Round 8
+    /// REVIEW-6 N4: the shift banner held back on a phone while the venue intro card is up (shown when it goes).
+    private var deferredShiftBanner: String?
+    /// Demo `served=N`: glasses to play headless before the live frames.
+    private var servedSeed = 0
+    /// Demo `freezeOn=faded`: the glass whose faded line is being timed, and when (session-sim time) it faded.
+    private var fadedGlassID: Int?
+    private var fadedAt: Double?
     init(store: ProgressStore, settings: SettingsStore, demo: DemoConfig?) {
         self.store = store
         self.settings = settings
@@ -365,10 +376,60 @@ final class GameController: ObservableObject, SceneDriver {
     /// it was drawn for a conveyor tier (`Rules.rushVenue`, a tier every `CoreTuning.rushTierEvery` glasses); a glass
     /// waiting in the slot is never a belt glass. Empty = no queue. Pure.
     static func rushBeltQueue(next: GlassOrder?, nextIndex: Int, slotGlassWaiting: Bool) -> [GlassOrder] {
-        guard let next, !slotGlassWaiting, nextIndex >= 0 else { return [] }
-        let tier = nextIndex / max(CoreTuning.rushTierEvery, 1) + 1
-        return Rules.rushVenue(tier: tier) == .conveyor ? [next] : []
+        rushBeltQueue(next: next.map { [$0] } ?? [], nextIndex: nextIndex, slotGlassWaiting: slotGlassWaiting)
     }
+
+    /// Round 8 (ROUND-8 Core row): Core now peeks up to `rushQueuePeek` plans (`GameSession.upcomingOrders`, nearest
+    /// first, plan numbers `nextIndex`, `nextIndex + 1`…). The queue is the leading run of them drawn for a conveyor
+    /// tier; it stops at the first that isn't (a belt glass never follows a counter glass). Pure.
+    static func rushBeltQueue(next: [GlassOrder], nextIndex: Int, slotGlassWaiting: Bool) -> [GlassOrder] {
+        guard !slotGlassWaiting, nextIndex >= 0 else { return [] }
+        let every = max(CoreTuning.rushTierEvery, 1)
+        var queue: [GlassOrder] = []
+        for (i, order) in next.prefix(rushQueuePeek).enumerated() {
+            let tier = (nextIndex + i) / every + 1
+            guard Rules.rushVenue(tier: tier) == .conveyor else { break }
+            queue.append(order)
+        }
+        return queue
+    }
+
+    /// How many upcoming Rush orders ride the belt behind the lead glass (Core peeks up to 2).
+    static let rushQueuePeek = 2
+
+    /// Round 8 (REVIEW-6 N4): on a phone (no fold) the shift banner waits until the venue intro card is gone, so the
+    /// two never stack over the jug; on a Duo the banner sits in its own lane above the card. Pure.
+    static func defersShiftBanner(hasFold: Bool, introCardUp: Bool) -> Bool {
+        !hasFold && introCardUp
+    }
+
+    /// Round 8 (REVIEW-6 #6, Glass Cabinet lite): the vessel the scene draws instead of the venue's own jug: the
+    /// cabinet's pick in Rush and Practice (the Home attract loop too); shifts and the Daily keep their venue's jug. Pure.
+    static func vesselOverride(for mode: GameMode, chosen: VenueID?) -> VenueID? {
+        switch mode {
+        case .rush, .practice: return chosen
+        case .shift, .daily: return nil
+        }
+    }
+
+    /// Demo `freezeOn=repose` (round 8, frame 30): the slide is telegraphed (≥ `reposeFreezeAt`) but the sand still
+    /// holds (< 1); after `reposeFreezeGiveUp` glasses without catching that window, any value ≥ `reposeFreezeAt`. Pure.
+    static func reposeFreezeReady(progress: Double, servedSoFar: Int) -> Bool {
+        guard progress.isFinite, progress >= reposeFreezeAt else { return false }
+        return progress < 1 || servedSoFar >= reposeFreezeGiveUp
+    }
+    static let reposeFreezeAt = 0.85
+    static let reposeFreezeGiveUp = 3
+
+    /// Demo `freezeOn=faded` (round 8, frame 31): `sinceFade` session seconds after the glass's line fully faded. 1 s
+    /// after the fade, or from 0.3 s once that glass is being poured and ≥ 60 % of the way to its line. Pure.
+    static func fadedFreezeReady(sinceFade: Double, pouring: Bool, fillOfLine: Double) -> Bool {
+        if sinceFade >= 1.0 { return true }
+        return sinceFade >= 0.3 && pouring && fillOfLine >= 0.6
+    }
+
+    /// Demo `freezeOn=lowjug` (round 8, frame 33): mid-pour with the jug under this fill.
+    static let lowJugFreezeBelow = 0.2
 
     /// How long (session seconds) the shift banner stays up, and the tier banner after a change.
     static let shiftBannerSeconds = 1.6
@@ -382,6 +443,7 @@ final class GameController: ObservableObject, SceneDriver {
             store.replace(with: DemoConfig.progressData(demo.progress))
             if demo.hints == .fresh { store.resetHints() }
             streakSeed = max(demo.streak ?? 0, 0)
+            servedSeed = max(demo.served ?? 0, 0)
             switch demo.effectiveScreen {
             case .menu, .icon:
                 startAttract()
@@ -716,6 +778,13 @@ final class GameController: ObservableObject, SceneDriver {
         startAttract()
     }
 
+    /// Round 8 (Glass Cabinet): picks the Rush/Practice vessel (nil = the house jug) and shows it at once (the Home
+    /// attract loop is practice).
+    func chooseVessel(_ venue: VenueID?) {
+        store.setVessel(venue)
+        syncVessel()
+    }
+
     func showVenues() { setRoute(.venues) }
     func showSettings() { setRoute(.settings) }
     func showHome() {
@@ -747,6 +816,19 @@ final class GameController: ObservableObject, SceneDriver {
         startHeld = on
         session.setStartHold(on)
         trace("BRIM-T start hold \(on ? 1 : 0)")
+    }
+
+    /// Round 8 (REVIEW-6 N4): the venue intro card went (tap, first pour): a phone's held-back shift banner shows now,
+    /// for its usual time. Nothing on a finished run or the attract loop.
+    private func releaseDeferredShiftBanner() {
+        guard let text = deferredShiftBanner else { return }
+        deferredShiftBanner = nil
+        guard !isAttract, let session, !session.isFinished else { return }
+        bannerSerial += 1
+        banner = PlayBanner(kind: .shift, text: text, serial: bannerSerial)
+        bannerUntil = session.snapshot.time + Self.shiftBannerSeconds
+        bannerHoldsOnGate = false
+        publishHUD(session.snapshot, now: CACurrentMediaTime(), force: true)
     }
 
     // MARK: - SceneDriver
@@ -906,7 +988,9 @@ final class GameController: ObservableObject, SceneDriver {
         demoSource = nil
         if let demo, !isAttract {
             if let style = demo.autopilot, let pilot = AutopilotStyle(rawValue: style.rawValue) {
-                demoSource = AutopilotTiltSource(style: pilot, snapshot: { [weak self] in self?.session?.snapshot })
+                // Round 8: `missAt=N` pours glass N with the `short` autopilot (DemoRunner.pilot).
+                demoSource = DemoRunner.pilot(style: pilot, missAt: demo.missAt,
+                                              snapshot: { [weak self] in self?.session?.snapshot })
             } else if demo.duo {
                 demoSource = hinge
             } else {
@@ -941,6 +1025,14 @@ final class GameController: ObservableObject, SceneDriver {
         }
         if scene.rushLook != rush { scene.rushLook = rush }
         if scene.dailyNumber != daily { scene.dailyNumber = daily }
+        syncVessel()
+    }
+
+    /// Round 8 (REVIEW-6 #6): the cabinet's vessel on the scene for this mode (set only when it changes).
+    private func syncVessel() {
+        guard let scene else { return }
+        let vessel = Self.vesselOverride(for: mode, chosen: store.data.activeVessel)
+        if scene.vesselOverride != vessel { scene.vesselOverride = vessel }
     }
 
     /// Round 6 (decision 2): the scene shows the snapshot's venue (Rush travels one venue per tier; if the scene also
@@ -971,7 +1063,8 @@ final class GameController: ObservableObject, SceneDriver {
                     onCounter += 1
                 }
             }
-            orders = Self.rushBeltQueue(next: session.upcomingOrder, nextIndex: s.ordersDone + onCounter,
+            // Round 8: Core peeks up to two plans while a belt glass is on the counter (`upcomingOrders`).
+            orders = Self.rushBeltQueue(next: session.upcomingOrders, nextIndex: s.ordersDone + onCounter,
                                         slotGlassWaiting: waiting)
         }
         if scene.upcomingOrders != orders { scene.upcomingOrders = orders }
@@ -1007,6 +1100,9 @@ final class GameController: ObservableObject, SceneDriver {
         session = newSession
         startHeld = false               // a new session starts unheld; the intro card below holds it again
         tierChangedAt = nil
+        deferredShiftBanner = nil       // before `activeHint = nil` below: an old run's banner never shows on this one
+        fadedGlassID = nil
+        fadedAt = nil
         // After the session exists, so the look follows its snapshot (round 6), never the run being replaced.
         applySceneLook()
         frozen = false
@@ -1028,6 +1124,15 @@ final class GameController: ObservableObject, SceneDriver {
         // Demo `streak=N`: really play the run up to an N-Perfect streak, so score, served count and streak agree.
         if demo != nil && streakSeed > 0 && !isAttract {
             let progress = DemoRunner.playUpToStreak(newSession, streak: streakSeed)
+            recap = progress.recap
+            runJudgements = progress.recap.map { $0.judgement }
+            servedCount = progress.served
+            if let last = progress.recap.last { hud.lastJudgement = last.judgement }
+        } else if demo != nil && servedSeed > 0 && !isAttract {
+            // Round 8 (`served=N`): really play the run up to N glasses served (late Rush tiers follow the count).
+            let style = demo?.autopilot.flatMap { AutopilotStyle(rawValue: $0.rawValue) } ?? .perfect
+            let progress = DemoRunner.playUpToServed(newSession, served: servedSeed, style: style,
+                                                     missAt: demo?.missAt)
             recap = progress.recap
             runJudgements = progress.recap.map { $0.judgement }
             servedCount = progress.served
@@ -1063,9 +1168,14 @@ final class GameController: ObservableObject, SceneDriver {
         tierFreezePending = false
         lastRushTier = newSession.snapshot.rushTier
         if !isAttract, servedCount == 0, let text = Self.shiftBanner(for: mode) {
-            banner = PlayBanner(kind: .shift, text: text, serial: bannerSerial)
-            bannerUntil = newSession.snapshot.time + Self.shiftBannerSeconds
-            bannerHoldsOnGate = true
+            if Self.defersShiftBanner(hasFold: layout.hasFold, introCardUp: activeHint?.isVenueIntro == true) {
+                // Round 8 (REVIEW-6 N4): a phone shows the card alone; the banner follows it (`releaseDeferred…`).
+                deferredShiftBanner = text
+            } else {
+                banner = PlayBanner(kind: .shift, text: text, serial: bannerSerial)
+                bannerUntil = newSession.snapshot.time + Self.shiftBannerSeconds
+                bannerHoldsOnGate = true
+            }
         }
         syncFeedbackPause()
         publishHUD(newSession.snapshot, now: CACurrentMediaTime(), force: true)
@@ -1250,7 +1360,7 @@ final class GameController: ObservableObject, SceneDriver {
         let fallback: AutopilotStyle
         if case .shift = mode { fallback = .perfect } else { fallback = .great }
         let style = demo.autopilot.flatMap { AutopilotStyle(rawValue: $0.rawValue) } ?? fallback
-        let played = DemoRunner.playRun(mode: mode, style: style, seed: seed(for: mode))
+        let played = DemoRunner.playRun(mode: mode, style: style, seed: seed(for: mode), missAt: demo.missAt)
         start(mode: mode)
         let outcome = store.record(played.0, today: LevelCatalog.dayNumber(for: Date()))
         summary = makeSummary(played.0, outcome: outcome, recap: played.1)
@@ -1325,6 +1435,33 @@ final class GameController: ObservableObject, SceneDriver {
                Self.tierFreezeReady(sinceChange: simTime - since,
                                     oldGlassLeaving: s.glasses.contains(where: { $0.phase == .leaving })) {
                 tierChangedAt = nil
+                freeze(target.rawValue, snapshot: s, now: now)
+            }
+        case .repose:
+            // Round 8 (REVIEW-6 N6, frame 30): the sand slide telegraphed, before it goes.
+            if s.phase == .playing, Self.reposeFreezeReady(progress: s.jug.reposeProgress, servedSoFar: servedCount) {
+                freeze(target.rawValue, snapshot: s, now: now)
+            }
+        case .faded:
+            // Round 8 (frame 31): the line under the spout has faded; the ghost tick is the only mark left.
+            guard s.phase == .playing, let glass = Self.activeGlass(s), glass.lineOpacity <= 0.01,
+                  glass.lineHeight > 0 else {
+                fadedGlassID = nil
+                fadedAt = nil
+                return
+            }
+            if fadedGlassID != glass.id {
+                fadedGlassID = glass.id
+                fadedAt = simTime
+            }
+            let fill = Double((glass.liquidHeight + glass.foamHeight) / glass.lineHeight)
+            if let at = fadedAt,
+               Self.fadedFreezeReady(sinceFade: simTime - at, pouring: !s.stream.isEmpty, fillOfLine: fill) {
+                freeze(target.rawValue, snapshot: s, now: now)
+            }
+        case .lowjug:
+            // Round 8 (frame 33): Rush running low, mid-pour.
+            if s.phase == .playing, s.jug.fill < Self.lowJugFreezeBelow, !s.stream.isEmpty, Self.activeGlass(s) != nil {
                 freeze(target.rawValue, snapshot: s, now: now)
             }
         }

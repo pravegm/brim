@@ -5,7 +5,7 @@
 round-5 content (§9); this pass was tuned on the Node mirror of Core + the same player model and waits for the next
 sweep. Treat every number as a model estimate until the real-Duo TestFlight session calibrates it (§8).*
 
-**Latest pass: §9 (round 6).**
+**Latest pass: §10 (round 8: Rush Fizz tier, Sand Bar hourglass, 2-7).**
 
 ## 1. What we want, and why
 
@@ -35,7 +35,9 @@ the Flawless crown (every glass Perfect) is the mastery goal.
 | Casual 3★ likely | 40–80 % of shifts (WARN outside) | stars are earnable by clean pouring; crowns are mastery |
 | Expert clears | ≥ 90 % mean; no shift at 0 % | hard ≠ broken |
 | Venue v shift 1 vs venue v−1 shift 8 | shift 1 easier (casual ★) | each venue opens with a breather |
-| Rush run length | casual 2–3 min, expert 5–8 min | the long session; leaderboard spread |
+| Rush reaches tier 3 | casual ≥ 70 % of runs (round 8) | "Rush travels" is worthless if runs die in the Fizz tier |
+| Rush run length | casual 3–5 min, expert 5–9 min (round 8; were 2–3 and 5–8) | the long session; leaderboard spread |
+| Sand Bar reachable | expert likely to 3★ every campaign shift within 10 tries | it opens at 120★ (all 3★) |
 | Daily clear | casual ≥ 70 % | one scored attempt; most should finish it |
 | Shift length | 30–70 s | "one more go" |
 
@@ -69,10 +71,11 @@ belt play has no pre-hover.
 ```
 BRIM-BAL level=2-7 profile=casual clear=0.50 stars=0.6 three=0.00 perfect=0.14 great=… good=… spill=0.36 over=0.02 short=0.08 dur=59.2 n=12
 BRIM-BAL venue=2 profile=casual levels=8 clear=0.65 stars=1.0 three=0.00 perfect=0.22 dur=54.1
-BRIM-BAL rush profile=expert runs=12 glasses=22.2 dur=135.0 perfect=0.38 spill=0.01 over=0.06 short=0.05 score=2380 capped=0
+BRIM-BAL rush profile=expert runs=12 glasses=22.2 dur=135.0 perfect=0.38 spill=0.01 over=0.06 short=0.05 score=2380 capped=0 reachTier3=1.00
+BRIM-BAL stars casualLikely3=0.61 expertLikely3=0.90 sandWalls=0 n=44/40
 BRIM-BAL daily profile=casual days=20 clear=0.60 perfect=0.23 spill=0.06 over=0.11 short=0.05 dur=57.8 score=466
 BRIM-BAL timing suite=levels tier=standard attempts=264 skipped=0 frames=634000 wall=540.2 fps=1174
-BRIM-BAL WARN rush casual run 95.2 s, target 120–180
+BRIM-BAL WARN rush casual reachTier3 0.42 < 0.70
 ```
 `spill` = drink crossed the rim; `over` = filled past the Good band (a strike since round 5); `three` = 3★ attempts;
 `dur` = seconds of play per attempt.
@@ -250,3 +253,57 @@ and strikes) but not Rush's per-venue menus, so its Rush numbers are not quoted;
 
 **For the next sweep, watch:** the venue-1 novice WARN lines (1-1…1-4), the 2-1/2-2 vs 1-8 WARN, casual likely-3★
 (WARN outside 0.4–0.8) and Daily casual (WARN under 0.70).
+
+## 10. Round 8 pass (REVIEW-6 N1: the Rush Fizz-tier wall; hourglass; star re-check)
+
+**The mirror now carries Rush as shipped** (round 6–7 Core: per-venue menus, `Rules.rushVenue`, every Conveyor glass on
+a belt, Fizz head caps). It tracks the tier each glass reached, so the Rush line gains `reachTier3`: the share of runs
+whose tier-3 glass reached the stop (got through the Fizz tier). Casual runs are chained three seeds to a player, as
+on CI; 300 casual runs over two seed sets, because the spread between players is wide (two sets of 150 differed by up
+to 0.12).
+
+**N1 is real, and it is two walls.** Round-7 Rush, casual: **reachTier3 0.23**, novice 0.03, expert 0.97. Casual
+deaths in tier 2 split roughly evenly between three rim spills (root beer spilled 40 % of the time, cola 24 %, cream
+soda 3 %, even at the existing 0.68/0.8 caps) and a **dry jug**: the Lemonade tier alone takes the 1.4× jug to about
+half full (overs and Goods don't refill), so the jug runs out in the Fizz tier. The REVIEW-6 fix (caps, cream soda,
++2 s) on its own reaches about 0.4–0.55, so the jug had to grow as well.
+
+**Changes** (Rush tunables only):
+
+| What | Where | Was → now |
+|---|---|---|
+| Fizz line cap: 0.70 − 0.1 × (foam − 0.4), so cream soda 0.70, cola 0.65, root beer 0.61 | `CoreTuning.rushFizzLineCap/PerFoam`, `makeRushPlan` | 0.8 / 0.68 head caps only |
+| Fizz drinks: tier 2 cream soda 4 : cola 1, no root beer; later Fizz visits (tiers 6, 10: experts) 3 : 1 : 1 | `GameSession.rushLiquidPool` (one `pick`, as before) | 1 : 1 : 1 |
+| Fizz patience +2 s a glass | `CoreTuning.rushFizzPatienceBonus` | — |
+| Rush jug volume 1.4 → 1.6 × the standard jug (same drawn shape; refills unchanged) | `CoreTuning.rushVolumeBoost` | 1.4 |
+
+Alternatives that were modelled: also allowing root beer in tier 2 at 1 in 5 or 1 in 7 (0.59–0.66); refills of 0.22/0.14
+on the 1.4 jug instead of a bigger jug (0.73–0.76); Great refill 0.12 on top (≈ +0.03).
+
+**After (mirror):**
+
+| | reachTier3 | run | ends (spill / dry) |
+|---|---|---|---|
+| casual (300 runs) | **0.23 → 0.80** (0.83 / 0.77 per seed set) | 157 → 255 s | 0.43 / 0.57 → 0.60 / 0.40 |
+| novice (90) | 0.03 → 0.64 | 142 → 198 s | |
+| expert (72) | 0.97 → 1.00 | 405 → ~510 s (≈ 20 % of runs hit the 600 s cap) | experts now die at tier 7 (the second Conveyor) |
+
+Casual tier-2 spill rate ~22 % → ~9 %. A run that gets through tier 2 lasts beyond 2–3 minutes, so the Rush length
+targets move to casual 3–5 min and expert 5–9 min (§2); the harness WARNs on casual `reachTier3` < 0.70. CI's `full`
+tier runs 12 Rush seeds per profile, so expect its casual reachTier3 to wander ±0.12 around the mirror's figure. The Feel
+owner's foam-competent autopilot should fix frame 20's capture separately (REVIEW-6 N1 step 1).
+
+**Star rule re-check** (3★ = no miss; mirror, 12 tries per shift and profile): casual likely-3★ on **0.61** of shifts
+(target 0.4–0.8), expert 0.91, novice 0.36. Mean clear 0.63 / 0.81 / 0.97. Daily casual 0.87. The new
+`BRIM-BAL stars` line also counts **Sand Bar walls**: campaign shifts where an expert is unlikely to 3★ within ten
+tries. There was one: **2-7 "Root of the Problem"** (expert cleared 12/12 but 3★ 0/12: root beer to 0.72–0.75 in a pint
+and 0.62 in a jar spilled 26–31 % even for experts), so the 120-star unlock was out of reach. 2-7 now pours 0.5–0.65
+(mug, pint, highball, jar; untimed mug to 0.55 first, kept for CoreTests): expert 3★ 0.00 → 0.42 a try, casual clear
+0.53 → 0.67, novice 0.33 → 0.58. Same glass/drink pairs, so `dailyMenu` and every Daily stay byte-identical (checked).
+Sand walls now: none.
+
+**Hourglass** (GAME-DESIGN §6). The level crawls through the bulbs and races over the shoulders and the waist. In the
+model, lines at 0.4–0.55 are over-pour magnets (casual over 16–25 %), while 0.3 and 0.65–0.85 play like a jar. It is
+served in 6-2 (first glass, 0.75, so CI/store can freeze an honest `mode=shift:6-2` mid-pour frame, scenario 32), 6-3
+(0.32 and 0.75) and 6-4 (0.72). Sand Bar after (casual / expert clear): 6-2 0.75 / 1.00, 6-3 0.92 / 1.00, 6-4 0.92 /
+0.75: within noise of before.

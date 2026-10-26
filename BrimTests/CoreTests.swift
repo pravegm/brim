@@ -2084,6 +2084,119 @@ struct CoreTests {
         #expect(swaps(next) == 1)
         #expect(s.snapshot.jug.fill >= 0.5)
     }
+
+    // MARK: Round 8: upcoming orders (Rush's belt queue)
+
+    /// The upcoming orders that are not on the counter yet (a waiting slot glass already is).
+    private func unplacedUpcoming(_ s: GameSession) -> [GlassOrder] {
+        let up: [GlassOrder] = s.upcomingOrders
+        let waiting: Bool = s.snapshot.glasses.contains(where: { (g: GlassState) -> Bool in g.isWaitingInSlot })
+        if waiting && !up.isEmpty { return Array(up.dropFirst()) }
+        return up
+    }
+
+    private func glassMatches(_ g: GlassState, _ o: GlassOrder) -> Bool {
+        if g.shape.id != o.glass || g.liquid.id != o.liquid { return false }
+        let line: Double = o.line * Double(g.shape.interiorHeight)
+        return abs(Double(g.lineHeight) - line) < 0.001
+    }
+
+    @Test func rushConveyorTierPeeksTheNextGlassesAndSpawnsThem() {
+        // An idle Rush (seed 21, as `rushTravelsOneVenuePerTier`) walks through tier 3, the Conveyor. While a belt
+        // glass rides there is no slot glass, yet `upcomingOrders` must name the next two; and every glass that appears,
+        // in every tier, must be the one peeked the frame before, with peeks stable until a glass is placed.
+        let s: GameSession = GameSession(mode: .rush, layout: phoneLayout(), seed: 21)
+        var maxID: Int = 0
+        for g in s.snapshot.glasses { maxID = max(maxID, g.id) }
+        var peeked: [GlassOrder] = unplacedUpcoming(s)
+        #expect(s.upcomingOrders.count == GameSession.upcomingDepth)
+        #expect(s.upcomingOrder == s.upcomingOrders.first)
+        var problems: [String] = []
+        var matched: Int = 0
+        var beltGlasses: [Int] = []
+        var beltPeekMatches: Int = 0
+        var t: Double = 0
+        while t < 900 && s.snapshot.rushTier <= 4 && !s.isFinished {
+            let beltRiding: Bool = s.snapshot.glasses.contains(where: { (g: GlassState) -> Bool in
+                g.patienceTotal == nil && !g.isWaitingInSlot && g.phase != .leaving
+            })
+            s.step(dt: 1.0 / 30.0, tilt: 0)
+            t += 1.0 / 30.0
+            var fresh: [GlassState] = []
+            for g in s.snapshot.glasses where g.id > maxID { fresh.append(g) }
+            var k: Int = 0
+            while k < fresh.count {
+                let g: GlassState = fresh[k]
+                maxID = max(maxID, g.id)
+                if k < peeked.count {
+                    if glassMatches(g, peeked[k]) {
+                        matched += 1
+                        if beltRiding { beltPeekMatches += 1 }
+                    } else {
+                        problems.append("t \(t): glass \(g.id) \(g.shape.id)/\(g.liquid.id), peeked \(peeked[k])")
+                    }
+                } else {
+                    problems.append("t \(t): glass \(g.id) appeared with no peek")
+                }
+                k += 1
+            }
+            let now: [GlassOrder] = unplacedUpcoming(s)
+            if fresh.isEmpty && !now.isEmpty && !peeked.isEmpty && now.first != peeked.first {
+                problems.append("t \(t): peek changed with no glass placed")
+            }
+            peeked = now
+            for b in s.snapshot.glasses where b.patienceTotal == nil && !b.isWaitingInSlot && b.phase != .leaving {
+                if !beltGlasses.contains(b.id) { beltGlasses.append(b.id) }
+                if s.upcomingOrders.count != GameSession.upcomingDepth {
+                    problems.append("t \(t): belt glass \(b.id) riding, upcoming \(s.upcomingOrders.count)")
+                }
+                if s.upcomingOrder == nil { problems.append("t \(t): belt glass \(b.id) riding, upcomingOrder nil") }
+            }
+        }
+        #expect(!s.isFinished)
+        #expect(beltGlasses.count == CoreTuning.rushTierEvery, "belt glasses \(beltGlasses.count)")
+        #expect(beltPeekMatches >= CoreTuning.rushTierEvery - 1, "glasses spawned while a belt glass rode \(beltPeekMatches)")
+        #expect(matched >= 4 * CoreTuning.rushTierEvery - 1, "matched \(matched)")
+        #expect(problems.isEmpty, "\(problems.prefix(5))")
+    }
+
+    @Test func readingUpcomingOrdersNeverChangesTheRun() {
+        // Peeking is cached, never drawn on read: a Rush that is asked every frame plays out exactly as one never asked.
+        let a: GameSession = GameSession(mode: .rush, layout: phoneLayout(), seed: 42)
+        let b: GameSession = GameSession(mode: .rush, layout: phoneLayout(), seed: 42)
+        var ea: [String] = []
+        var eb: [String] = []
+        var asked: Int = 0
+        var t: Double = 0
+        while t < 40 {
+            let tilt: Double = t < 1 ? 0 : 40 + 25 * sin(t * 1.7)
+            asked += a.upcomingOrders.count
+            for e in a.step(dt: 1.0 / 60.0, tilt: tilt) { ea.append(String(describing: e)) }
+            asked += a.upcomingOrders.count
+            for e in b.step(dt: 1.0 / 60.0, tilt: tilt) { eb.append(String(describing: e)) }
+            t += 1.0 / 60.0
+        }
+        #expect(asked > 0)
+        #expect(ea == eb)
+        #expect(a.snapshot.score == b.snapshot.score)
+        let ga: [String] = a.snapshot.glasses.map { (g: GlassState) -> String in "\(g.id) \(g.shape.id) \(g.liquid.id)" }
+        let gb: [String] = b.snapshot.glasses.map { (g: GlassState) -> String in "\(g.id) \(g.shape.id) \(g.liquid.id)" }
+        #expect(ga == gb)
+        #expect(a.upcomingOrders == b.upcomingOrders)
+    }
+
+    @Test func shiftUpcomingOrdersListTheNextTwoFixedOrders() {
+        guard let level = LevelCatalog.levels.first(where: { (l: Level) -> Bool in l.orders.count >= 3 }) else {
+            Issue.record("no shift with 3 orders")
+            return
+        }
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: phoneLayout(), seed: 3)
+        let up: [GlassOrder] = s.upcomingOrders
+        #expect(up.count == 2)
+        #expect(up.first == level.orders[1])
+        #expect(up.last == level.orders[2])
+        #expect(s.upcomingOrder == level.orders[1])
+    }
 }
 
 /// Bounding box of a point list (test helper; Core has no such public helper).

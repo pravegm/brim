@@ -142,6 +142,56 @@ struct ResultsView: View {
         return "3★ needs every glass a hit. You had \(misses) miss\(misses == 1 ? "" : "es")."
     }
 
+    /// Round 8 (REVIEW-6 N2/N3): the line under the score, never a row of zeros ("best streak 0", "0 perfect").
+    /// - a cleared shift: the crown chase (`chaseLine`); at 3★ it adds the shift's best Perfects when this run fell
+    ///   short of them ("… You had 3 of 6. Best 5."); a crowned shift: "5 of 6 Perfect · best streak 4";
+    /// - a failed shift: its Perfects and streak only (the "3 of 7 glasses" hero already counts the glasses);
+    /// - Rush and the rest: glasses, Perfects, best streak.
+    /// A best streak shows from 2. nil = no line. Pure; tested.
+    static func statsLine(for result: RunResult, hasCrown: Bool, bestPerfects: Int) -> String? {
+        let perfects = max(result.perfects, 0)
+        var parts: [String] = []
+        if case let .shift(id) = result.mode {
+            if result.cleared {
+                if let chase = chaseLine(for: result, hasCrown: hasCrown) {
+                    let runPerfects = result.judgements.filter { $0 == .perfect }.count
+                    if result.stars >= 3 && bestPerfects > runPerfects { return "\(chase) Best \(bestPerfects)." }
+                    return chase
+                }
+                let total = LevelCatalog.level(id)?.orders.count ?? result.judgements.count
+                parts.append("\(perfects) of \(max(total, perfects)) Perfect")
+            } else if perfects > 0 {
+                parts.append("\(perfects) Perfect")
+            }
+        } else {
+            let glasses = result.judgements.count
+            if glasses > 0 { parts.append("\(glasses) glass\(glasses == 1 ? "" : "es")") }
+            if perfects > 0 { parts.append("\(perfects) Perfect") }
+        }
+        if result.bestStreak >= 2 { parts.append("best streak \(result.bestStreak)") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Round 8 (REVIEW-6 N3): the score under a struck-out shift's "3 of 7 glasses" hero is a small "120 pts", and a
+    /// 0 isn't shown at all (no orphan "0"); every other card shows the big number. nil = no score line. Pure.
+    static func scoreText(_ score: Int, hasHero: Bool) -> String? {
+        guard hasHero else { return ShareText.grouped(score) }
+        return score > 0 ? "\(ShareText.grouped(score)) pts" : nil
+    }
+
+    /// Round 8 (REVIEW-6 N3): a struck-out shift's unserved orders, as faint outlines after the served glasses, so
+    /// "3 of 7" has its picture. Empty for a cleared shift and every other mode. Pure; tested.
+    static func ghostRecap(for result: RunResult) -> [GlassRecap] {
+        guard case let .shift(id) = result.mode, !result.cleared, let level = LevelCatalog.level(id) else { return [] }
+        let served = min(result.judgements.count, level.orders.count)
+        return level.orders.dropFirst(served).map { GlassRecap(ghostOf: $0) }
+    }
+
+    /// The recap the card draws: the served glasses, then (struck out) the ghosts of the rest.
+    private var shownRecap: [GlassRecap] {
+        summary.recap.isEmpty ? [] : summary.recap + Self.ghostRecap(for: result)
+    }
+
     /// Round 6 (decision 5): the Daily card's lead line. Pure.
     static func dailyLead(streak: Int) -> String {
         if streak >= 2 { return "🔥 \(streak) days in a row" }
@@ -226,8 +276,8 @@ struct ResultsView: View {
                     .padding(.vertical, 8)
             } bottom: {
                 VStack(spacing: 0) {
-                    if !summary.recap.isEmpty {
-                        CounterRecap(recap: summary.recap, shown: appeared)
+                    if !shownRecap.isEmpty {
+                        CounterRecap(recap: shownRecap, shown: appeared)
                             .padding(.top, 18)
                             .padding(.bottom, 12)
                     } else {
@@ -366,26 +416,42 @@ struct ResultsView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
-                Text(ShareText.grouped(shownScore))
-                    .font(BrimTheme.number(progressHero != nil ? 28 : (info.isCompact ? 44 : 52)))
-                    .foregroundStyle(progressHero != nil ? BrimTheme.inkSoft : BrimTheme.ink)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .accessibilityLabel("Score \(result.score)")
+                // REVIEW-6 N3: under the hero a small "120 pts", and no orphan "0" on a struck-out shift.
+                if Self.scoreText(result.score, hasHero: progressHero != nil) != nil {
+                    Text(progressHero != nil ? "\(ShareText.grouped(shownScore)) pts" : ShareText.grouped(shownScore))
+                        .font(BrimTheme.number(progressHero != nil ? 22 : (info.isCompact ? 44 : 52)))
+                        .foregroundStyle(progressHero != nil ? BrimTheme.inkSoft : BrimTheme.ink)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .accessibilityLabel("Score \(result.score)")
+                }
             }
-            Text(statsLine)
-                .font(BrimTheme.text(13, .heavy))
-                .foregroundStyle(BrimTheme.inkSoft)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+            if let statsLine {
+                // REVIEW-6 N2: on a cleared shift this is the crown chase, so it gets the crown and room for two lines.
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if statsIsCrownChase {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 12, weight: .black))
+                            .foregroundStyle(BrimTheme.goldDeep)
+                            .accessibilityHidden(true)
+                    }
+                    Text(statsLine)
+                        .font(BrimTheme.text(13, .heavy))
+                        .foregroundStyle(statsIsCrownChase ? BrimTheme.ink : BrimTheme.inkSoft)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             // On a Duo the glasses stand on the flat half's counter instead (duoLayout).
             if !info.hasFold {
-                if !summary.recap.isEmpty {
+                if !shownRecap.isEmpty {
                     // REVIEW-5 P1-7: the Daily's 10 glasses all fit on an iPhone card (smaller, tighter).
                     let narrow = info.size.width < 420
                     let compactDaily = narrow && dailyDay != nil
-                    RecapRow(recap: summary.recap, maxCount: compactDaily ? 10 : (narrow ? 8 : 10),
+                    RecapRow(recap: shownRecap, maxCount: compactDaily ? 10 : (narrow ? 8 : 10),
                              glassWidth: compactDaily ? 24 : 30, spacing: compactDaily ? 4 : 6)
                         .padding(.top, 2)
                 } else if !result.judgements.isEmpty {
@@ -438,15 +504,20 @@ struct ResultsView: View {
         )
     }
 
-    private var statsLine: String {
+    private var statsLine: String? {
         // REVIEW-5 P1-7 / round 6: the streak leads the Daily card (`ceremonyDay`); this line has its best and Perfects.
         if let day = ceremonyDay {
             let perfects = outcome.dailyOnFile?.perfects ?? controller.store.dailyRecord(day: day)?.perfects
                 ?? result.perfects
             return Self.dailyStats(best: controller.store.data.bestDaily, perfects: perfects)
         }
-        let glasses = result.judgements.count
-        return "\(result.perfects) perfect · best streak \(result.bestStreak) · \(glasses) glass\(glasses == 1 ? "" : "es")"
+        // Round 8 (REVIEW-6 N2/N3): the crown chase on a cleared shift; no zeros, no repeated glass count.
+        return Self.statsLine(for: result, hasCrown: outcome.hasCrown, bestPerfects: outcome.bestPerfects)
+    }
+
+    /// The stats line is the crown chase (a cleared shift with something left to chase).
+    private var statsIsCrownChase: Bool {
+        ceremonyDay == nil && Self.chaseLine(for: result, hasCrown: outcome.hasCrown) != nil
     }
 
     private var note: String? {
@@ -463,8 +534,8 @@ struct ResultsView: View {
         if case .rush = result.mode, !outcome.isNewBest, outcome.previousBest > 0 {
             return "Best \(ShareText.grouped(outcome.previousBest))"
         }
-        // REVIEW-5 P1-6: a failed shift says what to try next; round 6: a cleared one says what's left to chase.
-        return Self.coachingTip(for: result) ?? Self.chaseLine(for: result, hasCrown: outcome.hasCrown)
+        // REVIEW-5 P1-6: a failed shift says what to try next. Round 8: a cleared one's chase is the stats line now.
+        return Self.coachingTip(for: result)
     }
 
     /// The Daily day whose ceremony (streak, week, best) the card shows: a scored attempt this run, or the one on file.
@@ -630,20 +701,27 @@ struct RecapRow: View {
                 VStack(spacing: 4) {
                     MiniGlass(item: item)
                         .frame(width: glassWidth, height: glassWidth * 4 / 3)
-                    // Colour plus a glyph, so the verdict reads without colour (REVIEW-3 P2-4).
-                    Circle()
-                        .fill(BrimTheme.color(for: item.judgement))
-                        .frame(width: 14, height: 14)
-                        .overlay(
-                            Image(systemName: RecapGlyph.symbol(for: item.judgement))
-                                .font(.system(size: 7, weight: .black))
-                                .foregroundStyle(BrimTheme.ink)
-                        )
+                    if item.ghost {
+                        // REVIEW-6 N3: an unserved glass: an empty dashed chip, no verdict.
+                        Circle()
+                            .stroke(BrimTheme.inkFaint.opacity(0.6), style: StrokeStyle(lineWidth: 1.4, dash: [2, 2]))
+                            .frame(width: 14, height: 14)
+                    } else {
+                        // Colour plus a glyph, so the verdict reads without colour (REVIEW-3 P2-4).
+                        Circle()
+                            .fill(BrimTheme.color(for: item.judgement))
+                            .frame(width: 14, height: 14)
+                            .overlay(
+                                Image(systemName: RecapGlyph.symbol(for: item.judgement))
+                                    .font(.system(size: 7, weight: .black))
+                                    .foregroundStyle(BrimTheme.ink)
+                            )
+                    }
                 }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(recap.map { $0.judgement.rawValue }.joined(separator: ", "))
+        .accessibilityLabel(RecapGlyph.accessibilityText(recap))
     }
 }
 
@@ -698,6 +776,14 @@ enum RecapGlyph {
         case .over: return "arrow.up"
         }
     }
+
+    /// VoiceOver for a recap row: the verdicts in order, then how many glasses were never served (round 8).
+    static func accessibilityText(_ recap: [GlassRecap]) -> String {
+        var parts = recap.filter { !$0.ghost }.map { $0.judgement.rawValue }
+        let ghosts = recap.filter { $0.ghost }.count
+        if ghosts > 0 { parts.append("\(ghosts) not served") }
+        return parts.joined(separator: ", ")
+    }
 }
 
 /// The served glasses standing in a row on the counter, all at one scale (≈ 75 % of the play size, ~85 pt for a
@@ -735,17 +821,24 @@ struct CounterRecap: View {
                         MiniGlass(item: item, scale: scale)
                             .frame(width: width, height: item.shape.interiorHeight * scale + 4)
                             .zIndex(1)
-                        Ellipse()
-                            .fill(BrimTheme.color(for: item.judgement))
-                            .overlay(Ellipse().stroke(BrimTheme.ink.opacity(0.25), lineWidth: 1))
-                            .overlay(
-                                Image(systemName: RecapGlyph.symbol(for: item.judgement))
-                                    .font(.system(size: 9, weight: .black))
-                                    .foregroundStyle(BrimTheme.ink.opacity(0.85))
-                                    .offset(y: 2)
-                            )
-                            .frame(width: width + 14, height: 18)
-                            .shadow(color: BrimTheme.ink.opacity(0.18), radius: 3, y: 2)
+                        if item.ghost {
+                            // REVIEW-6 N3: an unserved glass's empty place on the counter.
+                            Ellipse()
+                                .stroke(BrimTheme.ink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                                .frame(width: width + 14, height: 18)
+                        } else {
+                            Ellipse()
+                                .fill(BrimTheme.color(for: item.judgement))
+                                .overlay(Ellipse().stroke(BrimTheme.ink.opacity(0.25), lineWidth: 1))
+                                .overlay(
+                                    Image(systemName: RecapGlyph.symbol(for: item.judgement))
+                                        .font(.system(size: 9, weight: .black))
+                                        .foregroundStyle(BrimTheme.ink.opacity(0.85))
+                                        .offset(y: 2)
+                                )
+                                .frame(width: width + 14, height: 18)
+                                .shadow(color: BrimTheme.ink.opacity(0.18), radius: 3, y: 2)
+                        }
                     }
                     .offset(y: shown ? 0 : 26)
                     .opacity(shown ? 1 : 0)
@@ -757,11 +850,12 @@ struct CounterRecap: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(recap.map { $0.judgement.rawValue }.joined(separator: ", "))
+        .accessibilityLabel(RecapGlyph.accessibilityText(recap))
     }
 }
 
-/// One glass from its real profile, liquid at the served level, the fill line across it.
+/// One glass from its real profile, liquid at the served level, the fill line across it. A ghost (round 8: never
+/// served) is a faint dashed outline with a dashed line and nothing in it.
 struct MiniGlass: View {
     let item: GlassRecap
     /// Points per world point; nil = fit the glass into the box.
@@ -784,6 +878,19 @@ struct MiniGlass: View {
             for p in profile { outline.addLine(to: pt(-p.x, p.y)) }
             for p in profile.reversed() { outline.addLine(to: pt(p.x, p.y)) }
             outline.closeSubpath()
+
+            if item.ghost {
+                ctx.fill(outline, with: .color(Color.white.opacity(0.25)))
+                ctx.stroke(outline, with: .color(BrimTheme.ink.opacity(0.28)),
+                           style: StrokeStyle(lineWidth: 1.2, lineJoin: .round, dash: [3, 2.5]))
+                let ghostLineY = floorY - CGFloat(item.line) * interior * scale
+                var ghostLine = Path()
+                ghostLine.move(to: CGPoint(x: cx - maxHalf * scale - 3, y: ghostLineY))
+                ghostLine.addLine(to: CGPoint(x: cx + maxHalf * scale + 3, y: ghostLineY))
+                ctx.stroke(ghostLine, with: .color(BrimTheme.ink.opacity(0.3)),
+                           style: StrokeStyle(lineWidth: 1.2, dash: [2, 2]))
+                return
+            }
 
             ctx.fill(outline, with: .color(Color.white.opacity(0.7)))
             // Liquid (and foam) up to the served level, clipped to the glass.
