@@ -67,6 +67,8 @@ final class GameSession {
         var order: GlassOrder
         var belt: Double?
         var band: Double
+        /// Round 6: Rush tier (1…) this order was drawn for; 0 outside Rush.
+        var tier: Int = 0
     }
 
     private struct Glass {
@@ -105,6 +107,8 @@ final class GameSession {
         var lineClock: Double
         /// Round 5 (QA-2 P2-2): conveyor: seconds since the mouth passed the stream (waiting for drink inside it).
         var exitWait: Double
+        /// Round 6: the Rush tier of its order (0 outside Rush).
+        var tier: Int
     }
 
     // MARK: - Configuration
@@ -119,6 +123,8 @@ final class GameSession {
     private let startFill: Double
     private var plans: [Plan] = []
     private let fixedOrderCount: Int?
+    /// Round 6: a shift's venue (reported in every snapshot); nil for Rush, Daily and practice.
+    private let shiftVenue: VenueID?
 
     // MARK: - State
 
@@ -163,6 +169,9 @@ final class GameSession {
     /// pour point) until the hand has tipped back to it once, so a jug that arrives already tipped never gushes.
     /// nil = no hold.
     private var tipBackLimit: Double? = nil
+    /// Round 6 (`JugState.reposeProgress`): the jug fill the cached pour threshold below was computed for (NaN = never).
+    private var reposeCacheFill: Double = Double.nan
+    private var reposeCacheThreshold: Double = 0
 
     // Hot-path caches (round 4, QA P2-8; results are identical, only repeated work and allocations are skipped)
     /// The angle `lipX/lipY/exitDX/exitDY` were last computed for (NaN = never).
@@ -187,6 +196,8 @@ final class GameSession {
     private var generated: Int = 0
     private var peekedPlan: Plan? = nil
     private var idleTime: Double = 0
+    /// Round 6: Rush: the tier (1…) of the glass last sent to the stop; 0 outside Rush (`GameSnapshot.rushTier`).
+    private var rushTierNow: Int = 0
     /// Set by `requireFlat()` (seconds spent flat since): no judgement by stopping until the player pours again.
     private var resumeHold: Double? = nil
 
@@ -221,6 +232,7 @@ final class GameSession {
         var practice: Bool = false
         var strikesAllowed: Int = CoreTuning.maxStrikes
         var fixedCount: Int? = nil
+        var venue: VenueID? = nil
         switch mode {
         case .shift(let id):
             let level: Level = LevelCatalog.level(id) ?? LevelCatalog.levels[0]
@@ -230,6 +242,7 @@ final class GameSession {
             }
             start = CoreMath.clamp(level.jugFill, 0.05, 1.0)
             fixedCount = plans.count
+            venue = level.venue
         case .daily(let day):
             for o in LevelCatalog.dailyOrders(day: day) {
                 plans.append(Plan(order: o, belt: nil, band: CoreTuning.defaultPerfectBand))
@@ -243,6 +256,7 @@ final class GameSession {
         }
         self.plans = plans
         self.fixedOrderCount = fixedCount
+        self.shiftVenue = venue
         self.startFill = start
         self.isRush = rush
         self.isPractice = practice
@@ -1124,15 +1138,15 @@ final class GameSession {
         if streak != oldStreak { events.append(.streak(streak)) }
         if multiplier != oldMultiplier { events.append(.multiplier(multiplier)) }
 
-        // Strikes: shifts and daily count spills, overs and shorts; Rush counts spills and overs (an over-pour struck
-        // in Rush before round 5 too, as a spill); practice never.
+        // Strikes: shifts and daily count spills, overs and shorts; practice never. Round 6 (founder, BALANCE.md §7):
+        // Rush counts only real rim spills; an over or a short breaks the streak but doesn't strike.
         // Note (QA-2 P2-4; Rush stays endless by design): a Rush patience timeout is judged on what is in the glass —
         // usually `.short`, which doesn't strike in Rush — so an idle Rush never ends by itself. Banking the score on
         // quit is the App's job.
         var strike: Bool = false
         if !isPractice {
             if isRush {
-                strike = j == .spill || j == .over
+                strike = j == .spill
             } else {
                 strike = j == .spill || j == .over || j == .short
             }
@@ -1263,7 +1277,7 @@ final class GameSession {
                              patienceLeft: plan.belt == nil ? plan.order.patience : nil,
                              arrivedAt: nil, overflowed: false, result: nil, inBand: false, nearingSent: false,
                              lastLanding: -10, lineOpacity: 1, lockSent: false, waiting: false, lineClock: 0,
-                             exitWait: 0)
+                             exitWait: 0, tier: plan.tier)
         nextGlassID += 1
         return g
     }
@@ -1358,6 +1372,8 @@ final class GameSession {
         glasses[gi].phaseTime = 0
         glasses[gi].waiting = false
         glasses[gi].lineOpacity = 1
+        // Round 6: Rush changes room as the first glass of a new tier slides to the stop (the one before is leaving).
+        if isRush { rushTierNow = max(1, glasses[gi].tier) }
     }
 
     /// Where a stream leaving the lip at `angle` with normalized `flow` crosses height `rimY`.
@@ -1400,43 +1416,66 @@ final class GameSession {
         return (v * 100).rounded() / 100
     }
 
-    /// Rush: tier every 8 glasses — patience shrinks, foamy/viscous drinks and odd glasses mix in, conveyors from
-    /// tier 3, prefilled curveballs from tier 4, the Perfect band narrows.
+    /// Rush: a tier every `CoreTuning.rushTierEvery` (12) glasses (`GameSnapshot.rushTier` 1…). Round 6 (REVIEW-5 §5, founder decision 2): Rush
+    /// travels: tier t is served in `Rules.rushVenue(tier:)` from that venue's menu (`rushMenu`). Every Conveyor
+    /// glass rides a belt and no other does (so a belt glass never glides across a counter). Across tiers patience
+    /// shrinks, the Perfect band narrows and, from tier 5, prefilled curveballs mix in. Foamy drinks keep their lines
+    /// under the head's comfort zone (as the Daily does), belt lines stay in the campaign's 0.4–0.65.
     private func makeRushPlan(_ n: Int) -> Plan {
-        let tier: Int = n / CoreTuning.rushTierEvery
-        var liquids: [LiquidID] = [.water, .lemonade, .orangeJuice]
-        var pool: [String] = ["tumbler", "highball", "pint", "jar"]
-        if tier >= 1 {
-            liquids.append(contentsOf: [.cola, .creamSoda])
-            pool.append(contentsOf: ["mug", "flute"])
+        let step: Int = max(0, n / CoreTuning.rushTierEvery)     // 0-based difficulty step
+        let tier: Int = step + 1
+        let venue: VenueID = Rules.rushVenue(tier: tier)
+        let menu: (liquids: [LiquidID], glasses: [String]) = GameSession.rushMenu(venue)
+        let liquid: LiquidID = rng.pick(menu.liquids)
+        let glass: String = rng.pick(menu.glasses)
+        let drink: Liquid = LiquidCatalog.liquid(liquid)
+        let onBelt: Bool = venue == .conveyor
+        var line: Double
+        if onBelt {
+            line = rng.range(0.4, 0.65)
+        } else {
+            line = rng.range(0.45, step >= 2 ? 0.9 : 0.85)
+            let headCap: Double = drink.foamPerVolume > 1.0 ? 0.68 : (drink.foamPerVolume > 0.3 ? 0.8 : 0.95)
+            line = min(line, headCap)
         }
-        if tier >= 2 {
-            liquids.append(contentsOf: [.rootBeer, .milkshake, .mapleSyrup])
-            pool.append(contentsOf: ["bowl", "sundae", "beaker"])
-        }
-        if tier >= 3 {
-            liquids.append(contentsOf: [.honey, .berrySmoothie, .potionBlue, .potionPink])
-            pool.append(contentsOf: ["shot", "vial"])
-        }
-        let liquid: LiquidID = rng.pick(liquids)
-        let glass: String = rng.pick(pool)
-        let line: Double = round2(rng.range(0.45, tier >= 2 ? 0.9 : 0.85))
+        line = round2(line)
         let shape: GlassShape = GlassCatalog.shape(glass)
         let needed: Double = Double(GlassMath.volume(shape, upTo: shape.interiorHeight * CGFloat(line)))
         let sizeFactor: Double = CoreMath.clamp((needed / CoreTuning.rushPatienceVolumeRef).squareRoot(), 0.8, 1.5)
-        let viscosity: Double = 1 + LiquidCatalog.liquid(liquid).lagTau
-        var patience: Double? = max(5.0, 9.5 - 0.7 * Double(tier)) * sizeFactor * viscosity
+        let viscosity: Double = 1 + drink.lagTau
+        var patience: Double? = max(5.0, 9.5 - 0.7 * Double(step)) * sizeFactor * viscosity
         var belt: Double? = nil
-        if tier >= 3 && rng.chance(tier >= 4 ? 0.5 : 0.35) {
-            belt = min(40, 18 + 4 * Double(tier - 3)) * CoreTuning.beltScale
+        if onBelt {
+            belt = min(40, 18 + 4 * Double(max(0, step - 2))) * CoreTuning.beltScale
             patience = nil
         }
         var prefill: Double = 0
-        if tier >= 4 && line >= 0.6 && rng.chance(0.15) { prefill = 0.2 }
-        let band: Double = max(0.018, 0.03 - 0.002 * Double(tier))
+        if !onBelt && step >= 4 && line >= 0.6 && rng.chance(0.15) { prefill = 0.2 }
+        let band: Double = max(0.018, 0.03 - 0.002 * Double(step))
         let order: GlassOrder = GlassOrder(glass: glass, liquid: liquid, line: line, patience: patience,
                                            lineFadesAfter: nil, prefill: prefill)
-        return Plan(order: order, belt: belt, band: band)
+        return Plan(order: order, belt: belt, band: band, tier: tier)
+    }
+
+    /// Round 6: what a Rush tier in this venue serves (drinks and glasses, drawn independently). Tier 1's Lemonade
+    /// Stand is the old first tier exactly. The Sand Bar is never a Rush venue (its menu is here for completeness).
+    static func rushMenu(_ venue: VenueID) -> (liquids: [LiquidID], glasses: [String]) {
+        switch venue {
+        case .lemonadeStand:
+            return (liquids: [.water, .lemonade, .orangeJuice], glasses: ["tumbler", "highball", "pint", "jar"])
+        case .sodaFountain:
+            return (liquids: [.cola, .creamSoda, .rootBeer], glasses: ["tumbler", "highball", "pint", "mug", "flute", "jar"])
+        case .conveyor:
+            return (liquids: [.water, .lemonade, .orangeJuice, .cola, .creamSoda],
+                    glasses: ["tumbler", "mug", "bowl", "sundae", "shot"])
+        case .milkshakeDiner:
+            return (liquids: [.milkshake, .berrySmoothie, .honey, .mapleSyrup],
+                    glasses: ["tumbler", "highball", "sundae", "bowl", "jar", "mug", "shot"])
+        case .potionShop:
+            return (liquids: [.potionBlue, .potionPink], glasses: ["beaker", "vial", "flute", "shot"])
+        case .sandBar:
+            return (liquids: [.sand], glasses: ["hourglass", "jar", "beaker", "vial", "shot"])
+        }
     }
 
     /// Practice: calm, endless basics.
@@ -1614,8 +1653,27 @@ final class GameSession {
             let rotatedLip: [CGPoint] = JugGeometry.rotate([lip], by: extra, about: a)
             lip = rotatedLip[0]
         }
-        return JugState(liquid: jugLiquid, angle: jugAngle, fill: jugFill, outline: outline, liquidPolygon: liquid,
-                        lip: lip, pivot: a, flow: flowNorm)
+        var state: JugState = JugState(liquid: jugLiquid, angle: jugAngle, fill: jugFill, outline: outline,
+                                       liquidPolygon: liquid, lip: lip, pivot: a, flow: flowNorm)
+        state.reposeProgress = currentReposeProgress()
+        return state
+    }
+
+    /// Round 6 (REVIEW-5 §4, `JugState.reposeProgress`): sand only. A liquid at this fill would start to pour at the
+    /// pour threshold T; sand holds for `reposeDegrees` more and slides at T + repose. Progress is 0 up to T, rises
+    /// linearly to 1 at the slide, and stays 1 while the sand flows (until it is tipped back past the hysteresis).
+    /// 0 for liquids, an empty or swapping jug, behind the flat gate and outside play.
+    private func currentReposeProgress() -> Double {
+        let repose: Double = jugLiquid.reposeDegrees
+        if repose <= 0 { return 0 }
+        if sandFlowing { return 1 }
+        if phase != .playing || needsFlat || swapTimer > 0 || jugRanDry || jugFill < CoreTuning.jugEmptyFill { return 0 }
+        // Pure in the fill, which doesn't change while the sand holds: recomputed only once the fill has moved.
+        if !(abs(jugFill - reposeCacheFill) < 0.002) {
+            reposeCacheThreshold = JugGeometry.pourThreshold(jug, fill: CoreMath.clamp(jugFill, 0.02, 1), step: 0.5)
+            reposeCacheFill = jugFill
+        }
+        return CoreMath.clamp((jugAngle - reposeCacheThreshold) / repose, 0, 1)
     }
 
     private func makeGlassStates() -> [GlassState] {
@@ -1643,6 +1701,13 @@ final class GameSession {
                                            ordersDone: ordersDone, ordersTotal: fixedOrderCount, perfects: perfects,
                                            telemetry: telemetry())
         s.needsFlat = needsFlat
+        // Round 6: shifts report their venue; Rush its tier and that tier's venue; Daily / practice leave it to the App.
+        if isRush {
+            s.rushTier = max(1, rushTierNow)
+            s.venue = Rules.rushVenue(tier: s.rushTier)
+        } else {
+            s.venue = shiftVenue
+        }
         return s
     }
 

@@ -561,21 +561,465 @@ struct FeedbackTests {
         #expect(FeedbackDirector.lockInAudible(glassID: 99, snapshot: feedbackSnapshot(fill: 0.5, angle: 0,
                                                                                         lineOpacity: 0.3)))
     }
+
+    // MARK: Round 6: the late game
+
+    @Test func sandRustleRisesWithReposeAndDucksOnceSandFlows() {
+        #expect(SoundBook.rustleLevel(reposeProgress: 0, flow: 0) == 0.0)
+        #expect(SoundBook.rustleLevel(reposeProgress: SoundBook.rustleStart, flow: 0) == 0.0)
+        #expect(SoundBook.rustleLevel(reposeProgress: 1, flow: 0) == 1.0)
+        #expect(SoundBook.rustleLevel(reposeProgress: 3, flow: 0) == 1.0)
+        #expect(SoundBook.rustleLevel(reposeProgress: Double.nan, flow: 0) == 0.0)
+        var previous = -1.0
+        for step in 0...100 {
+            let level = SoundBook.rustleLevel(reposeProgress: Double(step) / 100, flow: 0)
+            #expect(level >= previous)
+            #expect(level >= 0)
+            #expect(level <= 1)
+            previous = level
+        }
+        // Once the sand slides, the hiss of the flow takes over.
+        #expect(SoundBook.rustleLevel(reposeProgress: 1, flow: 0.5) == 0.0)
+        #expect(SoundBook.rustleLevel(reposeProgress: 1, flow: 0.05) < 1)
+
+        let sand = SoundBook.texture(for: .sand)
+        let rest = SoundBook.pourBed(telemetry: PourTelemetry(liquid: .sand), foam: 0, texture: sand, master: 1)
+        let creeping = SoundBook.pourBed(telemetry: PourTelemetry(liquid: .sand), foam: 0, texture: sand, master: 1,
+                                         reposeProgress: 0.7)
+        let near = SoundBook.pourBed(telemetry: PourTelemetry(liquid: .sand), foam: 0, texture: sand, master: 1,
+                                     reposeProgress: 0.97)
+        let flowing = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.6, landingRate: 0.5, liquid: .sand), foam: 0,
+                                        texture: sand, master: 1, reposeProgress: 1)
+        #expect(rest.rustleGain == Float(0))
+        #expect(creeping.rustleGain > 0)
+        #expect(near.rustleGain > creeping.rustleGain)
+        #expect(near.rustleGain <= SoundBook.rustlePeak)
+        // Denser and brighter as the slide nears.
+        #expect(near.rustleDensity > creeping.rustleDensity)
+        #expect(near.rustleCenter > creeping.rustleCenter)
+        // A whisper under the hiss of sand actually pouring.
+        #expect(flowing.rustleGain == Float(0))
+        #expect(near.rustleGain < flowing.hissGain)
+        // Liquids never rustle.
+        let water = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.5, landingRate: 0.5), foam: 0,
+                                      texture: SoundBook.texture(for: .water), master: 1)
+        #expect(water.rustleGain == Float(0))
+    }
+
+    @Test func sandTicksAccelerateTowardTheSlide() throws {
+        #expect(SandTelegraph.tickGap(progress: 0.3) == nil)
+        #expect(SandTelegraph.tickGap(progress: SoundBook.rustleStart) == nil)
+        #expect(SandTelegraph.tickGap(progress: Double.nan) == nil)
+        let early = try #require(SandTelegraph.tickGap(progress: 0.6))
+        let late = try #require(SandTelegraph.tickGap(progress: 0.98))
+        let last = try #require(SandTelegraph.tickGap(progress: 1))
+        #expect(late < early * 0.5)
+        #expect(abs(last - SandTelegraph.fastGap) < 1e-9)
+        #expect(early <= SandTelegraph.slowGap)
+        // Calm: fewer, never busier than the calm floor.
+        let calmLate = try #require(SandTelegraph.tickGap(progress: 1, calm: true))
+        #expect(calmLate >= SandTelegraph.calmFastGap)
+        #expect(calmLate > last)
+
+        // A slow tip from 0.4 to 1 over 4 s at 60 fps: the ticks start past the threshold and close in.
+        let telegraph = SandTelegraph()
+        var ticks: [Double] = []
+        for frame in 0..<240 {
+            let t = Double(frame) / 60
+            let progress = 0.4 + 0.6 * t / 4
+            let tick = telegraph.update(progress: progress, flowing: false, live: true, now: t)
+            if tick != nil { ticks.append(t) }
+        }
+        #expect(ticks.count >= 8)
+        if ticks.count >= 4 {
+            #expect(ticks[0] > 0.6)
+            let firstGap = ticks[1] - ticks[0]
+            let lastGap = ticks[ticks.count - 1] - ticks[ticks.count - 2]
+            #expect(firstGap > lastGap * 2)
+        }
+
+        // Silent while sand flows or the run isn't live; ticks again once it is.
+        let quiet = SandTelegraph()
+        let whileFlowing = quiet.update(progress: 0.9, flowing: true, live: true, now: 0)
+        let whilePaused = quiet.update(progress: 0.9, flowing: false, live: false, now: 1)
+        let afterwards = quiet.update(progress: 0.9, flowing: false, live: true, now: 2)
+        let tooSoon = quiet.update(progress: 0.9, flowing: false, live: true, now: 2.01)
+        #expect(whileFlowing == nil)
+        #expect(whilePaused == nil)
+        #expect(afterwards != nil)
+        #expect(tooSoon == nil)
+
+        // The haptic ticks are light and firm up toward the slide; calm is softer.
+        let soft = HapticBook.sandTick(progress: 0.55).notes.map { $0.intensity }.max() ?? 1
+        let firm = HapticBook.sandTick(progress: 1).notes.map { $0.intensity }.max() ?? 0
+        let calmFirm = HapticBook.sandTick(progress: 1, calm: true).notes.map { $0.intensity }.max() ?? 1
+        #expect(firm > soft)
+        #expect(firm <= 0.35)
+        #expect(calmFirm < firm)
+        #expect(HapticBook.sandTick(progress: Double.nan).notes.count == 1)
+    }
+
+    @Test func avalancheIsAShortDryFallingWhoosh() {
+        var dice = FeelDice(seed: 13)
+        let shff = SoundBook.avalanche(dice: &dice)
+        var perfectDice = FeelDice(seed: 13)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &perfectDice).map { $0.gain }.max() ?? 0
+        #expect(!shff.isEmpty)
+        var falling = 0
+        for command in shff {
+            #expect(command.gain > 0)
+            #expect(command.gain < perfectPeak * 0.6)
+            if case .noise(let noise) = command {
+                if noise.cutoffEnd < noise.cutoff { falling += 1 }
+                #expect(noise.delay + noise.attack + 4 * noise.decay < 0.9)
+            } else {
+                Issue.record("the avalanche is all grains, no pitched voice")
+            }
+        }
+        #expect(falling >= 1)
+        // Felt: a thud and a gritty slide, under the spill.
+        let peak = HapticBook.avalanche.notes.map { $0.intensity }.max() ?? 1
+        let spillPeak = HapticBook.spill.notes.map { $0.intensity }.max() ?? 0
+        #expect(peak <= 0.7)
+        #expect(peak < spillPeak)
+        #expect(HapticBook.avalanche.wobble.count <= 16)
+        // Sand's pour start is the avalanche; a liquid's is the glass knock.
+        var sand = feedbackSnapshot(fill: 0.8, angle: 60)
+        sand.jug.liquid.id = .sand
+        sand.jug.liquid.reposeDegrees = 30
+        #expect(FeedbackDirector.isAvalanche(sand))
+        #expect(FeedbackDirector.isAvalanche(feedbackSnapshot(fill: 0.8, angle: 60)) == false)
+    }
+
+    @Test func rushTierUpChimesOnEveryTierAfterTheFirst() {
+        let watch = RushTierWatch()
+        let first = watch.update(tier: 1, isRush: true)
+        let same = watch.update(tier: 1, isRush: true)
+        let second = watch.update(tier: 2, isRush: true)
+        let held = watch.update(tier: 2, isRush: true)
+        let third = watch.update(tier: 3, isRush: true)
+        #expect(first == false)
+        #expect(same == false)
+        #expect(second)
+        #expect(held == false)
+        #expect(third)
+        // A restarted run drops back to tier 1 silently, then climbs again.
+        let restarted = watch.update(tier: 1, isRush: true)
+        let climbs = watch.update(tier: 2, isRush: true)
+        #expect(restarted == false)
+        #expect(climbs)
+        // Outside Rush it forgets; a new run's first frames (0, then 1) are not a tier-up.
+        let menu = watch.update(tier: 0, isRush: false)
+        let intro = watch.update(tier: 0, isRush: true)
+        let start = watch.update(tier: 1, isRush: true)
+        #expect(menu == false)
+        #expect(intro == false)
+        #expect(start == false)
+        #expect(watch.lastTier == 1)
+        // From the snapshot: Rush only.
+        let fromSnapshot = RushTierWatch()
+        let rush1 = fromSnapshot.update(snapshot: feedbackSnapshot(fill: 1, angle: 0, mode: .rush, rushTier: 1))
+        let rush2 = fromSnapshot.update(snapshot: feedbackSnapshot(fill: 1, angle: 0, mode: .rush, rushTier: 2))
+        let shift = fromSnapshot.update(snapshot: feedbackSnapshot(fill: 1, angle: 0, rushTier: 3))
+        #expect(rush1 == false)
+        #expect(rush2)
+        #expect(shift == false)
+
+        // The chord: three bells rising through a major triad, arpeggiated, under a Perfect.
+        var dice = FeelDice(seed: 17)
+        let chord = SoundBook.tierUp(tier: 3, dice: &dice)
+        var bells: [SynthRing] = []
+        for command in chord { if case .ring(let ring) = command, ring.kind == .bell { bells.append(ring) } }
+        #expect(bells.count == 3)
+        if bells.count == 3 {
+            #expect(bells[1].fundamental > bells[0].fundamental)
+            #expect(bells[2].fundamental > bells[1].fundamental)
+            #expect(bells[1].delay > bells[0].delay)
+            #expect(bells[2].delay > bells[1].delay)
+            let fifth = Double(bells[2].fundamental / bells[0].fundamental)
+            #expect(abs(fifth - pow(2, 7.0 / 12)) < 0.001)
+        }
+        var perfectDice = FeelDice(seed: 17)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &perfectDice).map { $0.gain }.max() ?? 0
+        for command in chord { #expect(command.gain < perfectPeak * 0.6) }
+        // Each tier starts higher, up to a cap; and it is not the end fanfare.
+        #expect(SoundBook.tierRootHz(tier: 4) > SoundBook.tierRootHz(tier: 3))
+        #expect(SoundBook.tierRootHz(tier: 30) == SoundBook.tierRootHz(tier: 6))
+        #expect(SoundBook.tierRootHz(tier: 6) < 1046.5)
+        #expect(chord != SoundBook.finished(cleared: true))
+        // Felt: rising taps in time with the bells, confident but under the fanfare.
+        let taps = HapticBook.tierUp.notes.filter { $0.kind == .transient }
+        #expect(taps.count == 3)
+        for index in 1..<taps.count {
+            #expect(taps[index].intensity > taps[index - 1].intensity)
+            #expect(abs(taps[index].time - Double(SoundBook.tierChordGap) * Double(index)) < 1e-6)
+        }
+        let tierPeak = HapticBook.tierUp.notes.map { $0.intensity }.max() ?? 1
+        let celebratePeak = HapticBook.celebrate.notes.map { $0.intensity }.max() ?? 0
+        #expect(tierPeak >= 0.6)
+        #expect(tierPeak < celebratePeak)
+    }
+
+    @Test func rushLowJugHeartbeatsOncePerDip() {
+        let watch = LowJugWatch()
+        // Never seen a fuller jug: nothing.
+        let unarmed = watch.update(fill: 0.1, live: true)
+        #expect(unarmed == false)
+        let full = watch.update(fill: 1.0, live: true)
+        let quarter = watch.update(fill: 0.25, live: true)
+        let dip = watch.update(fill: 0.19, live: true)
+        let lower = watch.update(fill: 0.12, live: true)
+        #expect(full == false)
+        #expect(quarter == false)
+        #expect(dip)
+        #expect(lower == false)
+        // Hovering under 30 % never repeats it.
+        let wobbleUp = watch.update(fill: 0.26, live: true)
+        let wobbleDown = watch.update(fill: 0.18, live: true)
+        #expect(wobbleUp == false)
+        #expect(wobbleDown == false)
+        // A refill past 30 % re-arms it for the next dip.
+        let refilled = watch.update(fill: 0.31, live: true)
+        let nextDip = watch.update(fill: 0.19, live: true)
+        #expect(refilled == false)
+        #expect(nextDip)
+        // Not on an empty jug (the run ends with its own cue), and it waits out a pause.
+        let rearm = watch.update(fill: 0.5, live: true)
+        let empty = watch.update(fill: 0.0, live: true)
+        let rearmAgain = watch.update(fill: 0.5, live: true)
+        let paused = watch.update(fill: 0.1, live: false)
+        let resumed = watch.update(fill: 0.1, live: true)
+        let nan = watch.update(fill: Double.nan, live: true)
+        #expect(rearm == false)
+        #expect(empty == false)
+        #expect(rearmAgain == false)
+        #expect(paused == false)
+        #expect(resumed)
+        #expect(nan == false)
+
+        // From the snapshot: Rush only, never on the frame that ends the run.
+        let rush = LowJugWatch()
+        let rushFull = rush.update(snapshot: feedbackSnapshot(fill: 0.9, angle: 40, mode: .rush), events: [],
+                                   paused: false)
+        let ending = rush.update(snapshot: feedbackSnapshot(fill: 0.15, angle: 70, mode: .rush), events: [.jugEmpty],
+                                 paused: false)
+        let gated = rush.update(snapshot: feedbackSnapshot(fill: 0.15, angle: 70, needsFlat: true, mode: .rush),
+                                events: [], paused: false)
+        let rushDip = rush.update(snapshot: feedbackSnapshot(fill: 0.15, angle: 70, mode: .rush), events: [],
+                                  paused: false)
+        #expect(rushFull == false)
+        #expect(ending == false)
+        #expect(gated == false)
+        #expect(rushDip)
+        let shift = LowJugWatch()
+        let shiftFull = shift.update(snapshot: feedbackSnapshot(fill: 0.9, angle: 40), events: [], paused: false)
+        let shiftLow = shift.update(snapshot: feedbackSnapshot(fill: 0.15, angle: 70), events: [], paused: false)
+        #expect(shiftFull == false)
+        #expect(shiftLow == false)
+
+        // Lub-dub: two low glugs, the second lower and softer, soft overall; the haptic keeps time.
+        var dice = FeelDice(seed: 23)
+        let beat = SoundBook.lowJug(dice: &dice)
+        var bubbles: [SynthBubble] = []
+        for command in beat { if case .bubble(let bubble) = command { bubbles.append(bubble) } }
+        #expect(bubbles.count == 2)
+        if bubbles.count == 2 {
+            #expect(bubbles[1].frequency < bubbles[0].frequency)
+            #expect(bubbles[1].gain < bubbles[0].gain)
+            #expect(bubbles[0].frequency < 300)
+        }
+        var perfectDice = FeelDice(seed: 23)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &perfectDice).map { $0.gain }.max() ?? 0
+        for command in beat { #expect(command.gain < perfectPeak * 0.5) }
+        let taps = HapticBook.lowJug.notes
+        #expect(taps.count == bubbles.count)
+        for index in 0..<min(taps.count, bubbles.count) {
+            #expect(abs(taps[index].time - Double(bubbles[index].delay)) < 1e-6)
+            #expect(taps[index].intensity <= 0.45)
+            #expect(taps[index].sharpness <= 0.3)
+        }
+    }
+
+    @Test func conveyorBellRingsAsAServedGlassRidesOff() {
+        let watch = ConveyorBellWatch()
+        let filling = watch.update(glasses: [feedbackGlass(phase: .filling)], conveyor: true)
+        let served = watch.update(glasses: [feedbackGlass(phase: .served, result: .perfect)], conveyor: true)
+        let leaves = watch.update(glasses: [feedbackGlass(phase: .leaving, result: .perfect)], conveyor: true)
+        let stillLeaving = watch.update(glasses: [feedbackGlass(phase: .leaving, result: .perfect)], conveyor: true)
+        #expect(filling == nil)
+        #expect(served == nil)
+        #expect(leaves == .perfect)
+        #expect(stillLeaving == nil)
+        // Misses ride off quietly.
+        let missServed = watch.update(glasses: [feedbackGlass(id: 2, phase: .served, result: .short)], conveyor: true)
+        let missLeaves = watch.update(glasses: [feedbackGlass(id: 2, phase: .leaving, result: .short)], conveyor: true)
+        #expect(missServed == nil)
+        #expect(missLeaves == nil)
+        // Any hit rings; the best of a frame wins.
+        let pairServed = watch.update(glasses: [feedbackGlass(id: 3, phase: .served, result: .good),
+                                                feedbackGlass(id: 4, phase: .served, result: .perfect)],
+                                      conveyor: true)
+        let pairLeaves = watch.update(glasses: [feedbackGlass(id: 3, phase: .leaving, result: .good),
+                                                feedbackGlass(id: 4, phase: .leaving, result: .perfect)],
+                                      conveyor: true)
+        #expect(pairServed == nil)
+        #expect(pairLeaves == .perfect)
+        // Other venues, or a glass first seen already leaving: nothing.
+        let elsewhere = ConveyorBellWatch()
+        let otherServed = elsewhere.update(glasses: [feedbackGlass(phase: .served, result: .great)], conveyor: false)
+        let otherLeaves = elsewhere.update(glasses: [feedbackGlass(phase: .leaving, result: .great)], conveyor: false)
+        let fresh = ConveyorBellWatch()
+        let late = fresh.update(glasses: [feedbackGlass(phase: .leaving, result: .great)], conveyor: true)
+        #expect(otherServed == nil)
+        #expect(otherLeaves == nil)
+        #expect(late == nil)
+        // From the snapshot's venue.
+        let belt = ConveyorBellWatch()
+        let beltServed = belt.update(snapshot: feedbackSnapshot(fill: 0.5, angle: 0, glassPhase: .served,
+                                                                result: .great, venue: .conveyor))
+        let beltLeaves = belt.update(snapshot: feedbackSnapshot(fill: 0.5, angle: 0, glassPhase: .leaving,
+                                                                result: .great, venue: .conveyor))
+        #expect(beltServed == nil)
+        #expect(beltLeaves == .great)
+
+        // A light bell: under (and lower than) the Perfect ting; a Perfect rings it a touch brighter.
+        var dice = FeelDice(seed: 29)
+        let ding = SoundBook.serviceBell(perfect: false, dice: &dice)
+        let bright = SoundBook.serviceBell(perfect: true, dice: &dice)
+        var perfectDice = FeelDice(seed: 29)
+        let perfectPeak = SoundBook.perfect(streak: 1, dice: &perfectDice).map { $0.gain }.max() ?? 0
+        var bell: SynthRing?
+        var brightBell: SynthRing?
+        for command in ding { if case .ring(let ring) = command { bell = ring } }
+        for command in bright { if case .ring(let ring) = command { brightBell = ring } }
+        #expect(bell?.kind == .bell)
+        #expect((bell?.fundamental ?? 9999) < Float(SoundBook.tingBaseHz))
+        #expect((bell?.gain ?? 1) < perfectPeak * 0.4)
+        #expect((brightBell?.gain ?? 0) > (bell?.gain ?? 1))
+        for note in HapticBook.serviceBell.notes { #expect(note.intensity <= 0.3) }
+    }
+
+    @Test func potionsSparkleWhilePouringAndNeverTellTheLine() {
+        let potion = SoundBook.texture(for: .potionBlue)
+        #expect(potion.sparkle > 0)
+        #expect(SoundBook.texture(for: .potionPink).sparkle > 0)
+        #expect(SoundBook.texture(for: .water).sparkle == Float(0))
+        #expect(SoundBook.texture(for: .cola).sparkle == Float(0))
+        let pouring = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.5, landingRate: 0.5, activeFill: 0.3,
+                                                                 liquid: .potionBlue),
+                                        foam: 0, texture: potion, master: 1)
+        let resting = SoundBook.pourBed(telemetry: PourTelemetry(liquid: .potionBlue), foam: 0, texture: potion,
+                                        master: 1)
+        #expect(pouring.sparkleRate > 0)
+        #expect(pouring.sparkleGain > 0)
+        #expect(pouring.sparkleGain <= SoundBook.sparklePeak)
+        #expect(resting.sparkleRate == Float(0))
+        // Faint: under the Perfect-band shimmer.
+        #expect(SoundBook.sparklePeak < SoundBook.shimmerPeak)
+        // The same at the line, past it, or with the line faded: it tells nothing about the level.
+        let atLine = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.5, landingRate: 0.5, activeFill: 0.8,
+                                                                distanceToLine: 0, projectedDistanceToLine: 0,
+                                                                liquid: .potionBlue),
+                                       foam: 0, texture: potion, master: 1, lineOpacity: 0)
+        #expect(atLine.sparkleRate == pouring.sparkleRate)
+        #expect(atLine.sparkleGain == pouring.sparkleGain)
+        let water = SoundBook.pourBed(telemetry: PourTelemetry(flow: 0.5, landingRate: 0.5), foam: 0,
+                                      texture: SoundBook.texture(for: .water), master: 1)
+        #expect(water.sparkleRate == Float(0))
+        #expect(water.sparkleGain == Float(0))
+    }
+
+    @Test func lateGameSoundsRenderCleanlyAndStayFaint() {
+        // The rustle alone, just before the slide.
+        let rustle = PourSynth(sampleRate: 48_000)
+        rustle.send(.bed(SoundBook.pourBed(telemetry: PourTelemetry(liquid: .sand), foam: 0,
+                                           texture: SoundBook.texture(for: .sand), master: 1.4,
+                                           reposeProgress: 0.97)))
+        let rustled = renderPeak(rustle, blocks: 60)
+        #expect(rustled.finite)
+        #expect(rustled.peak > 0.002)
+        #expect(rustled.peak < 0.2)
+        // The potion sparkle alone, at a full pour.
+        let sparkle = PourSynth(sampleRate: 48_000)
+        var sparkleBed = PourBed()
+        sparkleBed.master = 1.4
+        let potionBed = SoundBook.pourBed(telemetry: PourTelemetry(flow: 1, landingRate: 1, liquid: .potionPink),
+                                          foam: 0, texture: SoundBook.texture(for: .potionPink), master: 1.4)
+        sparkleBed.sparkleRate = potionBed.sparkleRate
+        sparkleBed.sparkleGain = potionBed.sparkleGain
+        sparkle.send(.bed(sparkleBed))
+        let sparkled = renderPeak(sparkle, blocks: 120)
+        #expect(sparkled.finite)
+        #expect(sparkled.peak > 0.002)
+        #expect(sparkled.peak < 0.2)
+        // Every new one-shot, piled up over a full potion pour: clean, never clipping.
+        let pile = PourSynth(sampleRate: 48_000)
+        pile.send(.bed(potionBed))
+        var dice = FeelDice(seed: 31)
+        var cues: [SynthCommand] = SoundBook.avalanche(dice: &dice)
+        cues.append(contentsOf: SoundBook.tierUp(tier: 5, dice: &dice))
+        cues.append(contentsOf: SoundBook.lowJug(dice: &dice))
+        cues.append(contentsOf: SoundBook.serviceBell(perfect: true, dice: &dice))
+        for command in cues { pile.send(command) }
+        let piled = renderPeak(pile, blocks: 120)
+        #expect(piled.finite)
+        #expect(piled.peak > 0.002)
+        #expect(piled.peak < 1)
+        // `.silence` stops the sparkle's ringing pings too.
+        pile.send(.bed(SoundBook.idleBed(master: 1.4)))
+        pile.send(.silence)
+        _ = renderPeak(pile, blocks: 20)
+        let after = renderPeak(pile, blocks: 10)
+        #expect(after.peak < 0.01)
+    }
+}
+
+private func feedbackLiquid() -> Liquid {
+    Liquid(id: .water, name: "Water", top: RGBA(0.6, 0.85, 1), bottom: RGBA(0.4, 0.65, 0.95), foam: nil,
+           lagTau: 0.04, foamPerVolume: 0, foamSettle: 1, reposeDegrees: 0, opacity: 0.5, fizzy: false)
+}
+
+/// One tumbler of water in `phase` (round 6: the conveyor bell reads phases and results).
+private func feedbackGlass(id: Int = 1, phase: GlassPhase = .filling, result: Judgement? = nil,
+                           lineOpacity: Double = 1) -> GlassState {
+    let shape = GlassShape(id: "tumbler", name: "Tumbler", style: .tumbler,
+                           profile: [CGPoint(x: 55, y: 0), CGPoint(x: 62, y: 120)], baseThickness: 8, wall: 3)
+    return GlassState(id: id, shape: shape, liquid: feedbackLiquid(), x: 335, phase: phase, liquidHeight: 40,
+                      foamHeight: 0, lineHeight: 96, lineOpacity: lineOpacity, inPerfectBand: false,
+                      overflowing: false, patienceLeft: nil, patienceTotal: nil, result: result)
 }
 
 /// A one-glass snapshot for the director's pure helpers.
 private func feedbackSnapshot(fill: Double, angle: Double, needsFlat: Bool = false, mode: GameMode = .shift("1-1"),
-                              lineOpacity: Double = 1) -> GameSnapshot {
-    let liquid = Liquid(id: .water, name: "Water", top: RGBA(0.6, 0.85, 1), bottom: RGBA(0.4, 0.65, 0.95), foam: nil,
-                        lagTau: 0.04, foamPerVolume: 0, foamSettle: 1, reposeDegrees: 0, opacity: 0.5, fizzy: false)
-    let shape = GlassShape(id: "tumbler", name: "Tumbler", style: .tumbler,
-                           profile: [CGPoint(x: 55, y: 0), CGPoint(x: 62, y: 120)], baseThickness: 8, wall: 3)
-    let glass = GlassState(id: 1, shape: shape, liquid: liquid, x: 335, phase: .filling, liquidHeight: 40,
-                           foamHeight: 0, lineHeight: 96, lineOpacity: lineOpacity, inPerfectBand: false,
-                           overflowing: false, patienceLeft: nil, patienceTotal: nil, result: nil)
+                              lineOpacity: Double = 1, glassPhase: GlassPhase = .filling, result: Judgement? = nil,
+                              venue: VenueID? = nil, rushTier: Int = 0) -> GameSnapshot {
+    let liquid = feedbackLiquid()
+    let glass = feedbackGlass(id: 1, phase: glassPhase, result: result, lineOpacity: lineOpacity)
     let jug = JugState(liquid: liquid, angle: angle, fill: fill, outline: [], liquidPolygon: [], lip: .zero,
                        pivot: .zero, flow: 0)
-    return GameSnapshot(time: 0, phase: .playing, mode: mode, jug: jug, stream: [], droplets: [], glasses: [glass],
-                        puddles: [], score: 0, streak: 0, multiplier: 1, strikes: 0, maxStrikes: 3, ordersDone: 0,
-                        ordersTotal: nil, perfects: 0, telemetry: PourTelemetry(), needsFlat: needsFlat)
+    var snapshot = GameSnapshot(time: 0, phase: .playing, mode: mode, jug: jug, stream: [], droplets: [],
+                                glasses: [glass], puddles: [], score: 0, streak: 0, multiplier: 1, strikes: 0,
+                                maxStrikes: 3, ordersDone: 0, ordersTotal: nil, perfects: 0,
+                                telemetry: PourTelemetry(), needsFlat: needsFlat)
+    snapshot.venue = venue
+    snapshot.rushTier = rushTier
+    return snapshot
+}
+
+/// Renders `blocks` × 512 frames; the loudest sample and whether every sample was finite.
+private func renderPeak(_ synth: PourSynth, blocks: Int) -> (peak: Float, finite: Bool) {
+    let frames = 512
+    let buffer = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+    defer { buffer.deallocate() }
+    var peak: Float = 0
+    var finite = true
+    for _ in 0..<blocks {
+        synth.render(frames: frames, into: buffer)
+        for index in 0..<frames {
+            let value = buffer[index]
+            if !value.isFinite { finite = false }
+            peak = max(peak, abs(value))
+        }
+    }
+    return (peak, finite)
 }

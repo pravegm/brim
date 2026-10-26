@@ -97,8 +97,10 @@ enum CoreTuning {
     /// Budget (tier-0 orders need ~14,000 pt²; the Rush jug holds ~121,000): a decent player (50 % Perfect, 30 % Great)
     /// nets −3,700 per glass → ~33 glasses ≈ 2.4 min; a strong one (75 % Perfect) runs 4+ min until the tiers bite;
     /// a beginner (30 % / 30 %) ~17 glasses ≈ 75 s.
-    static let rushRefill: Double = 0.14
-    static let rushRefillGreat: Double = 0.05
+    /// Round 6 (BALANCE.md §7, founder): 0.14 / 0.05 → 0.20 / 0.10 with 12-glass tiers and only rim spills striking,
+    /// modelled at ~2.6 min casual and ~5.4 min expert (targets 2–3 and 5–8).
+    static let rushRefill: Double = 0.20
+    static let rushRefillGreat: Double = 0.10
     /// Rush's "one big shared jug": same drawn shape (scale 1.0 keeps it inside x 130…540 and under the HUD band at
     /// every angle), but it holds `rushVolumeBoost` × the standard jug.
     static let rushJugScale: Double = 1.0
@@ -169,7 +171,9 @@ enum CoreTuning {
     /// next glass never slides in under a falling stream.
     static let changeoverWaitMax: Double = 1.0
     /// Served after this long with no outflow and nothing in the air (`.lockedIn` fires at the start of it).
-    static let serveIdle: Double = 0.35
+    /// Round 6 (BALANCE.md §7, founder): 0.35 → 0.5 s, so a human (≈0.2 s reaction + tip time) can top up a still
+    /// drink; the instant `.lockedIn` cue keeps it feeling snappy. (The foam cap stays 3 s of idle in total.)
+    static let serveIdle: Double = 0.5
     /// If a head is still settling, serving waits up to this much longer (lets "pour slow, then top up" work).
     /// Round 5 (founder decision 4, QA-2 P1-3): foamy drinks are judged once the head has settled, capped at 3 s of
     /// idle (serveIdle + this). At the cap an unsettled head counts only up to `foamSettledFraction` (see
@@ -271,8 +275,8 @@ enum CoreTuning {
     // MARK: Modes
 
     static let maxStrikes: Int = 3
-    /// Rush: difficulty tier every N glasses.
-    static let rushTierEvery: Int = 8
+    /// Rush: difficulty tier (and venue, `Rules.rushVenue`) every N glasses. Round 6 (founder, BALANCE.md): 8 → 12.
+    static let rushTierEvery: Int = 12
     /// Rush patience scales with √(volume to the line / this).
     static let rushPatienceVolumeRef: Double = 11000
     /// Belts were tuned for round-1 glasses; ×1.5 bigger glasses get ×1.5 faster belts (same window in seconds).

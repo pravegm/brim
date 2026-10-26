@@ -64,6 +64,15 @@ enum Rules {
         return 1
     }
 
+    /// Round 6 (REVIEW-5 §5, founder decision 2): Rush travels, one venue per tier (1-based, `GameSnapshot.rushTier`):
+    /// 1 Lemonade Stand, 2 Soda Fountain, 3 Conveyor, 4 Milkshake Diner, 5 Potion Shop, then 6+ cycles 2…5
+    /// (6 Soda Fountain, 7 Conveyor, …). Never the Sand Bar. Tiers below 1 read as 1.
+    static func rushVenue(tier: Int) -> VenueID {
+        if tier <= 1 { return .lemonadeStand }
+        let cycle: [VenueID] = [.sodaFountain, .conveyor, .milkshakeDiner, .potionShop]
+        return cycle[(tier - 2) % cycle.count]
+    }
+
     /// For a cleared shift: 3 = every glass a hit, ≥ 60 % Perfect and no spills; 2 = ≥ 80 % hits; else 1.
     /// (A shift that struck out is not cleared and earns 0; the session handles that.)
     static func stars(perfects: Int, hits: Int, spills: Int, total: Int) -> Int {

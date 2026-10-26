@@ -92,6 +92,20 @@ final class FeedbackDirector: FeedbackSink {
     private var observedBand: Double?
     /// The dry-jug "glug-out" (round 5).
     private var dryJug = DryJugWatch()
+    /// Round 6 (the late game): sand ticks, the Rush tier chord, the Rush low-jug heartbeat, the conveyor bell.
+    private let sandTelegraph = SandTelegraph()
+    private let tierWatch = RushTierWatch()
+    private let lowJug = LowJugWatch()
+    private let bellWatch = ConveyorBellWatch()
+    private var lastAvalanche: CFTimeInterval = -.infinity
+    private var lastBell: CFTimeInterval = -.infinity
+
+    /// Round 6: calm feedback. Calm thins and softens the sand telegraph's haptic ticks; nothing else changes (sound
+    /// carries no motion). The App may force it on; otherwise the director reads iOS Reduce Motion and the "Calmer
+    /// motion" setting itself (about once a second).
+    var calmMotion = false
+    private var settingsCalm = false
+    private var isCalm: Bool { calmMotion || settingsCalm }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -230,6 +244,7 @@ final class FeedbackDirector: FeedbackSink {
             lastHeal = now
             audio.heal()
             haptics.heal()
+            settingsCalm = UIAccessibility.isReduceMotionEnabled || defaults.bool(forKey: SettingsStore.calmMotionKey)
         }
         let telemetry = snapshot.telemetry
         let texture = SoundBook.texture(for: telemetry.liquid)
@@ -246,9 +261,11 @@ final class FeedbackDirector: FeedbackSink {
             if now - lastBedSend >= 1.0 / 60 {
                 lastBedSend = now
                 let master = soundOn ? BrimAudioEngine.masterGain : 0
+                // The sand rustle only while the slide can actually happen.
+                let repose = snapshot.phase == .playing ? snapshot.jug.reposeProgress : 0
                 let bed = SoundBook.pourBed(telemetry: telemetry, foam: activeFoam(snapshot), texture: texture,
                                             master: master, band: band, streak: snapshot.streak,
-                                            lineOpacity: activeLineOpacity(snapshot))
+                                            lineOpacity: activeLineOpacity(snapshot), reposeProgress: repose)
                 audio.setBed(bed)
             }
             haptics.updateFlow(flow: telemetry.flow, fill: telemetry.activeFill, now: now)
@@ -263,6 +280,44 @@ final class FeedbackDirector: FeedbackSink {
         if dryJug.update(snapshot: snapshot, events: events, paused: paused) {
             audio.play(SoundBook.glugOut(dice: &dice))
             haptics.play(HapticBook.glugOut)
+        }
+        lateGame(snapshot: snapshot, events: events, now: now)
+    }
+
+    /// Round 6 (the late game, REVIEW-5 §2–§5): cues read from the snapshot rather than from events.
+    private func lateGame(snapshot: GameSnapshot, events: [GameEvent], now: CFTimeInterval) {
+        let live = !paused && !snapshot.needsFlat && snapshot.phase == .playing
+        var ending = false
+        for event in events {
+            if case .finished(_) = event { ending = true }
+        }
+
+        // Sand: light ticks, closer and closer as the tip nears the angle of repose (the rustle is in the bed).
+        let flowing = snapshot.jug.flow > 0.02 || snapshot.telemetry.flow > 0.02
+        if let progress = sandTelegraph.update(progress: snapshot.jug.reposeProgress, flowing: flowing, live: live,
+                                               now: now, calm: isCalm) {
+            haptics.play(HapticBook.sandTick(progress: progress, calm: isCalm))
+        }
+
+        // Rush: a rising chord on every tier after the first.
+        let tierUp = tierWatch.update(snapshot: snapshot)
+        if tierUp && !paused && !ending {
+            audio.play(SoundBook.tierUp(tier: snapshot.rushTier, dice: &dice))
+            haptics.play(HapticBook.tierUp)
+        }
+
+        // Rush: the shared jug dipped under 20 % (once per dip).
+        if lowJug.update(snapshot: snapshot, events: events, paused: paused) {
+            audio.play(SoundBook.lowJug(dice: &dice))
+            haptics.play(HapticBook.lowJug)
+        }
+
+        // Conveyor: the service bell as a served glass rides off.
+        let leaving = bellWatch.update(snapshot: snapshot)
+        if let judgement = leaving, !paused, !ending, snapshot.phase != .finished, now - lastBell >= 0.25 {
+            lastBell = now
+            audio.play(SoundBook.serviceBell(perfect: judgement == .perfect, dice: &dice))
+            haptics.play(HapticBook.serviceBell)
         }
     }
 
@@ -282,8 +337,17 @@ final class FeedbackDirector: FeedbackSink {
         let fill = snapshot.telemetry.activeFill
         switch event {
         case .pourStarted:
-            audio.play(SoundBook.pourStart(dice: &dice))
-            haptics.play(HapticBook.pourStart)
+            if Self.isAvalanche(snapshot) {
+                // Round 6: sand only moves once it slides: its pour starting IS the avalanche ("shff").
+                if now - lastAvalanche >= 0.5 {
+                    lastAvalanche = now
+                    audio.play(SoundBook.avalanche(dice: &dice))
+                    haptics.play(HapticBook.avalanche)
+                }
+            } else {
+                audio.play(SoundBook.pourStart(dice: &dice))
+                haptics.play(HapticBook.pourStart)
+            }
         case .pourStopped:
             break
         case .glug(let intensity):
@@ -405,6 +469,11 @@ final class FeedbackDirector: FeedbackSink {
     private func activeLineOpacity(_ snapshot: GameSnapshot) -> Double {
         guard let glass = snapshot.glasses.first(where: { $0.phase == .filling }) else { return 1 }
         return glass.lineOpacity
+    }
+
+    /// Round 6: a pour that starts from a jug with an angle of repose (sand) is the avalanche, not a glass knock.
+    nonisolated static func isAvalanche(_ snapshot: GameSnapshot) -> Bool {
+        snapshot.jug.liquid.reposeDegrees > 0 || snapshot.jug.liquid.id == .sand
     }
 
     /// The lock-in cue for `glassID` may sound: its line is still visible (REVIEW-5 P1-1). A glass missing from the

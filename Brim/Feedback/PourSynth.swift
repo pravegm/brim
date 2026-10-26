@@ -147,6 +147,13 @@ struct PourBed: Sendable, Equatable {
     /// ~90 ms in / ~180 ms out) and pitch.
     var shimmerGain: Float = 0
     var shimmerHz: Float = 659
+    /// Round 6, sand about to slide: a dry rustle of sparse grains (level, grains per second, band centre in Hz).
+    var rustleGain: Float = 0
+    var rustleDensity: Float = 0
+    var rustleCenter: Float = 2400
+    /// Round 6, potions: faint celesta pings at random pentatonic pitches (pings per second, level).
+    var sparkleRate: Float = 0
+    var sparkleGain: Float = 0
 
     mutating func approach(_ target: PourBed, _ k: Float) {
         master += (target.master - master) * k
@@ -162,6 +169,11 @@ struct PourBed: Sendable, Equatable {
         turbulence += (target.turbulence - turbulence) * k
         shimmerGain += (target.shimmerGain - shimmerGain) * k
         shimmerHz += (target.shimmerHz - shimmerHz) * k
+        rustleGain += (target.rustleGain - rustleGain) * k
+        rustleDensity += (target.rustleDensity - rustleDensity) * k
+        rustleCenter += (target.rustleCenter - rustleCenter) * k
+        sparkleRate += (target.sparkleRate - sparkleRate) * k
+        sparkleGain += (target.sparkleGain - sparkleGain) * k
     }
 }
 
@@ -268,6 +280,9 @@ final class PourSynth: @unchecked Sendable {
     static let queueCapacity = 512
     static let ceiling: Float = 0.92
     private static let partialStride = 5 // re, im, cos, sin, decay
+    /// Round 6: potion sparkle pings (each: phase, phase step, level, decay per sample).
+    static let sparkleVoices = 4
+    private static let sparkleStride = 4
 
     private let queue: UnsafeMutablePointer<SynthCommand>
     private let writeIndex = Atomic<Int>(0)
@@ -299,6 +314,10 @@ final class PourSynth: @unchecked Sendable {
     private var shimmerPhaseB: Float = 0
     private var shimmerPhaseC: Float = 0
     private var shimmerLFO: Float = 0
+    private var rustleFilter = SynthSVF()
+    private var rustleGrain: Float = 0
+    private let sparkle: UnsafeMutablePointer<Float>
+    private var sparkleRinging = false
 
     private let smoothing: Float
     private let shimmerAttack: Float
@@ -306,6 +325,7 @@ final class PourSynth: @unchecked Sendable {
     private let turbulenceStep: Float
     private let fizzDecay: Float
     private let grainDecay: Float
+    private let rustleDecay: Float
     private let envelopeRelease: Float
     private let dcCoefficient: Float
 
@@ -319,18 +339,23 @@ final class PourSynth: @unchecked Sendable {
         let bankSize = PourSynth.voiceCount * PourSynth.maxPartials * PourSynth.partialStride
         bank = UnsafeMutablePointer<Float>.allocate(capacity: bankSize)
         bank.initialize(repeating: 0, count: bankSize)
+        let sparkleSize = PourSynth.sparkleVoices * PourSynth.sparkleStride
+        sparkle = UnsafeMutablePointer<Float>.allocate(capacity: sparkleSize)
+        sparkle.initialize(repeating: 0, count: sparkleSize)
         smoothing = 1 - exp(-1 / (0.02 * rate))
         shimmerAttack = 1 - exp(-1 / (0.09 * rate))
         shimmerRelease = 1 - exp(-1 / (0.18 * rate))
         turbulenceStep = 1 - exp(-1 / (0.025 * rate))
         fizzDecay = exp(-1 / (0.0012 * rate))
         grainDecay = exp(-1 / (0.004 * rate))
+        rustleDecay = exp(-1 / (0.0022 * rate))
         envelopeRelease = exp(-1 / (0.08 * rate))
         dcCoefficient = 1 - 2 * Float.pi * 30 / rate
         splash.tune(cutoff: 2400, q: 0.7, sampleRate: rate)
         resonator.tune(cutoff: 180, q: 5, sampleRate: rate)
         fizzFilter.tune(cutoff: 4500, q: 0.7, sampleRate: rate)
         hissFilter.tune(cutoff: 5200, q: 0.6, sampleRate: rate)
+        rustleFilter.tune(cutoff: 2400, q: 0.9, sampleRate: rate)
     }
 
     deinit {
@@ -339,6 +364,7 @@ final class PourSynth: @unchecked Sendable {
         voices.deinitialize(count: PourSynth.voiceCount)
         voices.deallocate()
         bank.deallocate()
+        sparkle.deallocate()
     }
 
     // MARK: Main thread
@@ -373,6 +399,9 @@ final class PourSynth: @unchecked Sendable {
                 splash.tune(cutoff: bed.splashCenter, q: 0.7, sampleRate: sampleRate)
                 resonator.tune(cutoff: bed.resonance, q: bed.resonanceQ, sampleRate: sampleRate)
                 hissFilter.tune(cutoff: bed.hissCenter, q: 0.6, sampleRate: sampleRate)
+                if bed.rustleGain > 0.00002 {
+                    rustleFilter.tune(cutoff: bed.rustleCenter, q: 0.9, sampleRate: sampleRate)
+                }
             }
 
             var sample: Float = 0
@@ -400,6 +429,18 @@ final class PourSynth: @unchecked Sendable {
                 if unitNoise() < 700 / sampleRate { grainLevel = 0.4 + 0.6 * unitNoise() }
                 grainLevel *= grainDecay
                 sample += hissFilter.process(nextNoise() * (0.3 + grainLevel), .bandPass) * bed.hissGain
+            }
+            // Round 6, sand about to slide: a dry rustle. Sparse short grains over a whisper of noise; the grains
+            // thicken and the band brightens as the tip nears the angle of repose.
+            if bed.rustleGain > 0.00002 {
+                if unitNoise() < bed.rustleDensity / sampleRate { rustleGrain = 0.35 + 0.65 * unitNoise() }
+                rustleGrain *= rustleDecay
+                sample += rustleFilter.process(nextNoise() * (0.12 + rustleGrain), .bandPass) * bed.rustleGain
+            }
+            // Round 6, potions: faint celesta pings at random pentatonic pitches while the pour is live.
+            if bed.sparkleGain > 0.00002 && (bed.sparkleRate > 0.05 || sparkleRinging) {
+                if unitNoise() < bed.sparkleRate / sampleRate { triggerSparkle() }
+                sample += renderSparkle() * bed.sparkleGain
             }
             // Perfect-band shimmer: a glass-harp tone, two slightly detuned sines beating ~2–4 Hz plus a soft octave,
             // with a slow tremolo; it swells in and out on its own envelope so it never clicks.
@@ -451,6 +492,61 @@ final class PourSynth: @unchecked Sendable {
         return tone * tremolo
     }
 
+    /// Major pentatonic from G6 (no arrays on the audio thread).
+    private static func sparkleRatio(_ index: Int) -> Float {
+        switch index {
+        case 0: return 1
+        case 1: return 1.1225   // +2
+        case 2: return 1.2599   // +4
+        case 3: return 1.4983   // +7
+        case 4: return 1.6818   // +9
+        case 5: return 2        // +12
+        default: return 2.2449  // +14
+        }
+    }
+
+    private func triggerSparkle() {
+        // The quietest ping makes room (a ringing one cut short would click).
+        var slot = 0
+        var quietest = Float.greatestFiniteMagnitude
+        for candidate in 0..<PourSynth.sparkleVoices {
+            let level = sparkle[candidate * PourSynth.sparkleStride + 2]
+            if level < quietest {
+                quietest = level
+                slot = candidate
+            }
+        }
+        let index = min(Int(unitNoise() * 7), 6)
+        let frequency = 1568 * PourSynth.sparkleRatio(index)
+        let tau: Float = 0.06 + 0.08 * unitNoise()
+        let o = slot * PourSynth.sparkleStride
+        sparkle[o] = 0
+        sparkle[o + 1] = 2 * Float.pi * frequency / sampleRate
+        sparkle[o + 2] = 0.5 + 0.5 * unitNoise()
+        sparkle[o + 3] = exp(-1 / max(tau * sampleRate, 1))
+        sparkleRinging = true
+    }
+
+    private func renderSparkle() -> Float {
+        let twoPi = 2 * Float.pi
+        var sum: Float = 0
+        var ringing = false
+        for slot in 0..<PourSynth.sparkleVoices {
+            let o = slot * PourSynth.sparkleStride
+            let level = sparkle[o + 2]
+            if level < 0.0005 { continue }
+            ringing = true
+            var phase = sparkle[o] + sparkle[o + 1]
+            if phase > twoPi { phase -= twoPi }
+            sparkle[o] = phase
+            // Starts at phase 0 (a zero crossing), so the ping never clicks on; a faint octave adds the glint.
+            sum += (sin(phase) + 0.22 * sin(2 * phase)) * level
+            sparkle[o + 2] = level * sparkle[o + 3]
+        }
+        sparkleRinging = ringing
+        return sum
+    }
+
     private func drain() {
         var read = readIndex.load(ordering: .relaxed)
         let write = writeIndex.load(ordering: .acquiring)
@@ -473,6 +569,8 @@ final class PourSynth: @unchecked Sendable {
             fizzLevel = 0
             grainLevel = 0
             shimmerLevel = 0
+            rustleGrain = 0
+            clearSparkle()
         case .noise, .tone, .ring, .bubble:
             start(command)
         }
@@ -487,10 +585,19 @@ final class PourSynth: @unchecked Sendable {
         resonator.tune(cutoff: bed.resonance, q: bed.resonanceQ, sampleRate: sampleRate)
         fizzFilter.tune(cutoff: 4500, q: 0.7, sampleRate: sampleRate)
         hissFilter.tune(cutoff: bed.hissCenter, q: 0.6, sampleRate: sampleRate)
+        rustleFilter = SynthSVF()
+        rustleFilter.tune(cutoff: bed.rustleCenter, q: 0.9, sampleRate: sampleRate)
+        rustleGrain = 0
+        clearSparkle()
         envelope = 0
         dcIn = 0
         dcOut = 0
         for index in 0..<PourSynth.voiceCount { voices[index].active = false }
+    }
+
+    private func clearSparkle() {
+        for slot in 0..<PourSynth.sparkleVoices { sparkle[slot * PourSynth.sparkleStride + 2] = 0 }
+        sparkleRinging = false
     }
 
     private func nextNoise() -> Float {

@@ -76,7 +76,7 @@ enum VesselDecal: String {
     case lemon      // Lemonade Stand: the icon's lemon roundel
     case fizz       // Soda Fountain: red roundel with fizz bubbles and a star
     case cherry     // Milkshake Diner: cherry on a pink roundel
-    case ticket     // Conveyor: a numbered order tag
+    case ticket     // Conveyor: belt chevrons on a cream roundel (round 6: was a "04" tag that read as a count)
     case moon       // Potion Shop: crescent + stars sigil
     case sun        // Sand Bar: a desert sun
 }
@@ -109,6 +109,8 @@ struct VesselStyle {
 /// The flat half's surface (seen from above on a Duo).
 enum CounterSurface {
     case wood, marble, formica, steel, darkWood
+    /// Sand Bar (round 6): warm sandstone slabs, speckled, receding toward the fold.
+    case sandstone
 }
 
 // MARK: - Per-venue palette
@@ -220,16 +222,18 @@ struct ScenePalette {
                                     form: .flask),
                 isDark: true)
         case .sandBar:
+            // Round 6 (REVIEW-5 §4: "Lemonade in beige"): a terracotta adobe room at sunset — warm plaster wall,
+            // sand stucco wainscot with a painted desert border, a sandstone counter, terracotta trim.
             return ScenePalette(
                 venue: v,
-                wallTop: h(0xFFF3DB, 1), wallBottom: h(0xFFE6BE, 1),
-                tile: h(0x9FD8E5, 1), grout: h(0xE3F5F8, 1), trim: h(0xF2B66D, 1),
-                shelf: h(0xB78A5E, 1), silhouette: h(0xF0DDBA, 1), plant: h(0x8CCB9B, 1), board: h(0x45503F, 1),
-                counterTopBack: h(0xF0D7B2, 1), counterTop: h(0xD1AA80, 1), counterEdge: h(0xEDD6B6, 1),
-                counterFront: h(0xA9815E, 1), counterFrontDark: h(0x886645, 1),
-                coaster: h(0xF5E5C6, 1), coasterRing: h(0xC9A27E, 1),
-                vignette: h(0x7A5530, 0.2), glow: h(0xFFE7B5, 0.55), seam: h(0xD2B892, 1),
-                surface: .wood,
+                wallTop: h(0xF3C79A, 1), wallBottom: h(0xE9A877, 1),
+                tile: h(0xF1D2A6, 1), grout: h(0xE2B788, 1), trim: h(0xC4633B, 1),
+                shelf: h(0x8E5434, 1), silhouette: h(0xE6B286, 1), plant: h(0x7FB07E, 1), board: h(0x5A3A28, 1),
+                counterTopBack: h(0xEFD0A3, 1), counterTop: h(0xD8A673, 1), counterEdge: h(0xEDBE8E, 1),
+                counterFront: h(0xB8643F, 1), counterFrontDark: h(0x934A2C, 1),
+                coaster: h(0xF2D7A8, 1), coasterRing: h(0xB86A3E, 1),
+                vignette: h(0x7A3A1E, 0.22), glow: h(0xFFD08A, 0.55), seam: h(0xC99A6E, 1),
+                surface: .sandstone,
                 vessel: VesselStyle(accent: h(0xC9824B), accentDark: h(0x94602D),
                                     glassTint: h(0xFFF4DE, 0.40), wall: h(0xFFF2DD, 0.80), decal: .sun, metallic: true,
                                     form: .scoop),

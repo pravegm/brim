@@ -122,6 +122,48 @@ struct ResultsView: View {
         return parts.isEmpty ? "First Daily Pour" : parts.joined(separator: " · ")
     }
 
+    /// Round 6 (decision 4): what's left to chase on a cleared shift. Under 3★: what 3★ needs, against what this run
+    /// did ("3★ needs every glass a hit and 5 of 8 Perfect. You had 3 Perfect, 1 miss."). At 3★ without the crown:
+    /// the Flawless crown's rule. nil for a crowned shift, a failed shift (it has its coaching tip) and other modes. Pure.
+    static func chaseLine(for result: RunResult, hasCrown: Bool) -> String? {
+        guard case let .shift(id) = result.mode, result.cleared,
+              let total = LevelCatalog.level(id)?.orders.count, total > 0 else { return nil }
+        let perfects = result.judgements.filter { $0 == .perfect }.count
+        if result.stars >= 3 {
+            if hasCrown { return nil }
+            return "Flawless crown: every glass Perfect. You had \(perfects) of \(total)."
+        }
+        // Rules.stars: 3★ = every glass a hit (so no spills) and ≥ 60 % Perfect.
+        let need = (total * 6 + 9) / 10
+        let hits = result.judgements.filter { $0.isHit }.count
+        let misses = max(total - hits, 0)
+        var had = ["\(perfects) Perfect"]
+        if misses > 0 { had.append("\(misses) miss\(misses == 1 ? "" : "es")") }
+        return "3★ needs every glass a hit and \(need) of \(total) Perfect. You had \(had.joined(separator: ", "))."
+    }
+
+    /// Round 6 (decision 5): the Daily card's lead line. Pure.
+    static func dailyLead(streak: Int) -> String {
+        if streak >= 2 { return "🔥 \(streak) days in a row" }
+        if streak == 1 { return "🔥 Day 1 of your streak" }
+        return "Daily poured"
+    }
+
+    /// Round 6: the Daily's stats line under its score: "best 1,240 · 3 Perfect" (never a row of zeros). Pure.
+    static func dailyStats(best: Int, perfects: Int) -> String {
+        var parts: [String] = []
+        if best > 0 { parts.append("best \(ShareText.grouped(best))") }
+        if perfects > 0 { parts.append("\(perfects) Perfect") }
+        return parts.isEmpty ? "Come back tomorrow for new glasses" : parts.joined(separator: " · ")
+    }
+
+    /// The weekday initial of a Daily day number (day 0 = Thursday 1 January 2026, UTC). Pure.
+    static func weekdayLetter(day: Int) -> String {
+        let letters = ["M", "T", "W", "T", "F", "S", "S"]     // Monday first
+        let index = ((day + 3) % 7 + 7) % 7
+        return letters[index]
+    }
+
     /// QA-2 P2-8: the Daily rolls over at 00:00 UTC, which is not "tomorrow" in most of the Americas. Says when, in the
     /// player's own clock: "New glasses at 7:00 PM." Pure (tested with a fixed zone and locale).
     static func dailyRolloverNote(now: Date, timeZone: TimeZone = .current, locale: Locale = .current) -> String {
@@ -258,10 +300,45 @@ struct ResultsView: View {
                 .foregroundStyle(BrimTheme.inkSoft)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            // A Daily that didn't count (already on file, or not the day's marked attempt) is practice.
-            Text(Self.headline(for: result, dailyOnFile: outcome.dailyOnFile != nil || !outcome.dailyCounted))
-                .font(BrimTheme.title(info.isCompact ? 25 : 29))
-                .foregroundStyle(BrimTheme.ink)
+            if let day = ceremonyDay {
+                // Round 6 (decision 5): the Daily leads with the day streak and the week. Practice keeps its headline.
+                let streak = controller.store.dailyStreak(today: day)
+                if outcome.dailyOnFile != nil {
+                    Text(Self.headline(for: result, dailyOnFile: true))
+                        .font(BrimTheme.title(info.isCompact ? 22 : 25))
+                        .foregroundStyle(BrimTheme.ink)
+                }
+                Text(Self.dailyLead(streak: streak))
+                    .font(BrimTheme.title(outcome.dailyOnFile != nil ? 19 : (info.isCompact ? 25 : 29)))
+                    .foregroundStyle(BrimTheme.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityLabel(Self.dailyLine(streak: streak, best: controller.store.data.bestDaily))
+                WeekDots(day: day, played: controller.store.data.dailyWeek(today: day))
+            } else {
+                // A Daily that didn't count (already on file, or not the day's marked attempt) is practice.
+                Text(Self.headline(for: result, dailyOnFile: outcome.dailyOnFile != nil || !outcome.dailyCounted))
+                    .font(BrimTheme.title(info.isCompact ? 25 : 29))
+                    .foregroundStyle(BrimTheme.ink)
+            }
+            if isShift && outcome.hasCrown {
+                // Round 6 (decision 4): the Flawless crown.
+                HStack(spacing: 6) {
+                    CrownMark(size: 22)
+                    Text(outcome.crownEarned ? "NEW FLAWLESS CROWN" : "FLAWLESS CROWN")
+                        .font(BrimTheme.number(12))
+                        .kerning(0.6)
+                        .foregroundStyle(BrimTheme.ink)
+                }
+                .padding(.leading, 4)
+                .padding(.trailing, 12)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(BrimTheme.cyan.opacity(0.25)))
+                .scaleEffect(showBadge || !outcome.crownEarned ? 1 : 0.5)
+                .opacity(showBadge || !outcome.crownEarned ? 1 : 0)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(outcome.crownEarned ? "New flawless crown" : "Flawless crown")
+            }
             if isShift {
                 HStack(spacing: 10) {
                     ForEach(0..<3, id: \.self) { i in
@@ -322,6 +399,26 @@ struct ResultsView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let shareText {
+                // Round 6 (decision 5, REVIEW-5 §6 P2): exactly what Share posts.
+                Label {
+                    Text(shareText)
+                        .font(BrimTheme.text(12, .heavy))
+                        .foregroundStyle(BrimTheme.inkSoft)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.7)
+                        .multilineTextAlignment(.leading)
+                } icon: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(BrimTheme.inkFaint)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(BrimTheme.creamDeep))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Share text: \(shareText)")
+            }
             if let unlock = unlockLine {
                 Label(unlock, systemImage: "lock.open.fill")
                     .font(BrimTheme.text(13, .heavy))
@@ -341,10 +438,11 @@ struct ResultsView: View {
     }
 
     private var statsLine: String {
-        // REVIEW-5 P1-7: the Daily leads with its streak and best, never a row of zeros.
-        if let day = dailyDay, outcome.dailyCounted || outcome.dailyOnFile != nil {
-            return Self.dailyLine(streak: controller.store.dailyStreak(today: day),
-                                  best: controller.store.data.bestDaily)
+        // REVIEW-5 P1-7 / round 6: the streak leads the Daily card (`ceremonyDay`); this line has its best and Perfects.
+        if let day = ceremonyDay {
+            let perfects = outcome.dailyOnFile?.perfects ?? controller.store.dailyRecord(day: day)?.perfects
+                ?? result.perfects
+            return Self.dailyStats(best: controller.store.data.bestDaily, perfects: perfects)
         }
         let glasses = result.judgements.count
         return "\(result.perfects) perfect · best streak \(result.bestStreak) · \(glasses) glass\(glasses == 1 ? "" : "es")"
@@ -364,8 +462,14 @@ struct ResultsView: View {
         if case .rush = result.mode, !outcome.isNewBest, outcome.previousBest > 0 {
             return "Best \(ShareText.grouped(outcome.previousBest))"
         }
-        // REVIEW-5 P1-6: a failed shift says what to try next.
-        return Self.coachingTip(for: result)
+        // REVIEW-5 P1-6: a failed shift says what to try next; round 6: a cleared one says what's left to chase.
+        return Self.coachingTip(for: result) ?? Self.chaseLine(for: result, hasCrown: outcome.hasCrown)
+    }
+
+    /// The Daily day whose ceremony (streak, week, best) the card shows: a scored attempt this run, or the one on file.
+    private var ceremonyDay: Int? {
+        guard let day = dailyDay, outcome.dailyCounted || outcome.dailyOnFile != nil else { return nil }
+        return day
     }
 
     /// "Next unlock: 3 more ★ for Milkshake Diner" (nothing when it was just unlocked or all are open). REVIEW-5: not
@@ -457,9 +561,47 @@ struct ResultsView: View {
     }
 
     private func celebrateIfEarned() {
-        if outcome.showsNewBest || (isShift && result.stars >= 3) {
+        if outcome.showsNewBest || (isShift && result.stars >= 3) || outcome.crownEarned {
             FeedbackDirector.shared.celebrate()
         }
+    }
+}
+
+// MARK: - Daily week strip (round 6, decision 5)
+
+/// Seven dots, oldest on the left, today last (ringed): filled gold with a check for a day with a scored Daily Pour.
+struct WeekDots: View {
+    /// Today's (the card's) day number.
+    let day: Int
+    /// `ProgressData.dailyWeek(today:)`: seven flags, oldest first.
+    let played: [Bool]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<7, id: \.self) { i in
+                let on = i < played.count && played[i]
+                let isToday = i == 6
+                VStack(spacing: 2) {
+                    ZStack {
+                        Circle()
+                            .fill(on ? BrimTheme.gold : BrimTheme.creamDeep)
+                            .overlay(Circle().stroke(isToday ? BrimTheme.ink : BrimTheme.ink.opacity(on ? 0.25 : 0.12),
+                                                     lineWidth: isToday ? 2 : 1))
+                        if on {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 8, weight: .black))
+                                .foregroundStyle(BrimTheme.ink)
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    Text(ResultsView.weekdayLetter(day: day - 6 + i))
+                        .font(BrimTheme.text(9, .heavy))
+                        .foregroundStyle(isToday ? BrimTheme.ink : BrimTheme.inkFaint)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Played \(played.filter { $0 }.count) of the last 7 days")
     }
 }
 

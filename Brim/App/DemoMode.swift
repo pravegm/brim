@@ -35,6 +35,11 @@ import UIKit
 //     perfect   0.15 s (session time) after the first live Perfect is served (the big burst on screen).
 //     spill     0.3 s after the liquid first goes over the rim (`overflowStarted`, or a Spill verdict).
 //     finished  when the run finishes; the results card shows at once.
+//     intro     round 6: 0.5 s (session time) into the run, during the intro phase: the shift banner ("Shift 6 · …")
+//               and, with `hints=fresh` on a venue's shift, the one-time venue intro card are on screen.
+//     tier      round 6 (Rush): 0.35 s after the Rush tier changes ("TIER 2 · FIZZ!" banner on screen). Pair it with
+//               `streak=11` (tiers change every `CoreTuning.rushTierEvery` = 12 glasses) so the change comes a glass
+//               or two into the live frames. Logs `BRIM-T tier <n> venue=<v>` too.
 // - `streak=N`     the run is really PLAYED up to an N-Perfect streak (perfect autopilot, headless, at launch) before
 //                  the live frames, leaving at least one order; score, served count and streak agree. Logs
 //                  `BRIM-T streak seeded <n> (asked N) score=… served=…`.
@@ -70,6 +75,9 @@ import UIKit
 //                                  tabletop): the scene was swapped and the run kept (QA-1 P1-3).
 //   `BRIM-T daily left day=<n> score=<s> glasses=<g>`   today's scored Daily was left unfinished; the pour so far was
 //                                  filed as the day's score (QA-1 P1-2).
+// - Round 6 (every DEBUG build, GameController):
+//   `BRIM-T tier <n> venue=<v>`    a Rush tier change the player sees (banner shown).
+//   `BRIM-T intro card <hint>`     a one-time venue intro card was put up (`belt`, `fade`, `sand`, `foam`, `thick`).
 // - Demo runs keep the scene rendering on every screen (the real app pauses it under Venues, Settings, results and the
 //   pose cards), so `BRIM-T frame 120` always arrives.
 
@@ -77,7 +85,7 @@ enum DemoAutopilot: String, Equatable { case perfect, great, short, over, spill 
 
 struct DemoConfig: Equatable {
     enum Screen: String, Equatable { case menu, venues, results, settings, game, standup, cover, icon }
-    enum Freeze: String, Equatable { case midpour, perfect, spill, finished }
+    enum Freeze: String, Equatable { case midpour, perfect, spill, finished, intro, tier }
     enum ProgressPreset: String, Equatable { case fresh, mid, full }
     enum HintsPreset: String, Equatable { case fresh, off }
 
@@ -171,6 +179,8 @@ struct DemoConfig: Equatable {
                 data.stars[level.id] = pattern[i % pattern.count]
                 data.bestScores[level.id] = 900 + 140 * i
             }
+            // Round 6: one Flawless crown, so the Venues frame shows what one looks like.
+            if let first = LevelCatalog.levels(in: .lemonadeStand).first { data.crowns.insert(first.id) }
             for (i, level) in LevelCatalog.levels(in: .sodaFountain).prefix(3).enumerated() {
                 data.stars[level.id] = [3, 2, 2][i]
                 data.bestScores[level.id] = 1100 + 120 * i
@@ -185,6 +195,11 @@ struct DemoConfig: Equatable {
             for level in LevelCatalog.levels where level.venue != .sandBar {
                 data.stars[level.id] = 3
                 data.bestScores[level.id] = 1600
+            }
+            // Round 6: a full save still has crowns to chase: every Lemonade Stand shift and every other Soda one.
+            for level in LevelCatalog.levels(in: .lemonadeStand) { data.crowns.insert(level.id) }
+            for (i, level) in LevelCatalog.levels(in: .sodaFountain).enumerated() where i % 2 == 0 {
+                data.crowns.insert(level.id)
             }
             data.rushBest = 5320
             data.stats = LifetimeStats(poured: 2_150_000, perfects: 412, bestStreak: 27, glasses: 980, runs: 160)

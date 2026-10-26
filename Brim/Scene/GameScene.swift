@@ -11,9 +11,11 @@ import UIKit
 /// that matters stays inside x 130…540 (`safeX`).
 ///
 /// Layering (content node, back to front):
-///   backdrop (one pre-rendered texture)          z −100
+///   backdrop (one pre-rendered texture)          z −100 (the previous one cross-fades out over it at −99.5)
+///   Conveyor service bell + its ring             z −95 / −94
 ///   lift shadow under the crease (Duo)           z −90
-///   belt slats (Conveyor) −30 · puddles −25 (under the coasters) · coaster + next-glass slot coaster −20
+///   belt slats (Conveyor) −30 · pour zone −28 · puddles −25 (under the coasters) · coaster + slot coaster −20
+///   upcoming belt glasses (stand-ins)            z −1 inside the glass layers
 ///   glass backs (ring, shadow, interior, liquid, foam, bubbles, flash)   z 0
 ///   splash droplets inside the glasses                                   z 8
 ///   stream ribbon + droplets                                              z 10
@@ -49,6 +51,10 @@ final class GameScene: SKScene {
     var dailyNumber: Int? {
         didSet { if dailyNumber != oldValue { paletteChanged() } }
     }
+
+    /// Round 6 (REVIEW-5 §2): the next orders on a conveyor, nearest first, drawn as empty glasses riding in on the
+    /// belt behind the one being poured. nil = derive them from the shift's level (Rush: set them if known).
+    var upcomingOrders: [GlassOrder]?
 
     let layout: WorldLayout
 
@@ -124,6 +130,51 @@ final class GameScene: SKScene {
     private var beltOffset: CGFloat = 0
     private var frozen = false
 
+    // Round 6
+    /// The venue the snapshot asks for (Rush travels one venue per tier). Wins over `venue`.
+    private var snapshotVenue: VenueID?
+    /// The previous backdrop, fading out over the new one when the venue changes mid-run.
+    private let backdropFade: SKSpriteNode
+    /// Conveyor: the service bell on the shelf (hops and rings when a glass leaves) and its ring.
+    private let bell: SKSpriteNode
+    private let bellRing: SKShapeNode
+    /// Conveyor: the lit pour zone on the belt under the stream.
+    private let pourZone: SKSpriteNode
+    /// World x where the stream meets the belt glasses' rims (estimated from where Core parks each belt glass).
+    private var zoneX: CGFloat?
+    private var zoneAlpha: CGFloat = 0
+    private var measuredBeltSpeed: CGFloat = 0
+    private var fillStartX: [Int: CGFloat] = [:]
+    private var ghosts: [BeltGhost] = []
+    private var shiftBeltSpeed: CGFloat?
+    private var shiftOrders: [GlassOrder] = []
+    private var lastRepose: Double = 0
+    private var reposeArmed = true
+    /// Tests: how often the bell rang / the sand puffed / the look cross-faded since the last reset.
+    private(set) var bellRingCount = 0
+    private(set) var reposePuffCount = 0
+    private(set) var lookCrossFadeCount = 0
+    /// Tests: the pour zone is showing; the order indices of the upcoming glasses riding the belt.
+    var pourZoneVisible: Bool { !pourZone.isHidden && pourZone.alpha > 0.05 }
+    var pourZoneWorldX: CGFloat? { zoneX }
+    var beltQueueKeys: [Int] {
+        var out: [Int] = []
+        for g in ghosts where !g.retiring { out.append(g.key) }
+        return out
+    }
+    /// The venue whose look is on screen.
+    var shownVenue: VenueID { palette.venue }
+
+    /// Where the bell stands: x 510 on the Conveyor's ledge (`SceneBackdropPainter.ledgeY` 766 + 8), 48 pt lower on
+    /// phones (`phonePropDrop`), like the painted props around it.
+    static let bellX: CGFloat = 510
+    static let ledgeTop: CGFloat = 774
+    static let phonePropDrop: CGFloat = 48
+    /// Upcoming belt glasses: drawn at this scale and opacity, in the waiting look's language.
+    static let beltGhostScale: CGFloat = 0.9
+    static let beltGhostAlpha: CGFloat = 0.72
+    static let beltQueueLength = 2
+
     static let beltPitch: CGFloat = 26
     /// REVIEW-3 P1-1 / P1-4: the next glass is drawn as *waiting*: smaller (0.82 Duo, 0.75 phones), set this much
     /// lower on the counter, at this opacity, on a plain coaster. It grows and brightens as it slides to the stop.
@@ -165,6 +216,10 @@ final class GameScene: SKScene {
         jug = SceneJug()
         stream = SceneStream()
         fx = SceneFX()
+        backdropFade = SKSpriteNode(color: .clear, size: layout.size)
+        bell = SKSpriteNode(texture: SceneArt.bell, size: SceneArt.bellSize)
+        bellRing = SKShapeNode(ellipseOf: CGSize(width: 30, height: 12))
+        pourZone = SKSpriteNode(texture: SceneArt.pourZone, size: SceneArt.pourZoneSize)
         super.init(size: layout.size)
         setUp()
     }
@@ -188,6 +243,28 @@ final class GameScene: SKScene {
         backdrop.position = .zero
         backdrop.zPosition = -100
         content.addChild(backdrop)
+        backdropFade.anchorPoint = .zero
+        backdropFade.position = .zero
+        backdropFade.zPosition = -99.5
+        backdropFade.isHidden = true
+        content.addChild(backdropFade)
+
+        bell.anchorPoint = CGPoint(x: 0.5, y: SceneArt.bellAnchorY)
+        bell.position = bellRest
+        bell.zPosition = -95
+        bell.isHidden = true
+        content.addChild(bell)
+        bellRing.fillColor = .clear
+        bellRing.strokeColor = SceneColor.hex(0xFFE7A0)
+        bellRing.lineWidth = 2
+        bellRing.zPosition = -94
+        bellRing.isHidden = true
+        content.addChild(bellRing)
+
+        pourZone.zPosition = -28
+        pourZone.alpha = 0
+        pourZone.isHidden = true
+        content.addChild(pourZone)
 
         // Conveyor belt slats (moved by the glasses' speed; hidden in other venues).
         let sp = CGMutablePath()
@@ -292,11 +369,42 @@ final class GameScene: SKScene {
         frozen = false
         lastServedGlass = nil
         lastSimTime = nil
+        // Round 6.
+        for g in ghosts { g.view.remove() }
+        ghosts.removeAll()
+        fillStartX.removeAll()
+        zoneX = nil
+        zoneAlpha = 0
+        pourZone.alpha = 0
+        pourZone.isHidden = true
+        measuredBeltSpeed = 0
+        lastRepose = 0
+        reposeArmed = true
+        bellRingCount = 0
+        reposePuffCount = 0
+        lookCrossFadeCount = 0
+        bell.removeAllActions()
+        bell.position = bellRest
+        bell.zRotation = 0
+        bellRing.removeAllActions()
+        bellRing.isHidden = true
+        backdropFade.removeAllActions()
+        backdropFade.isHidden = true
+        jug.root.removeAction(forKey: "vesselFade")
+        jug.root.alpha = 1
         spillColor = SceneColor.opaque(snapshot.jug.liquid.top.skColor)
         lastSnapshot = snapshot
         lastMode = snapshot.mode
+        if snapshot.venue != snapshotVenue {
+            snapshotVenue = snapshot.venue
+            paletteChanged()
+        }
         updateAutoLook(snapshot.mode)
         render(snapshot, dt: 0, advanced: false)
+    }
+
+    private var bellRest: CGPoint {
+        CGPoint(x: GameScene.bellX, y: GameScene.ledgeTop - (layout.hasFold ? 0 : GameScene.phonePropDrop))
     }
 
     // MARK: Frame loop
@@ -347,7 +455,14 @@ final class GameScene: SKScene {
             lastMode = s.mode
             updateAutoLook(s.mode)
         }
+        // Round 6 (decision 2): Rush travels — the snapshot names the venue per tier; cross-fade to it mid-run.
+        if s.venue != snapshotVenue {
+            snapshotVenue = s.venue
+            paletteChanged(animated: advanced)
+        }
+        if advanced && dt > 0 { watchRepose(s) }
         let cy = layout.counterY
+        let lead = updateBeltEstimate(s, dt: dt)
 
         // Where does the stream land? (thick drinks coil there)
         var landing: CGPoint?
@@ -406,6 +521,7 @@ final class GameScene: SKScene {
             gf.waitingDrop = layout.hasFold ? GameScene.waitingDropFold : GameScene.waitingDropPhone
             gf.waitingAlpha = GameScene.waitingAlpha
             gf.suppressed = suppress
+            gf.beltWindow = beltWindow(g)
             view.update(g, gf)
             if g.id == activeID {
                 activeLineWorld = CGPoint(x: g.x + view.outerRimHalfWidth + 12, y: cy + view.base + g.lineHeight)
@@ -438,13 +554,250 @@ final class GameScene: SKScene {
             wasInBand[id] = nil
             lastPhase[id] = nil
             spilled.remove(id)
+            fillStartX[id] = nil
         }
         if waitingID == nil { waitingGlassWorldFrame = nil }
 
         updateCoaster(s, dt: dt)
         updateSlotCoaster(s, waitingID: waitingID, dt: dt)
         updateBelt(s, dt: dt)
+        updateBeltQueue(s, lead: lead, dt: dt, advanced: advanced)
+        updatePourZone(s, lead: lead, dt: dt, advanced: advanced)
+        bell.isHidden = palette.venue != .conveyor
+        if bell.isHidden { bellRing.isHidden = true }
         fx.syncPuddles(s.puddles, counterY: cy, color: spillColor)
+    }
+
+    // MARK: Conveyor (round 6, REVIEW-5 §2)
+
+    /// Glasses ride a belt: Conveyor shifts (every order), and Rush's Conveyor tier (orders without patience).
+    private var beltMode: Bool {
+        guard palette.venue == .conveyor, let mode = lastMode else { return false }
+        switch mode {
+        case .shift: return shiftBeltSpeed != nil
+        case .rush: return true
+        case .daily, .practice: return false
+        }
+    }
+
+    private func isBelt(_ g: GlassState) -> Bool {
+        return beltMode && g.patienceTotal == nil && !g.isWaitingInSlot
+    }
+
+    /// Belt speed (pt/s): the shift's own, else what the riding glasses show.
+    private var beltSpeed: CGFloat {
+        if let v = shiftBeltSpeed { return v }
+        return measuredBeltSpeed > 4 ? measuredBeltSpeed : 30
+    }
+
+    /// Finds the belt glass being served (the "lead") and keeps the pour-zone estimate: Core parks each belt glass
+    /// `rimHalf + leadIn` left of where the stream crosses its rim (`GameSession.sendToStop`), so that landing x is
+    /// where the glass stood when it started filling, plus those two.
+    private func updateBeltEstimate(_ s: GameSnapshot, dt: CGFloat) -> GlassState? {
+        guard beltMode else { return nil }
+        var lead: GlassState?
+        for g in s.glasses where isBelt(g) {
+            if lead == nil && g.result == nil && (g.phase == .filling || g.phase == .arriving) { lead = g }
+            if g.phase == .filling && fillStartX[g.id] == nil && lastPhase[g.id] == .arriving { fillStartX[g.id] = g.x }
+            if dt > 0, g.phase == .filling || g.phase == .served, let v = glasses[g.id], abs(v.velocityX) > 4 {
+                measuredBeltSpeed += (v.velocityX - measuredBeltSpeed) * min(1, dt * 4)
+            }
+        }
+        if let g = lead, let x0 = fillStartX[g.id] {
+            let leadIn = min(max(beltSpeed * 0.9, 10), CGFloat(CoreTuning.conveyorLeadIn))
+            zoneX = x0 + g.shape.rimHalfWidth + leadIn
+        }
+        return lead
+    }
+
+    /// How much of a belt glass's pour window is left: 1 until its mouth reaches the stream, 0 once it has passed.
+    private func beltWindow(_ g: GlassState) -> CGFloat? {
+        guard isBelt(g), let zx = zoneX else { return nil }
+        if g.phase == .arriving { return 1 }
+        guard g.phase == .filling else { return nil }
+        let r = max(1, g.shape.rimHalfWidth)
+        return min(max((zx - g.x + r) / (2 * r), 0), 1)
+    }
+
+    /// The lit pour zone on the belt: fades in once the landing x is known, brightens while a mouth is under it.
+    private func updatePourZone(_ s: GameSnapshot, lead: GlassState?, dt: CGFloat, advanced: Bool) {
+        let show = beltMode && zoneX != nil && lead != nil && s.phase != .finished
+        let target: CGFloat = show ? 1 : 0
+        if dt > 0 {
+            zoneAlpha += (target - zoneAlpha) * min(1, dt * 5)
+        } else if !advanced {
+            zoneAlpha = target
+        }
+        guard zoneAlpha > 0.01, let zx = zoneX else {
+            pourZone.isHidden = true
+            return
+        }
+        pourZone.position = CGPoint(x: zx, y: layout.counterY)
+        var live = false
+        if let g = lead, g.phase == .filling {
+            let r = g.shape.rimHalfWidth
+            live = g.x + r > zx && g.x - r < zx
+        }
+        let pulse: CGFloat = live ? 0.2 + 0.08 * CGFloat(sin(s.time * 12)) : 0
+        pourZone.alpha = zoneAlpha * min(1, 0.72 + pulse)
+        pourZone.isHidden = false
+    }
+
+    /// Index of the first order not yet on the counter (orders served + glasses still waiting for a verdict).
+    private func upcomingBase(_ s: GameSnapshot) -> Int {
+        var unserved = 0
+        for g in s.glasses where g.result == nil && g.phase != .leaving { unserved += 1 }
+        return s.ordersDone + unserved
+    }
+
+    /// The `offset`-th upcoming order (0 = next): `upcomingOrders` if set, else the shift's own list.
+    private func upcomingOrder(base: Int, offset: Int) -> GlassOrder? {
+        if let given = upcomingOrders { return offset < given.count ? given[offset] : nil }
+        let k = base + offset
+        return k >= 0 && k < shiftOrders.count ? shiftOrders[k] : nil
+    }
+
+    /// Spacing between a belt glass and the one riding in behind it: where Core will park the next one when this one
+    /// is served (rims + exit margin + lead-in), and never closer than their bodies allow.
+    private func beltGap(_ a: GlassShape, _ b: GlassShape) -> CGFloat {
+        let leadIn = min(max(beltSpeed * 0.9, 10), CGFloat(CoreTuning.conveyorLeadIn))
+        let park = a.rimHalfWidth + b.rimHalfWidth + CGFloat(CoreTuning.conveyorExitMargin) + leadIn
+        let bodies = CGFloat(NextGlassSlot.bodyHalfWidth(a) + NextGlassSlot.handleReach(a))
+            + CGFloat(NextGlassSlot.bodyHalfWidth(b)) * GameScene.beltGhostScale + 14
+        return max(park, bodies)
+    }
+
+    /// The next glasses ride in on the belt behind the lead (empty, slightly smaller and dimmer, prefills showing).
+    /// When the lead is served, the nearest becomes the real next glass (Core slides it in to about the same spot) and
+    /// its stand-in fades; a new one appears at the back.
+    private func updateBeltQueue(_ s: GameSnapshot, lead: GlassState?, dt: CGFloat, advanced: Bool) {
+        if !beltMode || lead == nil {
+            for g in ghosts where !g.retiring { g.retire(at: s.time) }
+        }
+        var base = Int.max
+        var joining = false
+        if beltMode, let l = lead {
+            base = upcomingBase(s)
+            // New stand-ins join only once the lead has stopped sliding in.
+            joining = l.phase == .filling
+        }
+        for g in ghosts where !g.retiring && g.key < base { g.retire(at: s.time) }
+        // Join the queue at the back.
+        if joining {
+            var added = false
+            for offset in 0..<GameScene.beltQueueLength {
+                guard let order = upcomingOrder(base: base, offset: offset) else { break }
+                let key = base + offset
+                if ghosts.contains(where: { $0.key == key && !$0.retiring }) { continue }
+                let shape = GlassCatalog.shape(order.glass)
+                var anchorX = lead?.x ?? layout.visibleRect.minX
+                var anchorShape = lead?.shape ?? shape
+                for g in ghosts where !g.retiring && g.key < key {
+                    anchorX = g.x
+                    anchorShape = g.shape
+                }
+                let ghost = BeltGhost(key: key, order: order, shape: shape, x: anchorX - beltGap(anchorShape, shape),
+                                      dark: palette.isDark)
+                glassBackLayer.addChild(ghost.view.back)
+                glassFrontLayer.addChild(ghost.view.front)
+                ghost.view.back.zPosition = -1
+                ghost.view.front.zPosition = -1
+                ghosts.append(ghost)
+                added = true
+            }
+            if added { ghosts.sort { $0.key < $1.key } }
+        }
+
+        // Ride the belt: move with it while it runs; the active ones keep their spacing behind the lead.
+        var running = false
+        for g in s.glasses where isBelt(g) && (g.phase == .filling || g.phase == .served) {
+            if let v = glasses[g.id], abs(v.velocityX) > 4 { running = true; break }
+        }
+        let move = running ? beltSpeed * dt : 0
+        var anchor: (x: CGFloat, shape: GlassShape)? = nil
+        if let l = lead, l.phase == .filling { anchor = (l.x, l.shape) }
+        let baseBand = defaultBand(s.mode)
+        var i = 0
+        while i < ghosts.count {
+            let g = ghosts[i]
+            g.x += move
+            if !g.retiring {
+                if let a = anchor {
+                    let target = a.x - beltGap(a.shape, g.shape)
+                    if dt > 0 { g.x += (target - g.x) * min(1, dt * 5) }
+                }
+                anchor = (g.x, g.shape)
+            }
+            var suppressed = g.fresh
+            if g.retiring {
+                let near = lead.map { abs($0.x - g.x) < 70 } ?? true
+                suppressed = near || s.time - g.retiredAt > 0.5 || !beltMode
+            }
+            g.state.x = g.x
+            var f = GlassFrame(counterY: layout.counterY, dt: dt, time: s.time, pouring: false, tail: nil,
+                               advanced: advanced, reduceMotion: reduceMotion, band: baseBand, projected: nil,
+                               safeX: 0...layout.size.width, keepOutTop: foldKeepOutTop)
+            f.waitingScale = GameScene.beltGhostScale
+            f.waitingDrop = 0
+            f.waitingAlpha = GameScene.beltGhostAlpha
+            f.suppressed = suppressed
+            g.view.update(g.state, f)
+            g.fresh = false
+            if g.retiring && suppressed && g.view.drawnAlpha < 0.01 && s.time - g.retiredAt > 0.05 {
+                g.view.remove()
+                ghosts.remove(at: i)
+                continue
+            }
+            i += 1
+        }
+    }
+
+    /// The bell on the shelf: a little hop (bigger on Perfect), a ring at the knob and a glint.
+    private func ringBell(judgement: Judgement) {
+        guard !bell.isHidden else { return }
+        bellRingCount += 1
+        let rest = bellRest
+        let knob = CGPoint(x: rest.x, y: rest.y + SceneArt.bellKnobHeight)
+        bellRing.removeAllActions()
+        bellRing.position = knob
+        bellRing.setScale(0.4)
+        bellRing.alpha = judgement.isHit ? 0.95 : 0.5
+        bellRing.isHidden = false
+        let grow = SKAction.scale(to: judgement == .perfect ? 1.8 : 1.4, duration: 0.45)
+        grow.timingMode = .easeOut
+        bellRing.run(SKAction.sequence([SKAction.group([grow, SKAction.fadeOut(withDuration: 0.45)]), SKAction.hide()]))
+        if judgement.isHit { fx.ding(at: knob, big: judgement == .perfect) }
+        guard !reduceMotion else { return }
+        bell.removeAction(forKey: "flick")
+        bell.position = rest
+        bell.zRotation = 0
+        let hop: CGFloat = judgement == .perfect ? 8 : (judgement.isHit ? 5 : 2)
+        let up = SKAction.group([SKAction.moveBy(x: 0, y: hop, duration: 0.07), SKAction.rotate(toAngle: 0.1, duration: 0.07)])
+        up.timingMode = .easeOut
+        let down = SKAction.group([SKAction.move(to: rest, duration: 0.12), SKAction.rotate(toAngle: -0.06, duration: 0.12)])
+        down.timingMode = .easeIn
+        let settle = SKAction.rotate(toAngle: 0, duration: 0.12)
+        settle.timingMode = .easeOut
+        bell.run(SKAction.sequence([up, down, settle]), withKey: "flick")
+    }
+
+    // MARK: Sand repose (round 6, REVIEW-5 §4)
+
+    /// A tiny puff of dust at the lip as the scoop reaches its angle of repose (re-arms once it eases back).
+    private func watchRepose(_ s: GameSnapshot) {
+        guard s.jug.liquid.id == .sand else {
+            lastRepose = 0
+            reposeArmed = true
+            return
+        }
+        let rp = s.jug.reposeProgress
+        if reposeArmed && rp >= 0.97 && lastRepose < 0.97 {
+            reposeArmed = false
+            reposePuffCount += 1
+            fx.dustPuff(at: s.jug.lip, color: SceneLiquidLook.stream(s.jug.liquid).body)
+        }
+        if rp < 0.6 { reposeArmed = true }
+        lastRepose = rp
     }
 
     /// The Perfect band isn't in the snapshot: use the level's band, refined by watching `inPerfectBand` switch on.
@@ -472,7 +825,13 @@ final class GameScene: SKScene {
 
     /// The coaster marks the pour spot: wherever a filling glass stands still. Sized to the glass. Fades in once.
     private func updateCoaster(_ s: GameSnapshot, dt: CGFloat) {
-        if palette.venue == .conveyor {
+        // Belt glasses have the pour zone instead (round 6: Rush's Conveyor tier mixes in glasses that stop).
+        var onBelt = false
+        for g in s.glasses where g.phase == .filling {
+            onBelt = isBelt(g)
+            break
+        }
+        if onBelt {
             coaster.isHidden = true
             return
         }
@@ -504,10 +863,7 @@ final class GameScene: SKScene {
     /// The next-glass slot (ROUND-3 decision 2): a coaster of its own under the waiting glass. It learns the slot from
     /// where Core parks the waiting glass, stays while a glass is in or near the slot, and fades when the slot empties.
     private func updateSlotCoaster(_ s: GameSnapshot, waitingID: Int?, dt: CGFloat) {
-        if palette.venue == .conveyor {
-            slotCoaster.isHidden = true
-            return
-        }
+        // No slot on a belt (Core never queues a waiting glass while a belt glass is on the counter).
         slotCoaster.isHidden = false
         if let id = waitingID, let v = glasses[id] {
             let target = slotCoasterScale(for: v)
@@ -617,6 +973,11 @@ final class GameScene: SKScene {
                 glasses[glassID]?.slosh(2)
             case let .served(glassID, judgement, _):
                 lastServedGlass = glassID
+                // Conveyor: the glass leaves the window — the bell on the shelf flicks and rings.
+                for g in s.glasses where g.id == glassID {
+                    if isBelt(g) { ringBell(judgement: judgement) }
+                    break
+                }
                 guard let v = glasses[glassID] else { break }
                 if judgement == .perfect {
                     v.celebrate()
@@ -723,8 +1084,14 @@ final class GameScene: SKScene {
         var v: VenueID?
         var rush = false
         var daily: Int?
+        shiftBeltSpeed = nil
+        shiftOrders = []
         switch mode {
-        case let .shift(id): v = LevelCatalog.level(id)?.venue
+        case let .shift(id):
+            let level = LevelCatalog.level(id)
+            v = level?.venue
+            shiftBeltSpeed = level?.conveyorSpeed.map { CGFloat($0 * CoreTuning.beltScale) }
+            shiftOrders = level?.orders ?? []
         case .rush: rush = true
         case let .daily(day): daily = day
         case .practice: break
@@ -737,16 +1104,45 @@ final class GameScene: SKScene {
         }
     }
 
-    private var effectiveVenue: VenueID { venue ?? autoVenue ?? .lemonadeStand }
+    /// Round 6: the snapshot's venue first (Rush travels per tier; shifts report their own), then the App's `venue`,
+    /// then the shift's, then the Lemonade Stand.
+    private var effectiveVenue: VenueID { snapshotVenue ?? venue ?? autoVenue ?? .lemonadeStand }
     private var effectiveRush: Bool { rushLook || autoRush }
     private var effectiveDaily: Int? { dailyNumber ?? autoDaily }
 
-    private func paletteChanged() {
+    /// `animated` (a venue change mid-run): the old backdrop and vessel cross-fade into the new ones.
+    private func paletteChanged(animated: Bool = false) {
         var p = ScenePalette.forVenue(effectiveVenue)
         if effectiveRush { p = p.duskified() }
+        let oldVessel = palette.vessel
+        let oldTexture = backdrop.texture
+        let changedVenue = p.venue != palette.venue
+        let vesselChanged = oldVessel.form != p.vessel.form || oldVessel.decal != p.vessel.decal
+        if animated && changedVenue && vesselChanged && !jug.root.isHidden, let copy = jug.root.copy() as? SKNode {
+            // The old vessel fades out where it stands while the new one fades in.
+            copy.removeAllActions()
+            copy.position = jugLayer.position
+            copy.zPosition = jugLayer.zPosition - 0.4
+            content.addChild(copy)
+            copy.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.45), SKAction.removeFromParent()]))
+            jug.root.removeAction(forKey: "vesselFade")
+            jug.root.alpha = 0
+            jug.root.run(SKAction.fadeIn(withDuration: 0.45), withKey: "vesselFade")
+        }
         palette = p
         applyPaletteToNodes()
         if backdropScale > 0 { buildBackdrop(scale: backdropScale) }
+        if animated && changedVenue, let old = oldTexture, old !== backdrop.texture {
+            lookCrossFadeCount += 1
+            backdropFade.removeAllActions()
+            backdropFade.texture = old
+            backdropFade.size = layout.size
+            backdropFade.alpha = 1
+            backdropFade.isHidden = false
+            let fade = SKAction.fadeOut(withDuration: 0.8)
+            fade.timingMode = .easeInEaseOut
+            backdropFade.run(SKAction.sequence([fade, SKAction.hide()]))
+        }
     }
 
     private func applyPaletteToNodes() {
@@ -779,5 +1175,40 @@ final class GameScene: SKScene {
         backdrop.color = .white
         backdrop.colorBlendFactor = 0
         backdrop.size = layout.size
+    }
+}
+
+/// Round 6 (REVIEW-5 §2): a stand-in for an order still to come, riding the Conveyor's belt behind the glass being
+/// poured — an empty glass (its prefill showing) in the waiting look. Purely cosmetic; Core never sees it.
+@MainActor
+private final class BeltGhost {
+    let key: Int
+    let shape: GlassShape
+    let view: SceneGlass
+    var state: GlassState
+    var x: CGFloat
+    var retiring = false
+    var retiredAt: Double = 0
+    /// True until its first draw (it fades in from nothing).
+    var fresh = true
+
+    init(key: Int, order: GlassOrder, shape: GlassShape, x: CGFloat, dark: Bool) {
+        self.key = key
+        self.shape = shape
+        self.x = x
+        let id = -1000 - key
+        view = SceneGlass(id: id, darkBackdrop: dark)
+        let interior = shape.interiorHeight
+        let prefill = CGFloat(min(max(order.prefill, 0), 0.95))
+        // `.arriving` with the line hidden: SceneGlass draws it in the waiting look (scale/opacity from GlassFrame).
+        state = GlassState(id: id, shape: shape, liquid: LiquidCatalog.liquid(order.liquid), x: x, phase: .arriving,
+                           liquidHeight: interior * prefill, foamHeight: 0, lineHeight: interior * CGFloat(order.line),
+                           lineOpacity: 0, inPerfectBand: false, overflowing: false, patienceLeft: nil,
+                           patienceTotal: nil, result: nil)
+    }
+
+    func retire(at time: Double) {
+        retiring = true
+        retiredAt = time
     }
 }

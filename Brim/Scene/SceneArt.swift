@@ -139,11 +139,19 @@ enum SceneDraw {
             let ring = UIBezierPath(ovalIn: circle(c, r * 0.8))
             ring.lineWidth = max(1, r * 0.12)
             ring.stroke()
-            let font = UIFont.systemFont(ofSize: r * 0.62, weight: .heavy)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
-            let s = "04" as NSString
-            let ts = s.size(withAttributes: attrs)
-            s.draw(at: CGPoint(x: c.x - ts.width / 2, y: c.y - ts.height / 2), withAttributes: attrs)
+            // Round 6 (REVIEW-5 §2): belt chevrons, not a number ("04" read as a count or a wrong shift).
+            for k in 0..<2 {
+                let ox = c.x + (CGFloat(k) - 0.5) * r * 0.42 - r * 0.02
+                let chev = UIBezierPath()
+                chev.move(to: CGPoint(x: ox - r * 0.17, y: c.y - r * 0.34))
+                chev.addLine(to: CGPoint(x: ox + r * 0.17, y: c.y))
+                chev.addLine(to: CGPoint(x: ox - r * 0.17, y: c.y + r * 0.34))
+                chev.lineWidth = max(1.2, r * 0.16)
+                chev.lineCapStyle = .round
+                chev.lineJoinStyle = .round
+                (k == 0 ? ink.withAlphaComponent(0.55) : ink).setStroke()
+                chev.stroke()
+            }
         case .moon:
             let gold = hex(0xF5C84C)
             gold.setFill()
@@ -353,6 +361,114 @@ enum SceneArt {
         return SceneSprite(texture: t, size: size)
     }
 
+    // MARK: Conveyor props (round 6, REVIEW-5 §2)
+
+    /// The service bell on the Conveyor's shelf is its own sprite (it hops and rings when a glass leaves).
+    /// Anchor it at (0.5, `bellAnchorY`), which is the underside of its plate, and stand it on the ledge.
+    static let bellSize = CGSize(width: 56, height: 46)
+    static let bellAnchorY: CGFloat = 4 / 46
+    /// Height of the bell's knob above the plate's underside (where the "ding" rings).
+    static let bellKnobHeight: CGFloat = 31
+
+    static var bell: SKTexture {
+        if let t = cache["bell"] { return t }
+        let size = bellSize
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 3
+        fmt.opaque = false
+        let img = UIGraphicsImageRenderer(size: size, format: fmt).image { rc in
+            let ctx = rc.cgContext
+            let x = size.width / 2
+            let base = size.height - 4            // UIKit y of the plate's underside
+            // Contact shadow.
+            SceneColor.ink.withAlphaComponent(0.16).setFill()
+            UIBezierPath(ovalIn: CGRect(x: x - 24, y: base - 2.5, width: 48, height: 5)).fill()
+            // Dome: polished brass.
+            let dome = UIBezierPath()
+            dome.move(to: CGPoint(x: x - 18, y: base - 6))
+            dome.addQuadCurve(to: CGPoint(x: x + 18, y: base - 6), controlPoint: CGPoint(x: x, y: base - 44))
+            dome.close()
+            ctx.saveGState()
+            dome.addClip()
+            SceneDraw.fillHorizontal(ctx, rect: CGRect(x: x - 18, y: base - 26, width: 36, height: 20),
+                                     colors: [SceneColor.hex(0xC9962E), SceneColor.hex(0xFFE7A0), SceneColor.hex(0xE0AE3E),
+                                              SceneColor.hex(0xA87A20)],
+                                     locations: [0, 0.3, 0.6, 1])
+            ctx.restoreGState()
+            SceneColor.hex(0x7A5512, 0.55).setStroke()
+            dome.lineWidth = 1
+            dome.stroke()
+            // Specular arc.
+            let spec = UIBezierPath()
+            spec.move(to: CGPoint(x: x - 11, y: base - 10))
+            spec.addQuadCurve(to: CGPoint(x: x - 3, y: base - 21), controlPoint: CGPoint(x: x - 10, y: base - 19))
+            spec.lineWidth = 2.2
+            spec.lineCapStyle = .round
+            UIColor(white: 1, alpha: 0.75).setStroke()
+            spec.stroke()
+            // Plate + knob (steel).
+            let plate = CGRect(x: x - 22, y: base - 6, width: 44, height: 6)
+            SceneDraw.fillVertical(ctx, rect: plate, colors: [SceneColor.hex(0xC9D3DB), SceneColor.hex(0x7D8A96)],
+                                   locations: [0, 1])
+            SceneColor.hex(0x5E6A76).setFill()
+            UIBezierPath(ovalIn: SceneDraw.circle(CGPoint(x: x, y: base - 28), 3.6)).fill()
+            UIBezierPath(roundedRect: CGRect(x: x - 1.6, y: base - 27, width: 3.2, height: 4), cornerRadius: 1).fill()
+            UIColor(white: 1, alpha: 0.7).setFill()
+            UIBezierPath(ovalIn: SceneDraw.circle(CGPoint(x: x - 1.1, y: base - 29.2), 1.2)).fill()
+        }
+        let t = SKTexture(image: img)
+        t.filteringMode = .linear
+        cache["bell"] = t
+        return t
+    }
+
+    /// The pour zone painted on the belt under the stream: a lit amber strip across the belt with lamp ticks at the
+    /// rails, and travel chevrons either side near the player's edge. `pourZoneSize` world pt, centred on the landing x
+    /// and the counter line.
+    static let pourZoneSize = CGSize(width: 132, height: 92)
+    static let pourZoneAmber = SceneColor.hex(0xFFB547)
+
+    static var pourZone: SKTexture {
+        if let t = cache["pour-zone"] { return t }
+        let size = pourZoneSize
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 3
+        fmt.opaque = false
+        let amber = pourZoneAmber
+        let img = UIGraphicsImageRenderer(size: size, format: fmt).image { rc in
+            let ctx = rc.cgContext
+            let cx = size.width / 2
+            let bandW: CGFloat = 38
+            SceneDraw.fillHorizontal(ctx, rect: CGRect(x: cx - bandW / 2, y: 0, width: bandW, height: size.height),
+                                     colors: [amber.withAlphaComponent(0), amber.withAlphaComponent(0.34),
+                                              SceneColor.hex(0xFFE7B0, 0.55), amber.withAlphaComponent(0.34),
+                                              amber.withAlphaComponent(0)],
+                                     locations: [0, 0.28, 0.5, 0.72, 1])
+            // Lamp ticks at both rails.
+            for y in [CGFloat(1.5), size.height - 5.5] {
+                SceneColor.hex(0xFFE7B0, 0.95).setFill()
+                UIBezierPath(roundedRect: CGRect(x: cx - 12, y: y, width: 24, height: 4), cornerRadius: 2).fill()
+            }
+            // Travel chevrons (the belt runs left → right), on the near half of the belt so a glass rarely hides them.
+            let cy = size.height - 20
+            for (k, ox) in [CGFloat(-50), -38, 38, 50].enumerated() {
+                let p = UIBezierPath()
+                p.move(to: CGPoint(x: cx + ox - 4, y: cy - 6.5))
+                p.addLine(to: CGPoint(x: cx + ox + 4, y: cy))
+                p.addLine(to: CGPoint(x: cx + ox - 4, y: cy + 6.5))
+                p.lineWidth = 3
+                p.lineCapStyle = .round
+                p.lineJoinStyle = .round
+                amber.withAlphaComponent(k == 0 || k == 2 ? 0.45 : 0.8).setStroke()
+                p.stroke()
+            }
+        }
+        let t = SKTexture(image: img)
+        t.filteringMode = .linear
+        cache["pour-zone"] = t
+        return t
+    }
+
     // MARK: Text (stamps, streak pops). SF Pro Rounded Heavy via the .rounded design.
 
     static func label(_ text: String, pointSize: CGFloat, fill: UIColor, outline: UIColor, key: String) -> SceneSprite {
@@ -525,6 +641,20 @@ private struct SceneBackdropPainter {
                                    colors: [SceneColor.hex(0xFFB27A, 0), SceneColor.hex(0xFFB27A, 0.35)], locations: [0, 1])
         }
 
+        if p.venue == .sandBar && !p.dusk {
+            // Sunset light raking across the adobe from the top right, and a faint plaster mottle.
+            SceneDraw.fillRadial(ctx, clip: wallRect, center: pt(W * 0.82, H - 30), radius: 420,
+                                 colors: [SceneColor.hex(0xFFE0A8, 0.55), SceneColor.hex(0xFFD08A, 0)], locations: [0, 1])
+            var rng = SceneRNG(seed: 913)
+            for _ in 0..<14 {
+                let c = pt(rng.range(0, W), rng.range(y0 + 150, H))
+                let r = rng.range(40, 110)
+                let col = rng.unit() < 0.5 ? UIColor(white: 1, alpha: 0.07) : SceneColor.hex(0xB8643F, 0.06)
+                SceneDraw.fillRadial(ctx, clip: wallRect, center: c, radius: r, colors: [col, col.withAlphaComponent(0)],
+                                     locations: [0, 1])
+            }
+        }
+
         // Backsplash.
         let tileTop = y0 + 150
         switch p.venue {
@@ -532,6 +662,8 @@ private struct SceneBackdropPainter {
             paintChecker(y0: y0, y1: tileTop, a: SceneColor.mix(p.tile, p.wallBottom, 0.15), b: p.grout, size: 26)
         case .potionShop:
             paintTiles(y0: y0, y1: tileTop, tile: p.tile, grout: p.grout, tileW: 58, tileH: 30, seed: 5, radius: 6)
+        case .sandBar:
+            paintStucco(y0: y0, y1: tileTop)
         default:
             paintTiles(y0: y0, y1: tileTop, tile: p.tile, grout: p.grout, tileW: 46, tileH: 23, seed: 7, radius: 3.5)
         }
@@ -594,6 +726,66 @@ private struct SceneBackdropPainter {
         ctx.restoreGState()
     }
 
+    /// Sand Bar (round 6): a sand-coloured stucco wainscot with a hand-painted desert border along its top
+    /// (terracotta and turquoise triangles on a cream stripe) instead of glazed tiles.
+    private func paintStucco(y0: CGFloat, y1: CGFloat) {
+        guard y1 > y0 else { return }
+        let rect = band(0, W, y0, y1)
+        ctx.saveGState()
+        ctx.clip(to: rect)
+        SceneDraw.fillVertical(ctx, rect: rect, colors: [SceneColor.lighter(p.tile, 0.12), p.tile, p.grout],
+                               locations: [0, 0.5, 1])
+        var rng = SceneRNG(seed: 47)
+        for _ in 0..<700 {
+            let x = rng.range(0, W), y = rng.range(y0, y1)
+            let r = rng.range(0.4, 1.3)
+            (rng.unit() < 0.55 ? SceneColor.hex(0x9A6038, rng.range(0.10, 0.22)) : UIColor(white: 1, alpha: rng.range(0.2, 0.45)))
+                .setFill()
+            UIBezierPath(ovalIn: SceneDraw.circle(pt(x, y), r)).fill()
+        }
+        // Trowel sweeps.
+        for _ in 0..<18 {
+            let x = rng.range(-40, W), y = rng.range(y0 + 6, y1 - 30)
+            let s = UIBezierPath()
+            s.move(to: pt(x, y))
+            s.addQuadCurve(to: pt(x + rng.range(50, 120), y + rng.range(-4, 4)), controlPoint: pt(x + 40, y + rng.range(4, 9)))
+            s.lineWidth = rng.range(3, 7)
+            s.lineCapStyle = .round
+            UIColor(white: 1, alpha: 0.08).setStroke()
+            s.stroke()
+        }
+        // The painted border.
+        let b0 = y1 - 26, b1 = y1 - 6
+        SceneColor.hex(0xF7E3C2).setFill()
+        ctx.fill(band(0, W, b0, b1))
+        let terracotta = SceneColor.hex(0xC4633B), turquoise = SceneColor.hex(0x3FA7A0)
+        terracotta.setFill()
+        ctx.fill(band(0, W, b0 - 2, b0))
+        ctx.fill(band(0, W, b1, b1 + 2))
+        let step: CGFloat = 20
+        var x: CGFloat = 0
+        var i = 0
+        while x < W {
+            let tri = UIBezierPath()
+            if i % 2 == 0 {
+                tri.move(to: pt(x, b0 + 3))
+                tri.addLine(to: pt(x + step, b0 + 3))
+                tri.addLine(to: pt(x + step * 0.5, b1 - 3))
+                terracotta.setFill()
+            } else {
+                tri.move(to: pt(x, b1 - 3))
+                tri.addLine(to: pt(x + step, b1 - 3))
+                tri.addLine(to: pt(x + step * 0.5, b0 + 3))
+                turquoise.setFill()
+            }
+            tri.close()
+            tri.fill()
+            x += step * 0.5
+            i += 1
+        }
+        ctx.restoreGState()
+    }
+
     private func paintChecker(y0: CGFloat, y1: CGFloat, a: UIColor, b: UIColor, size: CGFloat) {
         let rect = band(0, W, y0, y1)
         ctx.saveGState()
@@ -635,6 +827,7 @@ private struct SceneBackdropPainter {
         case .marble: paintMarble(top: top)
         case .formica: paintFormica(top: top)
         case .steel: paintSteel(top: top)
+        case .sandstone: paintSandstone(top: top)
         }
         if p.venue == .conveyor { paintBelt() }
 
@@ -715,6 +908,67 @@ private struct SceneBackdropPainter {
             ctx.fill(band(0, W, y1 - 1.3, y1))
             UIColor(white: 1, alpha: dark ? 0.08 : 0.16).setFill()
             ctx.fill(band(0, W, y1 - 2.4, y1 - 1.3))
+        }
+    }
+
+    /// Sand Bar (round 6): big sandstone slabs (rows crowd toward the fold), each a touch different, speckled and
+    /// pitted, with soft mortar joints.
+    private func paintSandstone(top: CGFloat) {
+        var rng = SceneRNG(seed: 131)
+        var seams: [CGFloat] = []
+        var y: CGFloat = 12
+        var gap: CGFloat = 96
+        while y < top - 8 {
+            seams.append(y)
+            y += gap
+            gap = max(28, gap * 0.8)
+        }
+        seams.append(top)
+        let mortar = SceneColor.hex(0x9A6038)
+        for i in 0..<(seams.count - 1) {
+            let y0 = seams[i], y1 = seams[i + 1]
+            let h = y1 - y0
+            // Slabs in this row: 2–3 joints, staggered.
+            var xs: [CGFloat] = [-10]
+            var x = rng.range(60, 200)
+            while x < W - 40 {
+                xs.append(x)
+                x += rng.range(170, 260)
+            }
+            xs.append(W + 10)
+            for k in 0..<(xs.count - 1) {
+                let tint = rng.range(-0.06, 0.06)
+                let col = tint >= 0 ? UIColor(white: 1, alpha: tint * 1.5) : SceneColor.hex(0x8A4A26, -tint * 1.2)
+                col.setFill()
+                ctx.fill(band(xs[k], xs[k + 1] - xs[k], y0, y1))
+                // A soft worn hollow in the middle of some slabs.
+                if rng.unit() < 0.5 {
+                    let c = pt((xs[k] + xs[k + 1]) * 0.5 + rng.range(-30, 30), (y0 + y1) * 0.5)
+                    SceneDraw.fillRadial(ctx, clip: band(xs[k], xs[k + 1] - xs[k], y0, y1), center: c, radius: h * 0.9,
+                                         colors: [UIColor(white: 1, alpha: 0.10), UIColor(white: 1, alpha: 0)], locations: [0, 1])
+                }
+                if k > 0 {
+                    mortar.withAlphaComponent(0.28).setFill()
+                    ctx.fill(CGRect(x: xs[k] - 0.8, y: uy(y1), width: 1.6, height: h))
+                    UIColor(white: 1, alpha: 0.18).setFill()
+                    ctx.fill(CGRect(x: xs[k] + 0.8, y: uy(y1), width: 1.2, height: h))
+                }
+            }
+            // Speckles and pits, finer in the distance.
+            let dots = Int(h * 3.2)
+            let scale = min(1, h / 60)
+            for _ in 0..<dots {
+                let px = rng.range(0, W), py = rng.range(y0 + 1, y1 - 1)
+                let r = rng.range(0.4, 1.4) * (0.5 + 0.5 * scale)
+                (rng.unit() < 0.6 ? mortar.withAlphaComponent(rng.range(0.12, 0.26)) : UIColor(white: 1, alpha: rng.range(0.2, 0.4)))
+                    .setFill()
+                UIBezierPath(ovalIn: CGRect(x: px - r, y: uy(py) - r * 0.7, width: r * 2, height: r * 1.4)).fill()
+            }
+            // Joint: mortar line with a sunlit near lip.
+            mortar.withAlphaComponent(0.34).setFill()
+            ctx.fill(band(0, W, y1 - 1.6, y1))
+            UIColor(white: 1, alpha: 0.22).setFill()
+            ctx.fill(band(0, W, y1 - 3, y1 - 1.6))
         }
     }
 
@@ -871,7 +1125,7 @@ private struct SceneBackdropPainter {
             paintTicketRail()
             paintLedge()
             cups(x: 450, base: Self.ledgeY + 8, w: 30, color: SceneColor.hex(0xF2F0EA))
-            bell(x: 510)
+            // The service bell at x 510 is a node (GameScene `bell`): it hops and rings when a glass leaves.
             jar(x: 572, base: Self.ledgeY + 8, w: 28, h: 34, color: SceneColor.hex(0xD9E4EC))
         case .potionShop:
             paintLedge()
@@ -880,10 +1134,11 @@ private struct SceneBackdropPainter {
             candle(x: 520, h: 22)
             bottle(x: 566, base: Self.ledgeY + 8, w: 20, h: 54, color: SceneColor.hex(0x3FC9A8))
         case .sandBar:
+            if !p.dusk { paintDesertWindow() }
             paintLedge()
             hourglass(x: 466, h: 60)
             cactus(x: 528)
-            jar(x: 582, base: Self.ledgeY + 8, w: 26, h: 28, color: SceneColor.hex(0xF0D9A8))
+            sandArtBottle(x: 584)
         }
         if let n = dailyNumber { paintCalendar(n) }
         if p.dusk { paintStringLights() }
@@ -1285,21 +1540,136 @@ private struct SceneBackdropPainter {
         ctx.fill(CGRect(x: x - 16, y: uy(base + 47), width: 32, height: 3))
     }
 
-    private func bell(x: CGFloat) {
-        let base = ledgeTop
-        let dome = UIBezierPath()
-        dome.move(to: pt(x - 18, base + 6))
-        dome.addQuadCurve(to: pt(x + 18, base + 6), controlPoint: pt(x, base + 44))
-        dome.close()
+    /// Sand Bar: an arched adobe window under the ledge, open on a desert at sunset (mesas, dunes, a saguaro).
+    private func paintDesertWindow() {
+        let x0: CGFloat = 446, x1: CGFloat = 546
+        let y0: CGFloat = 654, y1: CGFloat = 748
+        let r = (x1 - x0) * 0.5
+        let cx = (x0 + x1) * 0.5
+        let arch = UIBezierPath()
+        arch.move(to: pt(x0, y0))
+        arch.addLine(to: pt(x0, y1 - r))
+        arch.addArc(withCenter: pt(cx, y1 - r), radius: r, startAngle: CGFloat.pi, endAngle: 0, clockwise: true)
+        arch.addLine(to: pt(x1, y0))
+        arch.close()
+        // Reveal: a deep terracotta jamb around the opening.
         ctx.saveGState()
-        dome.addClip()
-        SceneDraw.fillHorizontal(ctx, rect: band(x - 18, 36, base + 6, base + 26),
-                                 colors: [SceneColor.hex(0xC9962E), SceneColor.hex(0xFFE7A0), SceneColor.hex(0xE0AE3E), SceneColor.hex(0xA87A20)],
-                                 locations: [0, 0.3, 0.6, 1])
+        ctx.setShadow(offset: CGSize(width: 0, height: 2), blur: 5, color: SceneColor.hex(0x6A2E16, 0.3).cgColor)
+        SceneColor.hex(0xD9774B).setStroke()
+        arch.lineWidth = 12
+        arch.stroke()
         ctx.restoreGState()
-        SceneColor.hex(0x7D8A96).setFill()
-        UIBezierPath(roundedRect: band(x - 22, 44, base, base + 6), cornerRadius: 2).fill()
-        UIBezierPath(ovalIn: SceneDraw.circle(pt(x, base + 28), 3.5)).fill()
+        ctx.saveGState()
+        arch.addClip()
+        let bounds = band(x0, x1 - x0, y0, y1)
+        SceneDraw.fillVertical(ctx, rect: bounds,
+                               colors: [SceneColor.hex(0xF08C64), SceneColor.hex(0xFFB980), SceneColor.hex(0xFFE3B0)],
+                               locations: [0, 0.55, 1])
+        // Sun low over the mesas.
+        let sun = pt(cx + 16, y0 + 40)
+        SceneDraw.fillRadial(ctx, clip: bounds, center: sun, radius: 46,
+                             colors: [SceneColor.hex(0xFFF1C8, 0.85), SceneColor.hex(0xFFE0A0, 0)], locations: [0, 1])
+        SceneColor.hex(0xFFF6DC).setFill()
+        UIBezierPath(ovalIn: SceneDraw.circle(sun, 13)).fill()
+        // Far mesas.
+        let mesa = UIBezierPath()
+        mesa.move(to: pt(x0, y0))
+        for (mx, my) in [(x0, y0 + 30), (x0 + 10, y0 + 30), (x0 + 15, y0 + 50), (x0 + 36, y0 + 50), (x0 + 42, y0 + 30),
+                         (x0 + 70, y0 + 30), (x0 + 75, y0 + 41), (x0 + 92, y0 + 41), (x0 + 96, y0 + 30), (x1, y0 + 30), (x1, y0)] {
+            mesa.addLine(to: pt(mx, my))
+        }
+        mesa.close()
+        SceneColor.hex(0xC9704A).setFill()
+        mesa.fill()
+        // Dunes.
+        let dune = UIBezierPath()
+        dune.move(to: pt(x0, y0))
+        dune.addLine(to: pt(x0, y0 + 22))
+        dune.addQuadCurve(to: pt(cx + 4, y0 + 18), controlPoint: pt(x0 + 26, y0 + 34))
+        dune.addQuadCurve(to: pt(x1, y0 + 26), controlPoint: pt(x1 - 26, y0 + 8))
+        dune.addLine(to: pt(x1, y0))
+        dune.close()
+        SceneColor.hex(0xF0BC78).setFill()
+        dune.fill()
+        let near = UIBezierPath()
+        near.move(to: pt(x0, y0))
+        near.addLine(to: pt(x0, y0 + 9))
+        near.addQuadCurve(to: pt(x1, y0 + 12), controlPoint: pt(cx, y0 - 2))
+        near.addLine(to: pt(x1, y0))
+        near.close()
+        SceneColor.hex(0xE09A5A).setFill()
+        near.fill()
+        // A saguaro silhouette.
+        let cactusCol = SceneColor.hex(0x7A4A33)
+        cactusCol.setFill()
+        let sx = x0 + 22
+        UIBezierPath(roundedRect: band(sx - 2.5, 5, y0 + 10, y0 + 34), cornerRadius: 2.5).fill()
+        UIBezierPath(roundedRect: band(sx - 9, 3.5, y0 + 20, y0 + 29), cornerRadius: 1.75).fill()
+        UIBezierPath(roundedRect: band(sx - 9, 8, y0 + 19, y0 + 22), cornerRadius: 1.5).fill()
+        UIBezierPath(roundedRect: band(sx + 5.5, 3.5, y0 + 23, y0 + 31), cornerRadius: 1.75).fill()
+        UIBezierPath(roundedRect: band(sx + 1, 8, y0 + 22, y0 + 25), cornerRadius: 1.5).fill()
+        ctx.restoreGState()
+        // Inner shadow line + a lit sill.
+        SceneColor.hex(0x6A2E16, 0.25).setStroke()
+        arch.lineWidth = 1.5
+        arch.stroke()
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: 3), blur: 4, color: SceneColor.hex(0x6A2E16, 0.25).cgColor)
+        SceneColor.hex(0xF6DDB4).setFill()
+        UIBezierPath(roundedRect: band(x0 - 12, x1 - x0 + 24, y0 - 8, y0 + 1), cornerRadius: 2.5).fill()
+        ctx.restoreGState()
+    }
+
+    /// Sand Bar: a bottle of layered sand art (wavy terracotta, cream, turquoise and ochre bands) with a cork.
+    private func sandArtBottle(x: CGFloat) {
+        let base = ledgeTop
+        let w: CGFloat = 24, h: CGFloat = 56
+        let bodyH = h * 0.62, neckW = w * 0.4
+        let body = UIBezierPath()
+        body.move(to: pt(x - w / 2, base + 3))
+        body.addQuadCurve(to: pt(x - w / 2 + 3, base), controlPoint: pt(x - w / 2, base))
+        body.addLine(to: pt(x + w / 2 - 3, base))
+        body.addQuadCurve(to: pt(x + w / 2, base + 3), controlPoint: pt(x + w / 2, base))
+        body.addLine(to: pt(x + w / 2, base + bodyH))
+        body.addQuadCurve(to: pt(x + neckW / 2, base + bodyH + h * 0.16), controlPoint: pt(x + w / 2, base + bodyH + h * 0.12))
+        body.addLine(to: pt(x + neckW / 2, base + h))
+        body.addLine(to: pt(x - neckW / 2, base + h))
+        body.addLine(to: pt(x - neckW / 2, base + bodyH + h * 0.16))
+        body.addQuadCurve(to: pt(x - w / 2, base + bodyH), controlPoint: pt(x - w / 2, base + bodyH + h * 0.12))
+        body.close()
+        ctx.saveGState()
+        body.addClip()
+        let layers: [UIColor] = [SceneColor.hex(0x8E4A2E), SceneColor.hex(0xF6E2BC), SceneColor.hex(0xC4633B),
+                                 SceneColor.hex(0x3FA7A0), SceneColor.hex(0xF6E2BC), SceneColor.hex(0xE9A15A),
+                                 SceneColor.hex(0xC4633B)]
+        let top = base + h - 10
+        let step = (top - base) / CGFloat(layers.count)
+        // Paint from the top band down so each band's wavy lower edge overlaps the one below.
+        var k = layers.count - 1
+        while k >= 0 {
+            let yTop = base + step * CGFloat(k + 1)
+            let yLow = base + step * CGFloat(k)
+            let layer = UIBezierPath()
+            layer.move(to: pt(x - w, yTop))
+            layer.addLine(to: pt(x + w, yTop))
+            layer.addLine(to: pt(x + w, yLow))
+            let amp: CGFloat = k % 2 == 0 ? 2.6 : -2.2
+            layer.addCurve(to: pt(x - w, yLow), controlPoint1: pt(x + w * 0.3, yLow + amp), controlPoint2: pt(x - w * 0.3, yLow - amp))
+            layer.close()
+            layers[k].setFill()
+            layer.fill()
+            k -= 1
+        }
+        ctx.restoreGState()
+        UIColor(white: 1, alpha: 0.4).setFill()
+        UIBezierPath(roundedRect: CGRect(x: x - w / 2 + 3, y: uy(base + bodyH - 2), width: 3, height: bodyH * 0.7),
+                     cornerRadius: 1.5).fill()
+        SceneColor.ink.withAlphaComponent(0.28).setStroke()
+        body.lineWidth = 1.2
+        body.stroke()
+        SceneColor.hex(0xCFA06A).setFill()
+        UIBezierPath(roundedRect: CGRect(x: x - neckW / 2 - 1, y: uy(base + h + 6), width: neckW + 2, height: 8),
+                     cornerRadius: 2).fill()
     }
 
     private func candle(x: CGFloat, h: CGFloat) {

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// The 11 glass styles. Profiles are interior half-widths (x) at heights (y) from the inner floor to the rim.
+/// The 11 glass styles (12 glasses: round 6's hourglass reuses the jar style). Profiles are interior half-widths (x) at heights (y) from the inner floor to the rim.
 /// Volumes are 2D areas.
 ///
 /// Round 2 scale (one 670 × 952 world): profiles are the round-1 shapes ×1.45–1.6 wide and ×1.25–1.45 tall, so a
@@ -46,6 +46,14 @@ enum GlassCatalog {
         // Thick-bottomed tiny cup: tiny volume, needs a trickle.
         make("shot", "Tiny Cup", .shot,
              [(22.5, 0), (25.5, 6), (34.5, 130)], base: 22, wall: 7),
+        // Round 6 (REVIEW-5 §4, founder decision 3): the Sand Bar's hourglass. Two round bulbs and a narrow waist
+        // (36 pt across, so a full stream still drops through it): the level crawls through the bulbs and races
+        // through the waist, the one shape that makes sand pouring different. The waist's Perfect band still holds
+        // more than a vial's. Style `.jar` (no new `GlassStyle` case, so no exhaustive switch elsewhere changes): the
+        // Scene draws it from its profile with no style extras.
+        make("hourglass", "Hourglass", .jar,
+             [(20, 0), (40, 10), (52, 34), (54, 58), (48, 84), (32, 106), (18, 118), (18, 128), (32, 140),
+              (48, 162), (54, 188), (52, 212), (46, 232)], base: 14, wall: 4.5),
     ]
 
     private static let byID: [String: GlassShape] = {

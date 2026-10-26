@@ -63,6 +63,10 @@ struct RecordOutcome: Equatable {
     var dailyCounted = false
     /// Daily: the scored attempt already on file (when this run was practice).
     var dailyOnFile: DailyRecord?
+    /// Round 6 (decision 4): this run earned the shift's Flawless crown for the first time.
+    var crownEarned = false
+    /// The shift holds its Flawless crown after this run (earned now or earlier).
+    var hasCrown = false
 
     /// The results card's NEW BEST badge (REVIEW-2 P2-6): only when this run beat an earlier best, never on the first
     /// run of a shift or of Rush.
@@ -88,8 +92,10 @@ struct ProgressData: Codable, Equatable {
     /// dying) files the attempt even with nothing served yet (a 0), so bailing mid-pour on glass 1 is no free retry.
     var dailyArmed: Set<Int> = []
     var stats = LifetimeStats()
-    /// Onboarding hints already learned (`HintKind.rawValue`).
+    /// Onboarding hints already learned (`HintKind.rawValue`; round 6 adds the venue intro cards).
     var hintsSeen: Set<String> = []
+    /// Round 6 (decision 4, REVIEW-5 §9 #3): shift level ids cleared with every glass Perfect (the Flawless crown).
+    var crowns: Set<String> = []
 
     static let pouredPerLitre: Double = 40_000
 
@@ -97,6 +103,28 @@ struct ProgressData: Codable, Equatable {
     var litres: Double { stats.poured / Self.pouredPerLitre }
 
     func stars(for levelID: String) -> Int { stars[levelID] ?? 0 }
+
+    // MARK: Flawless crowns (round 6)
+
+    func hasCrown(_ levelID: String) -> Bool { crowns.contains(levelID) }
+
+    /// Crowned shifts in `venue` (the Venues card's "3/8").
+    func crownsEarned(in venue: VenueID) -> Int {
+        LevelCatalog.levels(in: venue).filter { crowns.contains($0.id) }.count
+    }
+
+    /// Pure rule: a cleared shift where every glass served was Perfect (and at least one was served).
+    static func isFlawless(_ result: RunResult) -> Bool {
+        guard case .shift = result.mode, result.cleared, !result.judgements.isEmpty else { return false }
+        return result.judgements.allSatisfy { $0 == .perfect }
+    }
+
+    // MARK: Daily week strip (round 6, decision 5)
+
+    /// The seven days ending `today`, oldest first: true = a scored Daily Pour is on file that day.
+    func dailyWeek(today: Int) -> [Bool] {
+        (0..<7).map { daily[today - 6 + $0] != nil }
+    }
 
     // MARK: Unlocks
 
@@ -179,6 +207,11 @@ struct ProgressData: Codable, Equatable {
             outcome.isNewBest = result.score > outcome.previousBest && result.score > 0
             stars[id] = max(outcome.starsBefore, min(max(result.stars, 0), 3))
             outcome.starsAfter = stars(for: id)
+            if Self.isFlawless(result) && !crowns.contains(id) {
+                crowns.insert(id)
+                outcome.crownEarned = true
+            }
+            outcome.hasCrown = crowns.contains(id)
         case .rush:
             outcome.previousBest = rushBest
             outcome.isNewBest = result.score > rushBest && result.score > 0
@@ -311,6 +344,8 @@ extension ProgressData {
         dailyArmed = (try? c.decodeIfPresent(Set<Int>.self, forKey: .dailyArmed)) ?? []
         stats = (try? c.decodeIfPresent(LifetimeStats.self, forKey: .stats)) ?? LifetimeStats()
         hintsSeen = (try? c.decodeIfPresent(Set<String>.self, forKey: .hintsSeen)) ?? []
+        // Round 6: tolerant like the rest (an older save has no crowns; a bad value never costs the stars).
+        crowns = (try? c.decodeIfPresent(Set<String>.self, forKey: .crowns)) ?? []
     }
 }
 
@@ -363,6 +398,7 @@ final class ProgressStore: ObservableObject {
     func dailyRecord(day: Int) -> DailyRecord? { data.daily[day] }
     func dailyStreak(today: Int) -> Int { data.dailyStreak(today: today) }
     func hasSeenHint(_ id: String) -> Bool { data.hintsSeen.contains(id) }
+    func hasCrown(_ levelID: String) -> Bool { data.hasCrown(levelID) }
 
     /// The shift after `levelID` in play order, if it is playable now.
     func nextLevel(after levelID: String) -> Level? {

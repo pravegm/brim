@@ -1036,8 +1036,10 @@ struct CoreTests {
         #expect(s.isFinished)
         #expect(perfects >= 4, "perfects \(perfects)")
         #expect(locks >= perfects)
-        for d in verdictDelays { #expect(d <= 0.5, "verdict \(d) s after the stream landed") }
-        for d in lockToVerdict { #expect(d >= 0.2 && d <= 0.45, "lock → verdict \(d)") }
+        // Round 6: serveIdle 0.35 → 0.5 s (time to top up a still drink); the lock-in cue still fires at once.
+        let idleServe: Double = CoreTuning.serveIdle
+        for d in verdictDelays { #expect(d <= idleServe + 0.15, "verdict \(d) s after the stream landed") }
+        for d in lockToVerdict { #expect(d >= idleServe - 0.15 && d <= idleServe + 0.1, "lock → verdict \(d)") }
         // Changeover: verdict → next glass in place.
         var i: Int = 0
         while i + 1 < arrivedAt.count && i < servedAt.count {
@@ -1547,6 +1549,287 @@ struct CoreTests {
         let total: Int? = s.snapshot.ordersTotal
         #expect(total == Int(10))
         #expect(s.snapshot.maxStrikes == 3)
+    }
+
+    // MARK: Round 6: the late game (REVIEW-5)
+
+    @Test func reposeProgressTelegraphsTheSandSlide() {
+        guard let level = LevelCatalog.levels(in: .sandBar).first else {
+            Issue.record("no Sand Bar shift")
+            return
+        }
+        // A phone (no flat gate), so the tilt drives the jug straight away.
+        let s: GameSession = GameSession(mode: .shift(level.id), layout: phoneLayout(), seed: 8)
+        var events: [GameEvent] = []
+        run(s, seconds: 1.0, tilt: 0, events: &events)
+        #expect(s.snapshot.phase == .playing)
+        #expect(s.snapshot.jug.liquid.id == LiquidID.sand)
+        #expect(s.snapshot.jug.reposeProgress == 0)
+        let fill: Double = s.snapshot.jug.fill
+        let threshold: Double = JugGeometry.pourThreshold(JugGeometry.standard, fill: fill)
+        let repose: Double = LiquidCatalog.liquid(.sand).reposeDegrees
+
+        // Tip slowly (0.1° of lid a frame) until the sand lets go.
+        var tilt: Double = 0
+        var last: Double = 0
+        var beforeSlide: Double = 0
+        var telegraphed: Bool = false
+        var falling: [Double] = []
+        var slideAngle: Double? = nil
+        var progressAtSlide: Double = -1
+        while tilt < 90 && slideAngle == nil {
+            tilt += 0.1
+            s.step(dt: 1.0 / 60.0, tilt: tilt)
+            let jug: JugState = s.snapshot.jug
+            if jug.flow > 0 {
+                slideAngle = jug.angle
+                progressAtSlide = jug.reposeProgress
+                break
+            }
+            let p: Double = jug.reposeProgress
+            if p < last - 1e-9 { falling.append(jug.angle) }
+            if p >= 0.7 && p < 1 { telegraphed = true }
+            // Nothing before the angle at which a liquid would pour.
+            if jug.angle < threshold - 0.6 && p > 0 { falling.append(-jug.angle) }
+            last = p
+            beforeSlide = p
+        }
+        #expect(falling.isEmpty, "progress not monotonic / early at \(falling)")
+        #expect(telegraphed, "no 0.7…1 telegraph before the slide")
+        #expect(beforeSlide >= 0.9, "progress just before the slide \(beforeSlide)")
+        #expect(progressAtSlide == 1, "progress while sliding \(progressAtSlide)")
+        if let a = slideAngle {
+            // "1 = it slides now": the slide comes at the liquid pour point plus the angle of repose.
+            #expect(abs(a - (threshold + repose)) < 2, "slid at \(a), expected ≈ \(threshold + repose)")
+        } else {
+            Issue.record("the sand never slid")
+        }
+
+        // Flowing: it stays 1. Tipped back upright: 0 again.
+        run(s, seconds: 0.3, tilt: tilt, events: &events)
+        #expect(s.snapshot.jug.reposeProgress == 1)
+        run(s, seconds: 0.5, tilt: 0, events: &events)
+        #expect(s.snapshot.jug.reposeProgress == 0)
+
+        // Liquids never report it.
+        let water: GameSession = GameSession(mode: .shift("1-1"), layout: phoneLayout(), seed: 8)
+        var wt: Double = 0
+        var maxWater: Double = 0
+        while wt < 60 {
+            water.step(dt: 1.0 / 60.0, tilt: wt)
+            maxWater = max(maxWater, water.snapshot.jug.reposeProgress)
+            wt += 0.5
+        }
+        #expect(maxWater == 0)
+    }
+
+    @Test func snapshotsReportTheirVenueAndRushTier() {
+        for l in LevelCatalog.levels {
+            let s: GameSession = GameSession(mode: .shift(l.id), layout: duoLayout(), seed: 2)
+            s.step(dt: 1.0 / 60.0, tilt: 0)
+            let venue: VenueID? = s.snapshot.venue
+            #expect(venue == l.venue, "\(l.id) reports \(String(describing: venue))")
+            #expect(s.snapshot.rushTier == 0)
+        }
+        for mode in [GameMode.daily(297), GameMode.practice] {
+            let s: GameSession = GameSession(mode: mode, layout: duoLayout(), seed: 2)
+            s.step(dt: 1.0 / 60.0, tilt: 0)
+            let venue: VenueID? = s.snapshot.venue
+            #expect(venue == nil, "\(mode) reports \(String(describing: venue))")
+            #expect(s.snapshot.rushTier == 0)
+        }
+        let rush: GameSession = GameSession(mode: .rush, layout: duoLayout(), seed: 2)
+        #expect(rush.snapshot.rushTier == 1)
+        let rushVenue: VenueID? = rush.snapshot.venue
+        #expect(rushVenue == VenueID.lemonadeStand)
+    }
+
+    @Test func rushTravelsOneVenuePerTier() {
+        #expect(Rules.rushVenue(tier: 0) == VenueID.lemonadeStand)
+        #expect(Rules.rushVenue(tier: 1) == VenueID.lemonadeStand)
+        #expect(Rules.rushVenue(tier: 2) == VenueID.sodaFountain)
+        #expect(Rules.rushVenue(tier: 3) == VenueID.conveyor)
+        #expect(Rules.rushVenue(tier: 4) == VenueID.milkshakeDiner)
+        #expect(Rules.rushVenue(tier: 5) == VenueID.potionShop)
+        #expect(Rules.rushVenue(tier: 6) == VenueID.sodaFountain)
+        #expect(Rules.rushVenue(tier: 7) == VenueID.conveyor)
+        #expect(Rules.rushVenue(tier: 9) == VenueID.potionShop)
+        #expect(Rules.rushVenue(tier: 10) == VenueID.sodaFountain)
+        var tier: Int = 1
+        while tier <= 40 {
+            #expect(Rules.rushVenue(tier: tier) != VenueID.sandBar)
+            tier += 1
+        }
+        for v in VenueID.allCases {
+            let menu: (liquids: [LiquidID], glasses: [String]) = GameSession.rushMenu(v)
+            #expect(!menu.liquids.isEmpty && !menu.glasses.isEmpty, "\(v) menu is empty")
+            for id in menu.glasses { #expect(GlassCatalog.shape(id).id == id, "\(v) serves unknown glass \(id)") }
+        }
+
+        // An idle Rush walks through the tiers (a patience timeout is `.short`, which never strikes in Rush; a belt
+        // glass is judged as it rides past). Every glass at the stop must come from its tier's venue menu, ride a belt
+        // exactly when that venue is the Conveyor, and the snapshot must report the tier and venue as it arrives.
+        let s: GameSession = GameSession(mode: .rush, layout: phoneLayout(), seed: 21)
+        var seen: [Int] = []
+        var problems: [String] = []
+        var belts: Int = 0
+        var t: Double = 0
+        while t < 900 && seen.count < 4 * CoreTuning.rushTierEvery + 1 && !s.isFinished {
+            s.step(dt: 1.0 / 30.0, tilt: 0)
+            t += 1.0 / 30.0
+            let snap: GameSnapshot = s.snapshot
+            let shown: VenueID? = snap.venue
+            if shown != Rules.rushVenue(tier: snap.rushTier) {
+                problems.append("t \(t): venue \(String(describing: shown)) for tier \(snap.rushTier)")
+            }
+            for g in snap.glasses where g.phase == .filling && !seen.contains(g.id) {
+                let k: Int = seen.count
+                seen.append(g.id)
+                let want: Int = k / CoreTuning.rushTierEvery + 1
+                if snap.rushTier != want { problems.append("glass \(k): tier \(snap.rushTier), want \(want)") }
+                let venue: VenueID = Rules.rushVenue(tier: want)
+                let menu: (liquids: [LiquidID], glasses: [String]) = GameSession.rushMenu(venue)
+                if !menu.liquids.contains(g.liquid.id) { problems.append("glass \(k): \(g.liquid.id) in \(venue)") }
+                if !menu.glasses.contains(g.shape.id) { problems.append("glass \(k): \(g.shape.id) in \(venue)") }
+                let onBelt: Bool = g.patienceTotal == nil
+                if onBelt { belts += 1 }
+                if onBelt != (venue == .conveyor) { problems.append("glass \(k): belt \(onBelt) in \(venue)") }
+            }
+        }
+        #expect(!s.isFinished)
+        #expect(seen.count == 4 * CoreTuning.rushTierEvery + 1, "glasses at the stop \(seen.count) in \(t) s")
+        #expect(belts == CoreTuning.rushTierEvery, "belt glasses \(belts)")
+        #expect(problems.isEmpty, "\(problems)")
+        #expect(s.snapshot.rushTier == 5)
+        let finalVenue: VenueID? = s.snapshot.venue
+        #expect(finalVenue == VenueID.potionShop)
+    }
+
+    @Test func rushOverPoursBreakTheStreakButOnlyRimSpillsStrike() {
+        // Round 6 (founder, BALANCE.md §7). Find a seed whose first Rush glass leaves room past the Good band.
+        var picked: GameSession? = nil
+        var seed: UInt64 = 1
+        while seed <= 40 && picked == nil {
+            let candidate: GameSession = GameSession(mode: .rush, layout: phoneLayout(), seed: seed)
+            var warm: [GameEvent] = []
+            run(candidate, seconds: 1.0, tilt: 0, events: &warm)
+            if let g = activeGlass(candidate), Double(g.lineHeight / g.shape.interiorHeight) <= 0.65 {
+                picked = candidate
+            }
+            seed += 1
+        }
+        guard let s = picked, let first = activeGlass(s) else {
+            Issue.record("no Rush seed with a first line ≤ 0.65")
+            return
+        }
+        let lineFraction: Double = Double(first.lineHeight / first.shape.interiorHeight)
+        let stopAt: Double = min(0.2, CoreTuning.goodBand + (1.0 - lineFraction - CoreTuning.goodBand) * 0.5)
+        var events: [GameEvent] = []
+        var stopped: Bool = false
+        var t: Double = 0
+        while t < 20 && servedJudgements(events).isEmpty {
+            var tilt: Double = 0
+            if !stopped {
+                if s.snapshot.telemetry.projectedDistanceToLine >= stopAt {
+                    stopped = true
+                } else {
+                    tilt = pourLid(fill: max(0.03, s.snapshot.jug.fill)) + 10
+                }
+            }
+            events.append(contentsOf: s.step(dt: 1.0 / 60.0, tilt: tilt))
+            t += 1.0 / 60.0
+        }
+        let judged: [Judgement] = servedJudgements(events)
+        #expect(judged == [Judgement.over])
+        #expect(overflows(events) == 0)
+        #expect(s.snapshot.strikes == 0)
+        #expect(s.snapshot.streak == 0)
+        #expect(!s.isFinished)
+        let strikeEvents: Int = count(events) { (e: GameEvent) -> Bool in
+            if case .strike = e { return true }
+            return false
+        }
+        #expect(strikeEvents == 0)
+    }
+
+    @Test func theHourglassHasAWaistAndStaysJudgeable() {
+        let g: GlassShape = GlassCatalog.shape("hourglass")
+        #expect(g.id == "hourglass")
+        // No new GlassStyle case (exhaustive switches elsewhere): it draws as a profile with the jar's (no) extras.
+        #expect(g.style == GlassStyle.jar)
+        let interior: CGFloat = g.interiorHeight
+        // Two bulbs and a waist in the middle third, under half as wide as either bulb, wide enough for a full stream.
+        var lowBulb: CGFloat = 0
+        var highBulb: CGFloat = 0
+        var waist: CGFloat = CGFloat.greatestFiniteMagnitude
+        var waistY: CGFloat = 0
+        var y: CGFloat = 0
+        while y <= interior {
+            let w: CGFloat = GlassMath.halfWidth(g, at: y)
+            if y < interior / 3 {
+                lowBulb = max(lowBulb, w)
+            } else if y > interior * 2 / 3 {
+                highBulb = max(highBulb, w)
+            } else if w < waist {
+                waist = w
+                waistY = y
+            }
+            y += 1
+        }
+        #expect(waist * 2 <= lowBulb && waist * 2 <= highBulb, "waist \(waist), bulbs \(lowBulb) / \(highBulb)")
+        #expect(waist * 2 >= CGFloat(CoreTuning.streamWidthMax) + 8, "waist \(waist * 2) wide")
+        #expect(g.rimHalfWidth > waist)
+        // The level races through the waist: the same volume lifts it ≥ 2.5× as far as in either bulb.
+        let dv: CGFloat = 300
+        let atWaist: CGFloat = waistY + 1
+        let riseWaist: CGFloat = GlassMath.height(g, forVolume: GlassMath.volume(g, upTo: atWaist) + dv) - atWaist
+        let atLow: CGFloat = interior * 0.25
+        let riseLow: CGFloat = GlassMath.height(g, forVolume: GlassMath.volume(g, upTo: atLow) + dv) - atLow
+        let atHigh: CGFloat = interior * 0.8
+        let riseHigh: CGFloat = GlassMath.height(g, forVolume: GlassMath.volume(g, upTo: atHigh) + dv) - atHigh
+        #expect(riseWaist >= riseLow * 2.5 && riseWaist >= riseHigh * 2.5, "rise \(riseWaist) vs \(riseLow) / \(riseHigh)")
+        // Fillable: about a mug's worth, and a sand jug serves several.
+        let cap: CGFloat = GlassMath.capacity(g)
+        #expect(cap > 14_000 && cap < 26_000, "capacity \(cap)")
+        // Judgeable: wherever the line sits (0.2…0.9), the default Perfect band holds at least as much drink as the
+        // vial's (the game's tightest glass) at its middle.
+        let band: CGFloat = CGFloat(CoreTuning.defaultPerfectBand)
+        let vial: GlassShape = GlassCatalog.shape("vial")
+        let vialMid: CGFloat = vial.interiorHeight * 0.5
+        let vialBand: CGFloat = GlassMath.volume(vial, upTo: vialMid + band * vial.interiorHeight)
+            - GlassMath.volume(vial, upTo: vialMid - band * vial.interiorHeight)
+        var line: CGFloat = 0.2
+        while line <= 0.9 {
+            let h: CGFloat = line * interior
+            let held: CGFloat = GlassMath.volume(g, upTo: h + band * interior) - GlassMath.volume(g, upTo: h - band * interior)
+            #expect(held >= vialBand, "line \(line): band holds \(held) < vial \(vialBand)")
+            line += 0.01
+        }
+        // It stands on the counter like any glass (rim clear of the crease) and fits the next-glass slot on the Duo.
+        #expect(g.baseThickness + interior <= GlassCatalog.maxStandingHeight)
+        let slot: Double? = NextGlassSlot.x(for: g, layout: duoLayout(), stop: (x: 372, shape: GlassCatalog.shape("bowl")))
+        #expect(slot != nil)
+    }
+
+    @Test func creamSodaReadsAsSodaNotBeer() {
+        let cream: Liquid = LiquidCatalog.liquid(.creamSoda)
+        // Caramel, not lager gold: clearly redder than it is green at the bottom, a pale vanilla top.
+        #expect(cream.bottom.r - cream.bottom.g >= 0.28, "bottom \(cream.bottom)")
+        #expect(cream.top.r > 0.95 && cream.top.g > 0.85, "top \(cream.top)")
+        // A small, white head: whiter than the old cream, smaller than cola's and root beer's.
+        if let foam = cream.foam {
+            #expect(min(foam.r, min(foam.g, foam.b)) >= 0.98, "foam \(foam)")
+        } else {
+            Issue.record("cream soda lost its head")
+        }
+        let head: Double = cream.foamPerVolume * cream.foamSettle
+        let cola: Liquid = LiquidCatalog.liquid(.cola)
+        let rootBeer: Liquid = LiquidCatalog.liquid(.rootBeer)
+        #expect(head < 0.5 * cola.foamPerVolume * cola.foamSettle)
+        #expect(head < rootBeer.foamPerVolume * rootBeer.foamSettle)
+        // Still "foamy" for the Daily generator (> 0.3, ≤ 1.0), so every version generates the same Daily.
+        #expect(cream.foamPerVolume > 0.3 && cream.foamPerVolume <= 1.0)
+        #expect(cream.fizzy)
     }
 }
 

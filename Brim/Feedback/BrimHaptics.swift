@@ -101,6 +101,33 @@ enum HapticBook {
     static let gentleEnd = HapticCue(notes: [.tap(0.4, 0.4), .tap(0.3, 0.3, at: 0.24)])
     static let uiTap = HapticCue(notes: [.tap(0.35, 0.7)])
     static let uiConfirm = HapticCue(notes: [.tap(0.5, 0.8), .tap(0.4, 0.9, at: 0.06)])
+
+    // MARK: Round 6: the late game
+
+    /// Sand nearing its angle of repose: one light, gritty tick, a little firmer as `progress` → 1 (the director
+    /// spaces them closer and closer, `SandTelegraph`). Calm: softer still.
+    static func sandTick(progress: Double, calm: Bool = false) -> HapticCue {
+        let start = SoundBook.rustleStart
+        let p = progress.isFinite ? min(max(progress, start), 1) : start
+        let u = (p - start) / (1 - start)
+        let intensity = Float(0.1 + 0.2 * u) * (calm ? 0.75 : 1)
+        return HapticCue(notes: [.tap(intensity, Float(0.68 + 0.17 * u))])
+    }
+
+    /// The sand lets go: a soft thud, then a short gritty slide that runs out (in time with `SoundBook.avalanche`).
+    static let avalanche = HapticCue(
+        notes: [.tap(0.62, 0.3), .buzz(0.42, 0.6, at: 0.02, duration: 0.3)],
+        wobble: [HapticPoint(time: 0, value: 1), HapticPoint(time: 0.08, value: 0.7),
+                 HapticPoint(time: 0.15, value: 0.85), HapticPoint(time: 0.23, value: 0.4),
+                 HapticPoint(time: 0.32, value: 0)]
+    )
+    /// Rush tier-up: three rising taps with the chord, landing on a firm one with a short hum. Confident, not loud.
+    static let tierUp = HapticCue(notes: [.tap(0.45, 0.55), .tap(0.55, 0.65, at: 0.075), .tap(0.8, 0.75, at: 0.15),
+                                          .buzz(0.3, 0.4, at: 0.15, duration: 0.12)])
+    /// Rush low jug: a soft heartbeat, lub-dub, in time with `SoundBook.lowJug`.
+    static let lowJug = HapticCue(notes: [.tap(0.42, 0.18), .tap(0.3, 0.12, at: Double(SoundBook.heartbeatGap))])
+    /// Conveyor service bell: a light, crisp tick.
+    static let serviceBell = HapticCue(notes: [.tap(0.24, 0.9)])
 }
 
 /// Core Haptics for Brim: one advanced player carries the continuous pour (steered by dynamic parameters, ≤ 30 Hz),

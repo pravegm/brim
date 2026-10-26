@@ -27,9 +27,13 @@ enum LiquidCatalog {
                           top: RGBA(hex: 0x8A4318), bottom: RGBA(hex: 0x3E1605), foam: RGBA(hex: 0xF5E2C0),
                           lagTau: 0.06, foamPerVolume: 1.3, foamSettle: 2.0, reposeDegrees: 0, opacity: 0.95, fizzy: true)
         case .creamSoda:
+            // Round 6 (REVIEW-5 §5.4, founder decision 6): pale gold under a tall white head read as lager. Now a warm
+            // vanilla top over a caramel-amber bottom (redder and browner than any beer, lighter than cola/root beer)
+            // and a smaller, whiter head (foamPerVolume × foamSettle 0.66 → 0.36). foamPerVolume stays in the same
+            // Daily class (> 0.3, ≤ 1.0: "foamy", line cap 0.8) so every version still generates the same Daily.
             return Liquid(id: .creamSoda, name: "Cream Soda",
-                          top: RGBA(hex: 0xFFE7B8), bottom: RGBA(hex: 0xF2B457), foam: RGBA(hex: 0xFFF9EE),
-                          lagTau: 0.05, foamPerVolume: 0.6, foamSettle: 1.1, reposeDegrees: 0, opacity: 0.75, fizzy: true)
+                          top: RGBA(hex: 0xFCE3C4), bottom: RGBA(hex: 0xD2844A), foam: RGBA(hex: 0xFFFFFD),
+                          lagTau: 0.05, foamPerVolume: 0.4, foamSettle: 0.9, reposeDegrees: 0, opacity: 0.82, fizzy: true)
         case .milkshake:
             return Liquid(id: .milkshake, name: "Strawberry Shake",
                           top: RGBA(hex: 0xFFC7DA), bottom: RGBA(hex: 0xFF8AB3), foam: nil,

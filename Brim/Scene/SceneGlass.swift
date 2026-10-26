@@ -26,6 +26,9 @@ struct GlassFrame {
     var waitingAlpha: CGFloat = 0.6
     /// Fade the glass out (a waiting glass that would not fit inside the crop with a clear margin).
     var suppressed: Bool = false
+    /// Round 6 (REVIEW-5 §2): a glass riding a conveyor belt — how much of its pour window is left (1 = the mouth
+    /// hasn't reached the stream yet, 0 = it has passed). The line tab drains with it. nil = not on a belt.
+    var beltWindow: CGFloat? = nil
 }
 
 /// One glass on the counter. Two roots so the stream can be drawn *between* them:
@@ -67,6 +70,16 @@ final class SceneGlass {
     private let lineHalo: SKShapeNode
     private let lineInk: SKShapeNode
     private let tab: SKShapeNode
+    /// Round 6: the conveyor's draining tab (the flag's fill shrinks as the pour window runs out).
+    private let tabFill: SKShapeNode
+    /// Round 6 (Potion Shop): a faint notch on both walls where a faded line was.
+    private let ghostTick: SKShapeNode
+    /// Round 6: a prefilled glass shows its old drink as a darker settled layer with a meniscus line on top.
+    private let prefillLayer: SKShapeNode
+    private let prefillLine: SKShapeNode
+    /// Round 6: the hourglass's turned-wood plinth and posts.
+    private let woodFrame: SKShapeNode
+    private let woodShine: SKShapeNode
     private let overflow: SKShapeNode
     private let overflowShine: SKShapeNode
     private let wetSheen: SKShapeNode
@@ -97,6 +110,33 @@ final class SceneGlass {
     /// Cosmetic and mean-neutral: the drawn surface averages to Core's level, so the line still reads honestly.
     private(set) var heap: CGFloat = 0
     private var heapX: CGFloat = 0.5
+    /// The cone's half-spread (fraction of the surface): tight while it builds, widening as it slumps flat.
+    private var heapSpread: CGFloat = 0.34          // `heapSpreadPouring`
+    /// Round 6: height of the prefill seen when the glass first appeared (nil = none).
+    private(set) var prefillHeight: CGFloat?
+    private var prefillKnown = false
+    private var builtPrefill: CGFloat = -1
+    private var builtPrefillLiquid = false
+    /// Round 6: potion magic — sparkles drifting up through the drink and a slow shimmer across it.
+    private var motes: [SKSpriteNode] = []
+    private var moteX: [CGFloat] = []
+    private var moteSpeed: [CGFloat] = []
+    private var motePhase: [CGFloat] = []
+    private var shimmer: SKSpriteNode?
+    /// Whether the potion sparkles are showing this frame (tests).
+    var showsMagic: Bool { !motes.isEmpty && !(motes.first?.isHidden ?? true) }
+    /// Whether the faded-line ghost tick shows this frame (tests).
+    var showsGhostTick: Bool { !ghostTick.isHidden && ghostTick.alpha > 0.01 }
+    /// Whether the prefill layer shows this frame (tests).
+    var showsPrefill: Bool { !prefillLayer.isHidden }
+    /// The tab's drained fill this frame (1 full … 0 empty; nil when the tab isn't draining).
+    private(set) var tabLevel: CGFloat?
+    private var builtTabLevel: CGFloat = -1
+    private var tabRect: CGRect = .zero
+    private var tabColor: UIColor = SceneColor.gold
+    private var isHourglass = false
+    /// Whether the hourglass's wooden plinth and posts are drawn (tests).
+    var hasWoodFrame: Bool { !woodFrame.isHidden }
     private var lastX: CGFloat?
     private var lastVX: CGFloat = 0
     private var velocityValid = false
@@ -168,6 +208,12 @@ final class SceneGlass {
         lineHalo = SKShapeNode()
         lineInk = SKShapeNode()
         tab = SKShapeNode()
+        tabFill = SKShapeNode()
+        ghostTick = SKShapeNode()
+        prefillLayer = SKShapeNode()
+        prefillLine = SKShapeNode()
+        woodFrame = SKShapeNode()
+        woodShine = SKShapeNode()
         overflow = SKShapeNode()
         overflowShine = SKShapeNode()
         wetSheen = SKShapeNode()
@@ -219,7 +265,16 @@ final class SceneGlass {
         surfaceFlash.alpha = 0
         surfaceFlash.isHidden = true
         surfaceFlash.blendMode = .add
-        for n in [patienceTrack, patienceArc, shadow, interior, rimBack, liquid, surface, foam, foamBubbles, bubbles, plume] {
+        prefillLayer.strokeColor = .clear
+        prefillLayer.zPosition = 4.2
+        prefillLayer.isHidden = true
+        prefillLine.fillColor = .clear
+        prefillLine.lineWidth = 1.8
+        prefillLine.lineCap = .round
+        prefillLine.zPosition = 4.3
+        prefillLine.isHidden = true
+        for n in [patienceTrack, patienceArc, shadow, interior, rimBack, liquid, prefillLayer, prefillLine, surface, foam,
+                  foamBubbles, bubbles, plume] {
             back.addChild(n)
         }
         back.addChild(surfaceFlash)
@@ -289,6 +344,27 @@ final class SceneGlass {
         tab.strokeColor = ink.withAlphaComponent(0.7)
         // Above the spill sheets (z 5…5.1) so a spill never hides the fill tab (REVIEW-3 P2-10).
         tab.zPosition = 5.3
+        tabFill.strokeColor = .clear
+        tabFill.zPosition = 5.35
+        tabFill.isHidden = true
+        ghostTick.fillColor = .clear
+        ghostTick.strokeColor = darkBackdrop ? UIColor(white: 1, alpha: 0.75) : ink.withAlphaComponent(0.6)
+        ghostTick.lineWidth = 2
+        ghostTick.lineCap = .round
+        ghostTick.zPosition = 3.05
+        ghostTick.isHidden = true
+        woodFrame.fillColor = SceneColor.hex(0xA8703F)
+        woodFrame.strokeColor = ink.withAlphaComponent(0.6)
+        woodFrame.lineWidth = 1.6
+        woodFrame.lineJoin = .round
+        woodFrame.zPosition = 0.3
+        woodFrame.isHidden = true
+        woodShine.fillColor = .clear
+        woodShine.strokeColor = SceneColor.hex(0xF2C48A, 0.85)
+        woodShine.lineWidth = 1.6
+        woodShine.lineCap = .round
+        woodShine.zPosition = 0.31
+        woodShine.isHidden = true
         overflow.strokeColor = .clear
         overflow.zPosition = 5
         overflowShine.fillColor = .clear
@@ -300,8 +376,8 @@ final class SceneGlass {
         wetSheen.zPosition = 4.9
         stamp.zPosition = 40
         stamp.isHidden = true
-        for n in [walls, outline, extraOutline, extra, highlight, highlight2, shade, rimFront, band, bandEdges, lineGlow,
-                  lineHalo, lineInk, tab, wetSheen, overflow, overflowShine] {
+        for n in [walls, outline, extraOutline, extra, woodFrame, woodShine, highlight, highlight2, shade, rimFront, band,
+                  bandEdges, lineGlow, ghostTick, lineHalo, lineInk, tab, tabFill, wetSheen, overflow, overflowShine] {
             front.addChild(n)
         }
         front.addChild(stamp)
@@ -424,10 +500,21 @@ final class SceneGlass {
             wetSheen.fillColor = SceneColor.lighter(liquidColor, 0.15).withAlphaComponent(0.28)
             surfaceFlash.color = SceneColor.lighter(top, 0.8)
             surfaceFlash.colorBlendFactor = 0.3
+            // Prefill: the same drink, settled and older — darker, with a pale meniscus where the new pour meets it.
+            prefillLayer.fillColor = SceneColor.darker(liquidColor, isGranular ? 0.22 : 0.34)
+                .withAlphaComponent(isGranular ? 0.5 : 0.58)
+            prefillLine.strokeColor = SceneColor.lighter(liquidColor, 0.55).withAlphaComponent(0.95)
+            builtPrefill = -1
+            setUpMagic(g.liquid)
         }
 
         counterY = f.counterY
         x = g.x
+        if !prefillKnown {
+            // A prefilled glass arrives with drink already in it; anything else starts empty.
+            prefillKnown = true
+            if g.phase == .arriving && g.result == nil && g.liquidHeight > 0.8 { prefillHeight = g.liquidHeight }
+        }
 
         let h = min(max(g.liquidHeight, 0), rimY)
         let foamH = max(0, g.foamHeight)
@@ -490,6 +577,8 @@ final class SceneGlass {
 
         placeRoots(g, f)
         drawLiquid(h: h, foamH: foamH, g: g, dt: dt, time: f.time, reduceMotion: f.reduceMotion)
+        drawPrefill(h: h)
+        drawMagic(h: h, time: f.time, reduceMotion: f.reduceMotion)
         drawPlume(h: h, f, thick: SceneStream.isThick(g.liquid.id) || g.liquid.id == .sand)
         drawSurfaceFlash(h: h)
         drawLine(g, f)
@@ -529,7 +618,8 @@ final class SceneGlass {
 
     // MARK: Sand heap
 
-    /// Sand piles up into a low cone under the stream and slumps flat within ~1 s of the pour stopping.
+    /// Sand piles up into a low cone under the stream and, once the pour stops, slumps flat in about half a second,
+    /// spreading as it goes (round 6, REVIEW-5 §4: heap, don't slosh).
     private func updateHeap(h: CGFloat, _ f: GlassFrame) {
         guard isGranular else {
             heap = 0
@@ -542,20 +632,25 @@ final class SceneGlass {
             let target = min(SceneGlass.maxHeap, 3 + t.width * 0.35)
             heap += (target - heap) * min(1, dt * 5)
             heapX += (fr - heapX) * min(1, dt * 8)
+            heapSpread += (SceneGlass.heapSpreadPouring - heapSpread) * min(1, dt * 6)
         } else {
-            heap = max(0, heap - dt * 8)
+            // A slump: fast at first (the cone's flanks give), then settling.
+            heap = max(0, heap - dt * (6 + heap * 3))
+            heapSpread = min(SceneGlass.heapSpreadSlumped, heapSpread + dt * 0.9)
         }
     }
 
-    static let maxHeap: CGFloat = 9
+    /// The cone's peak above the mean level (REVIEW-5: ≤ 6–7 pt, same area).
+    static let maxHeap: CGFloat = 7
+    static let heapSpreadPouring: CGFloat = 0.34
+    static let heapSpreadSlumped: CGFloat = 0.75
 
     /// Adds the sand cone to `surf` (glass-local surface points), keeping the mean at Core's level.
     private func addHeap(_ surf: inout [CGPoint], h: CGFloat, cap: CGFloat) {
         let n = surf.count
         guard heap > 0.05, n >= 2 else { return }
-        let spread: CGFloat = 0.38
-        var bumps: [CGFloat] = []
-        bumps.reserveCapacity(n)
+        let spread: CGFloat = heapSpread
+        if heapBumps.count != n { heapBumps = Array(repeating: 0, count: n) }
         var sum: CGFloat = 0
         for i in 0..<n {
             let u = CGFloat(i) / CGFloat(n - 1)
@@ -564,15 +659,18 @@ final class SceneGlass {
             let lin: CGFloat = max(0, 1 - d)
             let smooth: CGFloat = lin * lin * (3 - 2 * lin)
             let b: CGFloat = smooth * 0.35 + lin * 0.65
-            bumps.append(b)
+            heapBumps[i] = b
             sum += b
         }
         let mean = sum / CGFloat(n)
         for i in 0..<n {
-            let y = surf[i].y + heap * (bumps[i] - mean)
+            let y = surf[i].y + heap * (heapBumps[i] - mean)
             surf[i].y = min(max(y, 0), cap)
         }
     }
+
+    /// Scratch for `addHeap` (no per-frame allocation).
+    private var heapBumps: [CGFloat] = []
 
     // MARK: Liquid, foam, bubbles
 
@@ -599,8 +697,8 @@ final class SceneGlass {
             return
         }
         let n = SceneWave.count
-        // Sand doesn't slosh: a near-still surface with a cone under the stream instead.
-        let waveScale = min(1, h / 18) * (isGranular ? 0.12 : 1)
+        // Sand doesn't slosh (round 6: not at all): a still surface with a cone under the stream instead.
+        let waveScale = isGranular ? 0 : min(1, h / 18)
         var surf = surfacePoints(height: h, widthAt: h, waveScale: waveScale, cap: rimY + 2)
         if isGranular { addHeap(&surf, h: h, cap: rimY + 2) }
 
@@ -747,6 +845,126 @@ final class SceneGlass {
         surfaceFlash.position = CGPoint(x: 0, y: level)
     }
 
+    // MARK: Prefill (round 6)
+
+    /// A prefilled glass (REVIEW-5 §3: the twist was invisible until the pour) shows its old drink as a darker,
+    /// settled layer; once the new pour rises above it, a pale meniscus line marks where the two meet.
+    private func drawPrefill(h: CGFloat) {
+        guard let ph0 = prefillHeight, h > 0.8, profile.count >= 2 else {
+            prefillLayer.isHidden = true
+            prefillLine.isHidden = true
+            return
+        }
+        let poured = h > ph0 + 3
+        // Before the pour the layer IS the drink: keep its top just under the live surface.
+        let ph = poured ? ph0 : h - 2
+        guard ph > 0.8 else {
+            prefillLayer.isHidden = true
+            prefillLine.isHidden = true
+            return
+        }
+        if abs(ph - builtPrefill) > 0.4 || builtPrefillLiquid != poured {
+            builtPrefill = ph
+            builtPrefillLiquid = poured
+            let hw = max(1, ScenePaths.halfWidth(profile, at: ph) - 0.3)
+            let lift: CGFloat = min(1.6, hw * 0.06)          // a concave meniscus climbs the walls
+            let layer = CGMutablePath()
+            layer.move(to: CGPoint(x: -hw, y: ph + lift))
+            layer.addQuadCurve(to: CGPoint(x: hw, y: ph + lift), control: CGPoint(x: 0, y: ph - lift))
+            for p in profile.reversed() where p.y < ph { layer.addLine(to: CGPoint(x: p.x - 0.3, y: p.y)) }
+            for p in profile where p.y < ph { layer.addLine(to: CGPoint(x: -(p.x - 0.3), y: p.y)) }
+            layer.closeSubpath()
+            prefillLayer.path = layer
+            let line = CGMutablePath()
+            line.move(to: CGPoint(x: -hw + 1, y: ph + lift))
+            line.addQuadCurve(to: CGPoint(x: hw - 1, y: ph + lift), control: CGPoint(x: 0, y: ph - lift))
+            prefillLine.path = line
+        }
+        prefillLayer.isHidden = false
+        prefillLine.isHidden = !poured
+    }
+
+    // MARK: Potion magic (round 6)
+
+    static let moteCount = 7
+
+    private func setUpMagic(_ l: Liquid) {
+        let magic = l.id == .potionBlue || l.id == .potionPink
+        guard magic else {
+            for m in motes { m.isHidden = true }
+            shimmer?.isHidden = true
+            return
+        }
+        let top = SceneColor.opaque(l.top.skColor)
+        if motes.isEmpty {
+            let tex = SceneArt.sparkle
+            for _ in 0..<SceneGlass.moteCount {
+                let m = SKSpriteNode(texture: tex, size: CGSize(width: 11, height: 11))
+                m.blendMode = .add
+                m.zPosition = 6.1
+                m.isHidden = true
+                back.addChild(m)
+                motes.append(m)
+                moteX.append(rng.range(-0.85, 0.85))
+                moteSpeed.append(rng.range(0.07, 0.16))
+                motePhase.append(rng.range(0, 1))
+            }
+            let s = SKSpriteNode(texture: SceneArt.glow)
+            s.blendMode = .add
+            s.zPosition = 4.6
+            s.isHidden = true
+            back.addChild(s)
+            shimmer = s
+        }
+        let tint = SceneColor.lighter(top, 0.7)
+        for m in motes {
+            m.color = tint
+            m.colorBlendFactor = 0.45
+        }
+        shimmer?.color = SceneColor.lighter(top, 0.5)
+        shimmer?.colorBlendFactor = 0.6
+    }
+
+    /// Sparkles drift up through a potion, twinkling, and a soft shimmer sweeps slowly across it (on the session
+    /// clock: a paused frame holds still).
+    private func drawMagic(h: CGFloat, time: Double, reduceMotion: Bool) {
+        guard !motes.isEmpty else { return }
+        let magic = liquidID == .potionBlue || liquidID == .potionPink
+        guard magic, h > 8, profile.count >= 2 else {
+            for m in motes { m.isHidden = true }
+            shimmer?.isHidden = true
+            return
+        }
+        let t = CGFloat(time)
+        let count = reduceMotion ? 3 : motes.count
+        for i in 0..<motes.count {
+            let m = motes[i]
+            if i >= count {
+                m.isHidden = true
+                continue
+            }
+            var u = (t * moteSpeed[i] + motePhase[i]).truncatingRemainder(dividingBy: 1)
+            if u < 0 { u += 1 }
+            let y = 3 + u * max(1, h - 7)
+            let hw = max(0, ScenePaths.halfWidth(profile, at: y) - 5)
+            let x = min(max(moteX[i] * hw + sin(t * 1.3 + motePhase[i] * 6.28) * 2.5, -hw), hw)
+            let tw = 0.5 + 0.5 * sin(t * 5.5 + motePhase[i] * 11)
+            m.position = CGPoint(x: x, y: y)
+            m.alpha = sin(u * .pi) * (0.3 + 0.6 * tw)
+            m.setScale(0.55 + 0.45 * tw)
+            m.zRotation = t * 0.8 + motePhase[i] * 3
+            m.isHidden = false
+        }
+        if let s = shimmer {
+            let mid = h * 0.5
+            let hwMid = max(4, ScenePaths.halfWidth(profile, at: mid))
+            s.position = CGPoint(x: sin(t * 0.6) * hwMid * 0.4, y: mid)
+            s.size = CGSize(width: hwMid * 1.3, height: min(h * 0.8, 90))
+            s.alpha = 0.16 + 0.07 * sin(t * 1.7)
+            s.isHidden = false
+        }
+    }
+
     // MARK: Fill line + Perfect band
 
     private func buildLine(_ L: CGFloat, bandFrac: CGFloat) {
@@ -769,6 +987,18 @@ final class SceneGlass {
         tp.closeSubpath()
         tp.addRoundedRect(in: CGRect(x: tx + 9, y: L - 9.5, width: 22, height: 19), cornerWidth: 6, cornerHeight: 6)
         tab.path = tp
+        tabRect = CGRect(x: tx + 11, y: L - 7.5, width: 18, height: 15)
+        builtTabLevel = -1
+        // The ghost tick (a faded line's memory anchor): short notches on the outside of both walls + one inside left.
+        let wallX = hw + wallW
+        let gp = CGMutablePath()
+        gp.move(to: CGPoint(x: -wallX - 1.5, y: L))
+        gp.addLine(to: CGPoint(x: -wallX - 8, y: L))
+        gp.move(to: CGPoint(x: wallX + 1.5, y: L))
+        gp.addLine(to: CGPoint(x: wallX + 8, y: L))
+        gp.move(to: CGPoint(x: -hw + 1.5, y: L))
+        gp.addLine(to: CGPoint(x: -hw + 6, y: L))
+        ghostTick.path = gp
         // Band: ± band × interior height, across the inside of the glass.
         let bandH = max(1.5, rimY * bandFrac)
         let y0 = max(0, L - bandH), y1 = min(rimY, L + bandH)
@@ -805,22 +1035,50 @@ final class SceneGlass {
         // 0 normal, 1 in band, 2 perfect (solid cyan), 3 missed.
         var state = 0
         if g.result == .perfect { state = 2 } else if g.result != nil { state = 3 } else if g.inPerfectBand { state = 1 }
-        if state != lineState {
+        // Conveyor (round 6): the tab is the pour window's timer — its flag empties as the mouth crosses the stream.
+        let draining: CGFloat? = (g.result == nil && !hidden) ? f.beltWindow.map { min(max($0, 0), 1) } : nil
+        let drainChanged = (draining != nil) != (tabLevel != nil)
+        if state != lineState || drainChanged {
             lineState = state
             switch state {
             case 2:
                 lineInk.strokeColor = SceneColor.perfect
                 lineGlow.strokeColor = SceneColor.perfect.withAlphaComponent(0.7)
-                tab.fillColor = SceneColor.perfect
+                tabColor = SceneColor.perfect
             case 1:
                 lineInk.strokeColor = SceneColor.ink.withAlphaComponent(0.9)
                 lineGlow.strokeColor = SceneColor.perfect.withAlphaComponent(0.65)
-                tab.fillColor = SceneColor.perfect
+                tabColor = SceneColor.perfect
             default:
                 lineInk.strokeColor = SceneColor.ink.withAlphaComponent(0.85)
                 lineGlow.strokeColor = SceneColor.gold.withAlphaComponent(0.4)
-                tab.fillColor = SceneColor.gold
+                tabColor = SceneColor.gold
             }
+            tab.fillColor = draining != nil ? UIColor(white: 1, alpha: 0.92) : tabColor
+            tabFill.fillColor = tabColor
+        }
+        tabLevel = draining
+        if let level = draining {
+            if abs(level - builtTabLevel) > 0.01 {
+                builtTabLevel = level
+                let w = tabRect.width * level
+                tabFill.path = w > 0.5 ? CGPath(roundedRect: CGRect(x: tabRect.minX, y: tabRect.minY, width: w,
+                                                                     height: tabRect.height),
+                                                cornerWidth: min(4, w * 0.5), cornerHeight: 4, transform: nil) : nil
+            }
+            tabFill.isHidden = level <= 0.02
+            tabFill.alpha = a
+        } else {
+            tabFill.isHidden = true
+        }
+
+        // Potion Shop (round 6): once a fading line is fading, a faint tick stays where it was (a memory anchor).
+        let fading = g.result == nil && g.phase == .filling && g.lineOpacity < 0.999
+        if fading {
+            ghostTick.isHidden = false
+            ghostTick.alpha = (1 - a) * 0.55
+        } else {
+            ghostTick.isHidden = true
         }
         let lock = lockFlash
         lineInk.lineWidth = state == 2 ? 4 : 3
@@ -1118,6 +1376,55 @@ final class SceneGlass {
         }
     }
 
+    // MARK: Hourglass (round 6)
+
+    /// The Sand Bar's hourglass glass (Core id `hourglass`; its style may be a reused one such as `.jar`).
+    static func isHourglass(_ s: GlassShape) -> Bool {
+        return s.id == "hourglass" || s.style.rawValue == "hourglass"
+    }
+
+    /// A turned-wood plinth the glass stands in and two slender posts with beads and finials either side, like a
+    /// real sand timer (open at the top: you pour into it). Static, built with the shape.
+    private func buildHourglassFrame() {
+        guard isHourglass, profile.count >= 2 else {
+            woodFrame.isHidden = true
+            woodShine.isHidden = true
+            return
+        }
+        let postX = maxHW + 7
+        let plinthTop = -base + min(7, max(4, base * 0.5))
+        let plinth = CGRect(x: -(postX + 6), y: -base - 1.5, width: (postX + 6) * 2, height: plinthTop + base + 1.5)
+        let path = CGMutablePath()
+        path.addRoundedRect(in: plinth, cornerWidth: 3, cornerHeight: 3)
+        let postTop = max(plinthTop + 30, rimY - 8)
+        let shine = CGMutablePath()
+        shine.move(to: CGPoint(x: plinth.minX + 5, y: plinth.maxY - 1.8))
+        shine.addLine(to: CGPoint(x: plinth.maxX - 5, y: plinth.maxY - 1.8))
+        for side in [CGFloat(-1), CGFloat(1)] {
+            let cx = side * postX
+            let span = postTop - plinthTop
+            let b1 = plinthTop + span * 0.28, b2 = plinthTop + span * 0.72
+            // (height, half-width) up the post: shaft, two beads, a finial.
+            let rows: [(CGFloat, CGFloat)] = [
+                (plinthTop, 4.2), (plinthTop + 3, 3), (b1 - 3.5, 3), (b1, 5.2), (b1 + 3.5, 3), (b2 - 3.5, 3), (b2, 5.2),
+                (b2 + 3.5, 3), (postTop, 3), (postTop + 2.5, 4.6), (postTop + 6.5, 5.4), (postTop + 10, 3.6),
+                (postTop + 12, 1.4),
+            ]
+            var pts: [CGPoint] = []
+            for r in rows { pts.append(CGPoint(x: cx - r.1, y: r.0)) }
+            for r in rows.reversed() { pts.append(CGPoint(x: cx + r.1, y: r.0)) }
+            path.addPath(ScenePaths.polygon(pts))
+            shine.move(to: CGPoint(x: cx - 1.3, y: plinthTop + 6))
+            shine.addLine(to: CGPoint(x: cx - 1.3, y: postTop - 3))
+        }
+        woodFrame.path = path
+        woodShine.path = shine
+        woodFrame.isHidden = false
+        woodShine.isHidden = false
+        // UI keep-outs include the posts.
+        maxHW = postX + 6
+    }
+
     // MARK: Static parts (once per glass shape)
 
     private func rebuild(_ s: GlassShape) {
@@ -1213,6 +1520,9 @@ final class SceneGlass {
         // Style extras.
         extra.isHidden = true
         extraOutline.isHidden = true
+        isHourglass = SceneGlass.isHourglass(s)
+        buildHourglassFrame()
+        if isHourglass { return }
         switch s.style {
         case .mug:
             // Handle on the LEFT, so the fill-line tab on the right never sits on it (REVIEW-2 P2-5).

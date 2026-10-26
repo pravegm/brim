@@ -254,7 +254,7 @@ public struct GameSnapshot: Sendable {
     /// Round 2: true until the player has laid the phone flat (lid tilt inside the dead zone) once at the start of a
     /// run or after a resume; no outflow while true. The UI shows "Lay it flat to start".
     public var needsFlat: Bool = false
-    /// Round 6 (REVIEW-5 §5): Rush difficulty tier (1…), 0 outside Rush. Changes every 8 glasses.
+    /// Round 6 (REVIEW-5 §5): Rush difficulty tier (1…), 0 outside Rush. Changes every 12 glasses (BALANCE.md).
     public var rushTier: Int = 0
     /// Round 6: the venue whose look/props the scene should show right now (Rush travels one venue per tier; shifts
     /// report their own venue; nil = let the App decide, e.g. Daily/practice).

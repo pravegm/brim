@@ -550,6 +550,244 @@ final class SceneTests: XCTestCase {
         XCTAssertEqual(potion.heap, 0, accuracy: 0.0001)
     }
 
+    // MARK: Round 6
+
+    private func frame(_ layout: WorldLayout, time: Double, pouring: Bool = false, tail: StreamPoint? = nil) -> GlassFrame {
+        return GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: time, pouring: pouring, tail: tail,
+                          advanced: true, reduceMotion: false, band: 0.025, projected: nil, safeX: 14...656,
+                          keepOutTop: layout.creaseMinY - 8)
+    }
+
+    private func glassState(_ shape: GlassShape, _ liquid: LiquidID, phase: GlassPhase, h: CGFloat,
+                            lineOpacity: Double = 1) -> GlassState {
+        return GlassState(id: 4, shape: shape, liquid: LiquidCatalog.liquid(liquid), x: 352, phase: phase,
+                          liquidHeight: h, foamHeight: 0, lineHeight: shape.interiorHeight * 0.7,
+                          lineOpacity: lineOpacity, inPerfectBand: false, overflowing: false, patienceLeft: nil,
+                          patienceTotal: nil, result: nil)
+    }
+
+    /// REVIEW-5 §4: sand heaps into a cone under the stream and slumps flat about half a second after it stops —
+    /// no slosh.
+    @MainActor
+    func testSandConeSlumpsFlatOnceThePourStops() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let shape = GlassCatalog.shape("jar")
+        let glass = SceneGlass(id: 4, darkBackdrop: false)
+        let h = shape.interiorHeight * 0.4
+        let state = glassState(shape, .sand, phase: .filling, h: h)
+        let surfaceY = layout.counterY + shape.baseThickness + h
+        for k in 0..<40 {
+            glass.update(state, frame(layout, time: 1 + Double(k) / 60, pouring: true,
+                                      tail: StreamPoint(position: CGPoint(x: 352, y: surfaceY), width: 12)))
+        }
+        XCTAssertGreaterThan(glass.heap, 4)
+        XCTAssertLessThanOrEqual(glass.heap, 7.001)
+        for k in 0..<36 { glass.update(state, frame(layout, time: 2 + Double(k) / 60)) }
+        XCTAssertLessThan(glass.heap, 0.3, "the cone slumps flat within ~0.6 s")
+    }
+
+    /// Decision 3 (Conveyor): the tab drains as the pour window runs out.
+    @MainActor
+    func testBeltTabDrainsWithThePourWindow() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let shape = GlassCatalog.shape("tumbler")
+        let glass = SceneGlass(id: 4, darkBackdrop: false)
+        let state = glassState(shape, .orangeJuice, phase: .filling, h: 20)
+        var f = frame(layout, time: 1)
+        glass.update(state, f)
+        XCTAssertNil(glass.tabLevel)
+        for (k, w) in [CGFloat(1), 0.6, 0.25, 0].enumerated() {
+            f.time = 1 + Double(k + 1) / 60
+            f.beltWindow = w
+            glass.update(state, f)
+            XCTAssertEqual(glass.tabLevel ?? -1, w, accuracy: 0.0001)
+        }
+    }
+
+    /// Decision 3 (Conveyor): a real belt shift shows the lit pour zone, the next glasses riding in on the belt, and
+    /// rings the bell when a glass leaves.
+    @MainActor
+    func testConveyorShowsThePourZoneTheQueueAndRingsTheBell() {
+        guard let level = LevelCatalog.levels(in: .conveyor).first else { return XCTFail("no conveyor shift") }
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift(level.id), layout: layout, seed: 11)
+        let scene = GameScene(layout: layout)
+        scene.venue = .conveyor
+        let driver = SceneTestDriver(session)
+        scene.driver = driver
+        scene.reset(for: session.snapshot)
+        var t: TimeInterval = 20
+        var sawZone = false, sawQueue = false
+        for frame in 0..<(60 * 16) {
+            let s = Double(frame) / 60
+            driver.tilt = s < 0.5 ? 0 : (s.truncatingRemainder(dividingBy: 3) < 1.2 ? 46 : 0)
+            t += 1.0 / 60.0
+            scene.update(t)
+            if scene.pourZoneVisible { sawZone = true }
+            if !scene.beltQueueKeys.isEmpty { sawQueue = true }
+        }
+        XCTAssertTrue(sawZone, "the pour zone shows on the belt")
+        if level.orders.count > 1 { XCTAssertTrue(sawQueue, "the next glass rides in on the belt") }
+        XCTAssertGreaterThanOrEqual(scene.bellRingCount, 1, "the bell rings as a glass leaves")
+    }
+
+    /// Decision 3 (Potion Shop): potions shimmer; a faded line leaves a faint tick; other drinks have neither.
+    @MainActor
+    func testPotionsShimmerAndAFadedLineLeavesAGhostTick() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let shape = GlassCatalog.shape("beaker")
+        let potion = SceneGlass(id: 4, darkBackdrop: true)
+        let faded = glassState(shape, .potionBlue, phase: .filling, h: 60, lineOpacity: 0)
+        for k in 0..<10 { potion.update(faded, frame(layout, time: 1 + Double(k) / 60)) }
+        XCTAssertTrue(potion.showsMagic)
+        XCTAssertTrue(potion.showsGhostTick)
+
+        let plain = SceneGlass(id: 5, darkBackdrop: false)
+        let visible = glassState(shape, .lemonade, phase: .filling, h: 60, lineOpacity: 1)
+        for k in 0..<10 { plain.update(visible, frame(layout, time: 1 + Double(k) / 60)) }
+        XCTAssertFalse(plain.showsMagic)
+        XCTAssertFalse(plain.showsGhostTick)
+    }
+
+    /// Decision 3 (Potion Shop): a prefilled glass shows its old drink as a settled layer; an empty one doesn't.
+    @MainActor
+    func testPrefilledGlassShowsASettledLayer() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let shape = GlassCatalog.shape("vial")
+        let pre = SceneGlass(id: 4, darkBackdrop: true)
+        var state = glassState(shape, .potionPink, phase: .arriving, h: shape.interiorHeight * 0.2)
+        pre.update(state, frame(layout, time: 1))
+        XCTAssertEqual(pre.prefillHeight ?? 0, shape.interiorHeight * 0.2, accuracy: 0.01)
+        XCTAssertTrue(pre.showsPrefill)
+        state.phase = .filling
+        state.liquidHeight = shape.interiorHeight * 0.6
+        pre.update(state, frame(layout, time: 1.1))
+        XCTAssertTrue(pre.showsPrefill)
+
+        let empty = SceneGlass(id: 5, darkBackdrop: true)
+        empty.update(glassState(shape, .potionPink, phase: .arriving, h: 0), frame(layout, time: 1))
+        XCTAssertNil(empty.prefillHeight)
+        XCTAssertFalse(empty.showsPrefill)
+    }
+
+    /// Decision 3 (Sand Bar): grains trickle at the lip as `reposeProgress` nears 1, never before 0.7, never in
+    /// other drinks, and stop once the sand flows.
+    @MainActor
+    func testScoopTrickleTelegraphsTheSlide() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift(LevelCatalog.levels.first?.id ?? "1-1"), layout: layout, seed: 2)
+        var j = session.snapshot.jug
+        j.liquid = LiquidCatalog.liquid(.sand)
+        j.fill = 0.7
+        j.flow = 0
+        j.angle = 40
+        let jug = SceneJug()
+        j.reposeProgress = 0.5
+        jug.update(j, streamWidth: 0, time: 1, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.trickleGrains, 0)
+        j.reposeProgress = 0.95
+        jug.update(j, streamWidth: 0, time: 1.1, dt: 1.0 / 60.0)
+        XCTAssertGreaterThan(jug.trickleGrains, 2)
+        j.flow = 0.4
+        jug.update(j, streamWidth: 12, time: 1.2, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.trickleGrains, 0)
+        j.flow = 0
+        j.liquid = LiquidCatalog.liquid(.water)
+        jug.update(j, streamWidth: 0, time: 1.3, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.trickleGrains, 0)
+    }
+
+    /// Decision 3 (Sand Bar): the hourglass glass stands in a wooden frame; other glasses don't.
+    @MainActor
+    func testHourglassGetsItsWoodenFrame() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let hourglass = GlassShape(id: "hourglass", name: "Hourglass", style: .jar,
+                                   profile: [CGPoint(x: 40, y: 0), CGPoint(x: 46, y: 40), CGPoint(x: 14, y: 100),
+                                             CGPoint(x: 46, y: 160), CGPoint(x: 40, y: 200)],
+                                   baseThickness: 14, wall: 4)
+        let glass = SceneGlass(id: 4, darkBackdrop: false)
+        glass.update(glassState(hourglass, .sand, phase: .filling, h: 50), frame(layout, time: 1))
+        XCTAssertTrue(glass.hasWoodFrame)
+        XCTAssertGreaterThan(glass.worldFrame.width, (46 + 4) * 2 + 10)
+        let jar = SceneGlass(id: 5, darkBackdrop: false)
+        jar.update(glassState(GlassCatalog.shape("jar"), .sand, phase: .filling, h: 50), frame(layout, time: 1))
+        XCTAssertFalse(jar.hasWoodFrame)
+        if GlassCatalog.all.contains(where: { $0.id == "hourglass" }) {
+            let real = SceneGlass(id: 6, darkBackdrop: false)
+            real.update(glassState(GlassCatalog.shape("hourglass"), .sand, phase: .filling, h: 30), frame(layout, time: 1))
+            XCTAssertTrue(real.hasWoodFrame)
+        }
+    }
+
+    /// Decision 3 (Sand Bar): its own room — adobe wall and sandstone counter, not the Lemonade Stand recoloured.
+    func testSandBarHasItsOwnRoom() {
+        let sand = ScenePalette.forVenue(.sandBar)
+        let lemon = ScenePalette.forVenue(.lemonadeStand)
+        XCTAssertEqual(sand.surface, .sandstone)
+        XCTAssertNotEqual(lemon.surface, .sandstone)
+        XCTAssertEqual(sand.vessel.form, .scoop)
+        // A terracotta adobe wall: clearly warmer (more red than blue) than the Lemonade Stand's cream.
+        let w = SceneColor.rgba(sand.wallBottom)
+        XCTAssertGreaterThan(w.r - w.b, 0.3)
+    }
+
+    /// Decision 2: the scene follows `snapshot.venue` (Rush travels per tier) over the App's `venue`, cross-fading.
+    @MainActor
+    func testSceneFollowsTheSnapshotVenueWithACrossFade() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .rush, layout: layout, seed: 4)
+        var snap = session.snapshot
+        snap.venue = .lemonadeStand
+        let scene = GameScene(layout: layout)
+        scene.venue = .lemonadeStand
+        let scripted = ScriptedSceneDriver(snap)
+        scene.driver = scripted
+        scene.reset(for: snap)
+        var t: TimeInterval = 5
+        func step(_ n: Int) {
+            for _ in 0..<n {
+                t += 1.0 / 60.0
+                scripted.snapshot.time += 1.0 / 60.0
+                scene.update(t)
+            }
+        }
+        step(3)
+        XCTAssertEqual(scene.shownVenue, .lemonadeStand)
+        XCTAssertEqual(scene.lookCrossFadeCount, 0)
+        scripted.snapshot.venue = .sodaFountain
+        step(3)
+        XCTAssertEqual(scene.shownVenue, .sodaFountain)
+        XCTAssertEqual(scene.lookCrossFadeCount, 1)
+        scripted.snapshot.venue = .conveyor
+        step(3)
+        XCTAssertEqual(scene.shownVenue, .conveyor)
+        // No venue in the snapshot: the App's choice again.
+        scripted.snapshot.venue = nil
+        step(2)
+        XCTAssertEqual(scene.shownVenue, .lemonadeStand)
+    }
+
+    /// Decision 3 (Sand Bar): the dust puff fires once as `reposeProgress` reaches 1, and re-arms after easing back.
+    @MainActor
+    func testReposePuffFiresOncePerApproach() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift(LevelCatalog.levels.first?.id ?? "1-1"), layout: layout, seed: 4)
+        var snap = session.snapshot
+        snap.jug.liquid = LiquidCatalog.liquid(.sand)
+        let scene = GameScene(layout: layout)
+        let scripted = ScriptedSceneDriver(snap)
+        scene.driver = scripted
+        scene.reset(for: snap)
+        var t: TimeInterval = 5
+        for rp in [0.2, 0.8, 0.98, 0.99, 1.0, 0.5, 0.9, 0.99] {
+            scripted.snapshot.jug.reposeProgress = rp
+            t += 1.0 / 60.0
+            scripted.snapshot.time += 1.0 / 60.0
+            scene.update(t)
+        }
+        XCTAssertEqual(scene.reposePuffCount, 2)
+    }
+
     @MainActor
     func testSceneBuildsAtLayoutSize() {
         let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), creaseFromTop: 455...495)

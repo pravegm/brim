@@ -16,6 +16,44 @@ enum AppRoute: String, Equatable {
 /// - anticipate: after a first serve that spilled: "a little earlier next time".
 enum HintKind: String, Equatable {
     case lift, stop, anticipate
+    /// Round 6 (decision 1, REVIEW-5 §1): the one-time venue intro cards, on the first shift played in each venue that
+    /// has a new idea. Cleared by the first pour (lift on a Duo, drag on a phone) or a tap.
+    case foam, thick, belt, fade, sand
+
+    /// The venue intro card for `venue` (nil for the Lemonade Stand: the lift/stop hints teach it).
+    static func venueIntro(for venue: VenueID?) -> HintKind? {
+        switch venue {
+        case .sodaFountain?: return .foam
+        case .milkshakeDiner?: return .thick
+        case .conveyor?: return .belt
+        case .potionShop?: return .fade
+        case .sandBar?: return .sand
+        case .lemonadeStand?, nil: return nil
+        }
+    }
+
+    var isVenueIntro: Bool { introVenue != nil }
+
+    /// The venue a venue intro card introduces (nil for the onboarding hints).
+    var introVenue: VenueID? {
+        switch self {
+        case .foam: return .sodaFountain
+        case .thick: return .milkshakeDiner
+        case .belt: return .conveyor
+        case .fade: return .potionShop
+        case .sand: return .sandBar
+        case .lift, .stop, .anticipate: return nil
+        }
+    }
+}
+
+/// Round 6: the short banner under the HUD row: the shift's number and title during the intro phase (decision 1), or
+/// the Rush tier ("TIER 3 · BELTS!", decision 2). `serial` changes with every new banner so the same text re-animates.
+struct PlayBanner: Equatable {
+    enum Kind: Equatable { case shift, tier }
+    var kind: Kind
+    var text: String
+    var serial: Int
 }
 
 /// HUD values, published at ≤ 15 Hz. Separate from GameController so only the HUD redraws.
@@ -43,6 +81,10 @@ final class HUDState: ObservableObject {
     /// REVIEW-3 P1-4 fallback (phones): the next order's drink colour when no waiting glass fits on screen; the HUD
     /// shows it as a small glass beside the progress dots. nil = nothing to show.
     @Published var upcoming: RGBA?
+    /// Round 6: the shift / Rush tier banner on screen now (nil = none).
+    @Published var banner: PlayBanner?
+    /// Round 6 (REVIEW-5 §3 P2): the scene behind the HUD is dark (Potion Shop, Rush at dusk): light score text.
+    @Published var darkBackdrop = false
 
     func apply(score: Int, streak: Int, multiplier: Int, strikes: Int, maxStrikes: Int, ordersDone: Int,
                ordersTotal: Int?, perfects: Int) {
@@ -163,6 +205,20 @@ final class GameController: ObservableObject, SceneDriver {
     /// What we last told `FeedbackDirector.setIdle` (nil = never).
     private var feedbackIdle: Bool?
 
+    // Round 6: banners, the Rush tier, the venue look
+    /// The banner of this run (shown until `bannerUntil`, session time; a shift banner also holds while the start gate
+    /// does), and a counter so each new banner re-animates.
+    private var banner: PlayBanner?
+    private var bannerUntil = 0.0
+    private var bannerHoldsOnGate = false
+    private var bannerSerial = 0
+    /// The Rush tier last seen in the snapshot (0 outside Rush).
+    private var lastRushTier = 0
+    /// Demo `freezeOn=tier`: a tier banner just went up.
+    private var tierFreezePending = false
+    /// The venue the scene was last told to show (nil = not yet).
+    private var shownVenue: VenueID?
+
     init(store: ProgressStore, settings: SettingsStore, demo: DemoConfig?) {
         self.store = store
         self.settings = settings
@@ -238,11 +294,52 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     /// The scene's look for a mode: the shift's venue; Daily and Rush pour at the Lemonade Stand (Daily adds its
-    /// calendar, Rush its dusk look, when the scene offers them).
+    /// calendar, Rush its dusk look, when the scene offers them). Round 6: the snapshot's `venue` wins when Core
+    /// reports one (Rush travels one venue per tier), see `lookVenue(snapshot:mode:)`.
     static func venue(for mode: GameMode) -> VenueID {
         if case let .shift(id) = mode, let level = LevelCatalog.level(id) { return level.venue }
         return .lemonadeStand
     }
+
+    /// Round 6 (decision 2): the venue to show now: the snapshot's (Rush tiers, shifts) else the mode's. Pure.
+    static func lookVenue(snapshot venue: VenueID?, mode: GameMode) -> VenueID {
+        venue ?? Self.venue(for: mode)
+    }
+
+    /// Round 6 (REVIEW-5 §3 P2): the scene behind the HUD is dark: the Potion Shop, and every Rush venue (dusk). Pure.
+    static func isDarkLook(venue: VenueID, rush: Bool) -> Bool {
+        rush || venue == .potionShop
+    }
+
+    /// Round 6 (decision 1): "Shift 6 · Slow Pour, Fast Belt" for a shift; nil for every other mode. Pure.
+    static func shiftBanner(for mode: GameMode) -> String? {
+        guard case let .shift(id) = mode, let level = LevelCatalog.level(id) else { return nil }
+        return "Shift \(level.index) · \(level.title)"
+    }
+
+    /// Round 6 (decision 2, REVIEW-5 §5): the Rush tier banner, "TIER 3 · BELTS!". The word follows the venue the tier
+    /// travels to (Core's `snapshot.venue`), else decision 2's order (2 Soda, 3 Conveyor, 4 Diner, 5 Potion); tier 6
+    /// and up (and any return to the Lemonade Stand) say "FASTER!". nil for tier 1 (the start) and outside Rush. Pure.
+    static func tierBanner(tier: Int, venue: VenueID?) -> String? {
+        guard tier >= 2 else { return nil }
+        let planned: [Int: VenueID] = [2: .sodaFountain, 3: .conveyor, 4: .milkshakeDiner, 5: .potionShop]
+        var shown: VenueID? = nil
+        if tier < 6 { shown = venue ?? planned[tier] }
+        let word: String
+        switch shown {
+        case .sodaFountain?: word = "FIZZ!"
+        case .conveyor?: word = "BELTS!"
+        case .milkshakeDiner?: word = "THICK AND FAST!"
+        case .potionShop?: word = "POTIONS!"
+        case .sandBar?: word = "SAND!"
+        case .lemonadeStand?, nil: word = "FASTER!"
+        }
+        return "TIER \(tier) · \(word)"
+    }
+
+    /// How long (session seconds) the shift banner stays up, and the tier banner after a change.
+    static let shiftBannerSeconds = 1.6
+    static let tierBannerSeconds = 1.6
 
     // MARK: - Lifecycle hooks from RootView
 
@@ -563,6 +660,7 @@ final class GameController: ObservableObject, SceneDriver {
         start(mode: .daily(LevelCatalog.dayNumber(for: Date())))
     }
 
+    /// Marks the active hint learned and clears it. Also the venue intro card's tap.
     func dismissHint() {
         if let hint = activeHint { store.markHintSeen(hint.rawValue) }
         hintTask?.cancel()
@@ -602,6 +700,8 @@ final class GameController: ObservableObject, SceneDriver {
         }
         process(events, snapshot: snapshot)
         armDailyIfReady(snapshot)
+        syncLook(snapshot)
+        trackRushTier(snapshot)
         publishHUD(snapshot, now: now, force: false)
         checkFreeze(snapshot, events: events, now: now)
         return (snapshot, events)
@@ -744,11 +844,11 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     /// Venue look for the current mode: the shift's venue; Rush at dusk (string lights); Daily at the Lemonade Stand
-    /// with the tear-off calendar "#N" on the wall.
+    /// with the tear-off calendar "#N" on the wall. Round 6: the venue follows `snapshot.venue` when Core reports one.
     private func applySceneLook() {
         guard let scene else { return }
-        let venue = Self.venue(for: mode)
-        if scene.venue != venue { scene.venue = venue }
+        shownVenue = nil
+        syncLook(session?.snapshot)
         var rush = false
         var daily: Int?
         switch mode {
@@ -760,12 +860,49 @@ final class GameController: ObservableObject, SceneDriver {
         if scene.dailyNumber != daily { scene.dailyNumber = daily }
     }
 
+    /// Round 6 (decision 2): the scene shows the snapshot's venue (Rush travels one venue per tier; if the scene also
+    /// follows `snapshot.venue` itself, setting the same value is a no-op), and the HUD learns whether it's dark.
+    private func syncLook(_ s: GameSnapshot?) {
+        let venue = Self.lookVenue(snapshot: s?.venue, mode: mode)
+        guard venue != shownVenue else { return }
+        shownVenue = venue
+        if let scene, scene.venue != venue { scene.venue = venue }
+        var rush = false
+        if case .rush = mode { rush = true }
+        let dark = Self.isDarkLook(venue: venue, rush: rush)
+        if hud.darkBackdrop != dark { hud.darkBackdrop = dark }
+    }
+
+    /// Round 6 (decision 2): a Rush tier change puts up "TIER n · …" for `tierBannerSeconds` (Feel plays the chord).
+    private func trackRushTier(_ s: GameSnapshot) {
+        guard !isAttract, case .rush = mode, s.rushTier != lastRushTier else { return }
+        let up = s.rushTier > lastRushTier
+        lastRushTier = s.rushTier
+        guard up, s.phase != .finished, let text = Self.tierBanner(tier: s.rushTier, venue: s.venue) else { return }
+        bannerSerial += 1
+        banner = PlayBanner(kind: .tier, text: text, serial: bannerSerial)
+        bannerUntil = s.time + Self.tierBannerSeconds
+        bannerHoldsOnGate = false
+        tierFreezePending = true
+        trace("BRIM-T tier \(s.rushTier) venue=\(Self.lookVenue(snapshot: s.venue, mode: mode).rawValue)")
+    }
+
+    /// Pure: whether a banner is on screen at session time `time`. A shift banner also holds while the start gate does
+    /// (flat gate up, not after a pause, nothing served yet). Never on a finished run.
+    static func bannerVisible(time: Double, until: Double, holdsOnGate: Bool, needsFlat: Bool, gateAfterPause: Bool,
+                              ordersDone: Int, finished: Bool) -> Bool {
+        if finished { return false }
+        if time < until { return true }
+        return holdsOnGate && needsFlat && !gateAfterPause && ordersDone == 0
+    }
+
     private func buildSession() {
         guard let layout else { return }
         if scene == nil { makeScene(layout) }
-        applySceneLook()
         let newSession = GameSession(mode: mode, layout: layout, seed: seed(for: mode))
         session = newSession
+        // After the session exists, so the look follows its snapshot (round 6), never the run being replaced.
+        applySceneLook()
         frozen = false
         freezeAt = nil
         recordedFinish = false
@@ -790,9 +927,29 @@ final class GameController: ObservableObject, SceneDriver {
             servedCount = progress.served
             if let last = progress.recap.last { hud.lastJudgement = last.judgement }
         }
+        syncLook(newSession.snapshot)
         scene?.reset(for: newSession.snapshot)
-        if !isAttract && hintsEnabled && !store.hasSeenHint(HintKind.lift.rawValue) && servedCount == 0 {
-            activeHint = .lift
+        if !isAttract && hintsEnabled && servedCount == 0 {
+            // Round 6: a venue's one-time intro card comes first (a player who reached it has poured before);
+            // otherwise the very first run's lift hint.
+            if let intro = HintKind.venueIntro(for: currentLevel?.venue), !store.hasSeenHint(intro.rawValue) {
+                activeHint = intro
+                trace("BRIM-T intro card \(intro.rawValue)")
+            } else if !store.hasSeenHint(HintKind.lift.rawValue) {
+                activeHint = .lift
+            }
+        }
+        // Round 6: the shift banner (held while the start gate holds); the Rush tier starts where the run is.
+        bannerSerial += 1
+        banner = nil
+        bannerUntil = 0
+        bannerHoldsOnGate = false
+        tierFreezePending = false
+        lastRushTier = newSession.snapshot.rushTier
+        if !isAttract, servedCount == 0, let text = Self.shiftBanner(for: mode) {
+            banner = PlayBanner(kind: .shift, text: text, serial: bannerSerial)
+            bannerUntil = newSession.snapshot.time + Self.shiftBannerSeconds
+            bannerHoldsOnGate = true
         }
         syncFeedbackPause()
         publishHUD(newSession.snapshot, now: CACurrentMediaTime(), force: true)
@@ -810,7 +967,8 @@ final class GameController: ObservableObject, SceneDriver {
         for event in events {
             switch event {
             case .pourStarted:
-                if activeHint == .lift { dismissHint() }
+                // The first pour clears the lift hint and a venue intro card (round 6: learned, never shown again).
+                if activeHint == .lift || activeHint?.isVenueIntro == true { dismissHint() }
             case .pourStopped:
                 break
             case .nearingLine:
@@ -912,6 +1070,14 @@ final class GameController: ObservableObject, SceneDriver {
             upcoming = LiquidCatalog.liquid(order.liquid).top
         }
         if hud.upcoming != upcoming { hud.upcoming = upcoming }
+        var shownBanner: PlayBanner?
+        if let banner, !isAttract,
+           Self.bannerVisible(time: s.time, until: bannerUntil, holdsOnGate: bannerHoldsOnGate, needsFlat: s.needsFlat,
+                              gateAfterPause: hud.gateAfterPause, ordersDone: s.ordersDone,
+                              finished: s.phase == .finished) {
+            shownBanner = banner
+        }
+        if hud.banner != shownBanner { hud.banner = shownBanner }
         if let layout {
             var anchors = AnchorMath.anchors(s, layout: layout)
             // The scene knows the jug's drawn bounds (walls, handle, lid); prefer them to the interior outline.
@@ -1025,6 +1191,15 @@ final class GameController: ObservableObject, SceneDriver {
                     freeze("finished", snapshot: s, now: now)
                     break
                 }
+            }
+        case .intro:
+            // Round 6: during the intro phase (shift banner, venue intro card).
+            if s.time >= 0.5 { freeze("intro", snapshot: s, now: now) }
+        case .tier:
+            // Round 6: just after a Rush tier change (the banner is up).
+            if tierFreezePending {
+                tierFreezePending = false
+                freezeAt = simTime + 0.35
             }
         }
     }

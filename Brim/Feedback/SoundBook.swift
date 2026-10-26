@@ -52,6 +52,8 @@ struct PourTexture: Sendable, Equatable {
     /// 0…1 dry sand hiss (sand has no glugs, it rattles).
     var hiss: Float
     var turbulence: Float
+    /// Round 6: 0…1 faint magical sparkle in the pour bed (potions).
+    var sparkle: Float = 0
 }
 
 /// Pure sound design: every recipe returns synth commands; nothing here touches audio hardware, so it is unit-tested.
@@ -136,6 +138,11 @@ enum SoundBook {
             sand.hiss = 1
             sand.turbulence = 0.45
             return sand
+        case .potionBlue, .potionPink:
+            // Round 6 (REVIEW-5 §3): a still pour with a faint celesta sparkle over it.
+            var potion = still
+            potion.sparkle = 1
+            return potion
         default:
             return still
         }
@@ -179,8 +186,12 @@ enum SoundBook {
     /// `band` is the Perfect band (fraction of interior height) and `streak` the current streak, for the shimmer.
     /// `lineOpacity` is the active glass's line opacity: once the line has faded (`lineCuesAudible`), the shimmer stays
     /// silent, or it would tell the player exactly when to stop (REVIEW-5 P1-1).
+    /// Round 6: `reposeProgress` is the jug's `JugState.reposeProgress` (sand only): the dry rustle that telegraphs the
+    /// slide rises with it (`rustleLevel`). Potions (`texture.sparkle`) add a faint sparkle while the pour is live; its
+    /// pitches are random, never tied to the level, so it reveals nothing about a faded line.
     static func pourBed(telemetry: PourTelemetry, foam: Double, texture: PourTexture, master: Float,
-                        band: Double = defaultBand, streak: Int = 0, lineOpacity: Double = 1) -> PourBed {
+                        band: Double = defaultBand, streak: Int = 0, lineOpacity: Double = 1,
+                        reposeProgress: Double = 0) -> PourBed {
         let flow = clamp01(telemetry.flow)
         let landing = clamp01(telemetry.landingRate)
         let rush = 0.35 * flow + 0.65 * landing
@@ -202,6 +213,18 @@ enum SoundBook {
             bed.hissCenter = 5200
         }
         bed.turbulence = texture.turbulence
+        let rustle = rustleLevel(reposeProgress: reposeProgress, flow: flow)
+        if rustle > 0 {
+            bed.rustleGain = Float(rustle) * rustlePeak
+            bed.rustleDensity = Float(35 + 545 * rustle)
+            bed.rustleCenter = Float(2400 + 1800 * rustle)
+        }
+        if texture.sparkle > 0 {
+            let pouring = flow > 0.004 || landing > 0.01
+            bed.sparkleRate = pouring ? texture.sparkle * Float(2 + 4 * flow + 12 * landing) : 0
+            // The level stays put (only the rate follows the pour) so the last pings ring out instead of being cut.
+            bed.sparkleGain = texture.sparkle * sparklePeak
+        }
         // The shimmer only matters while the pour is still deciding the level (pouring, or the stream still landing);
         // once everything has landed it fades and the lock-in tink takes over.
         let live = (flow > 0.004 || landing > 0.01) && lineCuesAudible(lineOpacity: lineOpacity)
@@ -209,6 +232,101 @@ enum SoundBook {
         bed.shimmerGain = Float(shimmer) * shimmerPeak
         bed.shimmerHz = Float(shimmerHz(streak: streak))
         return bed
+    }
+
+    // MARK: Round 6: the late game (REVIEW-5 §2–§5)
+
+    /// Sand: `reposeProgress` at which the rustle (and the haptic ticks) begin.
+    static let rustleStart = 0.5
+    /// Peak level of the rustle (before master): a dry whisper under the pour, well below the hiss of flowing sand.
+    static let rustlePeak: Float = 0.07
+    /// Peak level of the potion sparkle (before master).
+    static let sparklePeak: Float = 0.028
+
+    /// 0…1 level of the dry rustle that telegraphs the sand slide: silent up to `rustleStart`, then a smoothstep rise
+    /// to 1 as the tip reaches the angle of repose. Once sand flows the hiss takes over, so it ducks out with the flow.
+    static func rustleLevel(reposeProgress: Double, flow: Double) -> Double {
+        guard reposeProgress.isFinite else { return 0 }
+        let progress = clamp01(reposeProgress)
+        if progress <= rustleStart { return 0 }
+        let u = (progress - rustleStart) / (1 - rustleStart)
+        let rise = u * u * (3 - 2 * u)
+        let duck = max(0, 1 - clamp01(flow) / 0.12)
+        return rise * duck
+    }
+
+    /// The sand lets go (the pour starts on a jug with an angle of repose): "shff", a soft low thump of the mass
+    /// breaking loose under a dry, falling whoosh of grains. Under any judgement; it replaces the glass knock.
+    static func avalanche(dice: inout FeelDice) -> [SynthCommand] {
+        [
+            .noise(SynthNoise(.lowPass, cutoff: 380, to: 170, sweep: 0.12, q: 0.8, attack: 0.004, decay: 0.07,
+                              gain: 0.15)),
+            .noise(SynthNoise(.bandPass, cutoff: Float(dice.range(5200, 5900)), to: 1600, sweep: 0.4, q: 0.7,
+                              attack: 0.02, decay: 0.15, gain: 0.12)),
+            .noise(SynthNoise(.highPass, cutoff: 3800, q: 0.7, attack: 0.01, decay: 0.07, gain: 0.045, delay: 0.03)),
+        ]
+    }
+
+    /// Semitones of the tier-up chord (a major triad, played upward).
+    static let tierChord: [Double] = [0, 4, 7]
+    static let tierChordGap: Float = 0.075
+
+    /// Root of the tier-up chord: D5 at tier 2, a whole tone higher per tier, capped at tier 6 (the run climbs).
+    static func tierRootHz(tier: Int) -> Double {
+        let step = min(max(tier - 2, 0), 4)
+        return 587.33 * pow(2, Double(2 * step) / 12)
+    }
+
+    /// Rush tier-up (never the first tier): a rising 3-note major chord on soft bells, arpeggiated ~75 ms apart and
+    /// left ringing together, over a warm low root, with a faint glass sparkle on the top note. Bright but under a
+    /// Perfect, and lower than the end fanfare (C6) so the two never blur.
+    static func tierUp(tier: Int, dice: inout FeelDice) -> [SynthCommand] {
+        let root = tierRootHz(tier: tier)
+        var commands: [SynthCommand] = [
+            .tone(SynthTone(start: Float(root / 2), duration: 0.7, attack: 0.06, decay: 0.32, gain: 0.045,
+                            harmonics: 2)),
+        ]
+        let gains: [Float] = [0.12, 0.13, 0.15]
+        for index in 0..<tierChord.count {
+            let last = index == tierChord.count - 1
+            let frequency = Float(root * pow(2, tierChord[index] / 12))
+            commands.append(.ring(SynthRing(.bell, fundamental: frequency, partials: 4, decay: last ? 0.7 : 0.5,
+                                            brightness: 0.45, gain: gains[index], delay: tierChordGap * Float(index),
+                                            seed: dice.seed32())))
+        }
+        let top = Float(root * pow(2, (tierChord.last ?? 7) / 12) * 2)
+        commands.append(.ring(SynthRing(.glass, fundamental: top, partials: 2, decay: 0.18, brightness: 0.35,
+                                        gain: 0.045, delay: tierChordGap * 2 + 0.03, seed: dice.seed32())))
+        return commands
+    }
+
+    /// Seconds between the two beats of the low-jug heartbeat.
+    static let heartbeatGap: Float = 0.17
+
+    /// Rush, the shared jug dipped under 20 %: a soft "heartbeat", two low glugs (lub-dub, the second lower and
+    /// softer) each with a muffled thump. Once per dip; a nudge, quieter than any judgement, never an alarm.
+    static func lowJug(dice: inout FeelDice) -> [SynthCommand] {
+        let base = dice.range(205, 230)
+        return [
+            .bubble(SynthBubble(frequency: Float(base), chirp: 1.3, decay: 0.055, gain: 0.14)),
+            .noise(SynthNoise(.lowPass, cutoff: 240, q: 0.8, attack: 0.003, decay: 0.05, gain: 0.08)),
+            .bubble(SynthBubble(frequency: Float(base * 0.84), chirp: 1.25, decay: 0.07, gain: 0.11,
+                                delay: heartbeatGap)),
+            .noise(SynthNoise(.lowPass, cutoff: 200, q: 0.8, attack: 0.003, decay: 0.06, gain: 0.06,
+                              delay: heartbeatGap)),
+        ]
+    }
+
+    /// Conveyor: a served glass rides off the belt: a light service-bell "ding" (the cloche on the shelf). A small
+    /// struck bell around D6, below the Perfect ting so it reads as the room, not a verdict; a Perfect rings it a
+    /// touch brighter.
+    static func serviceBell(perfect: Bool, dice: inout FeelDice) -> [SynthCommand] {
+        let frequency = Float(dice.range(1160, 1190))
+        return [
+            .noise(SynthNoise(.highPass, cutoff: 5200, q: 0.7, attack: 0.0005, decay: 0.003, gain: 0.03)),
+            .ring(SynthRing(.bell, fundamental: frequency, partials: 5, decay: 0.42,
+                            brightness: perfect ? 0.6 : 0.5, gain: perfect ? 0.11 : 0.09, seed: dice.seed32())),
+        ]
     }
 
     /// No pour layers, master kept: menus, pause cards and one-shots stay audible (sound off is the engine's job).

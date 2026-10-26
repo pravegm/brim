@@ -228,6 +228,10 @@ struct RootView: View {
             }
             HintsOverlay(hud: controller.hud, hint: controller.activeHint, touch: controller.usesTouch, info: info)
                 .allowsHitTesting(false)
+            // Round 6: the one-time venue intro card (only the card takes a tap) and the shift / Rush tier banner.
+            VenueIntroOverlay(hud: controller.hud, hint: controller.activeHint, info: info,
+                              onDismiss: { controller.dismissHint() })
+            PlayBannerView(hud: controller.hud, info: info)
             // Only its card takes touches ("Use touch instead", ROUND-5 decision 1).
             FlatGateOverlay(hud: controller.hud, info: info, onUseTouch: { controller.useTouchForThisRun() })
             HUDView(hud: controller.hud, mode: controller.mode, title: controller.hudTitle,

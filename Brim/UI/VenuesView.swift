@@ -43,6 +43,13 @@ struct VenuesView: View {
 
     // MARK: Duo (REVIEW-3 P1-3): nothing on the fold
 
+    /// Round 6 (decision 4): the venue card's crown count, "3/8", shown once a crown is earned or every star of the
+    /// venue is in (then the crowns are what's left to chase). nil otherwise. Pure; tested.
+    static func crownLine(crowns: Int, shifts: Int, stars: Int) -> String? {
+        guard shifts > 0, crowns > 0 || stars >= shifts * 3 else { return nil }
+        return "\(min(max(crowns, 0), shifts))/\(shifts)"
+    }
+
     /// Pure (tested): venues two to a screen, one per half (the first screen's top half also holds the header).
     static func duoPages(_ venues: [VenueID]) -> [[VenueID]] {
         var pages: [[VenueID]] = []
@@ -154,11 +161,26 @@ private struct VenueCard: View {
                         .font(BrimTheme.text(13, .bold))
                         .foregroundStyle(BrimTheme.inkSoft)
                     if unlocked {
-                        HStack(spacing: 3) {
-                            Image(systemName: "star.fill").foregroundStyle(BrimTheme.goldDeep)
-                            Text("\(store.data.starsEarned(in: venue))/\(levels.count * 3)")
-                                .font(BrimTheme.number(13))
-                                .foregroundStyle(BrimTheme.ink)
+                        HStack(spacing: 10) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "star.fill").foregroundStyle(BrimTheme.goldDeep)
+                                Text("\(store.data.starsEarned(in: venue))/\(levels.count * 3)")
+                                    .font(BrimTheme.number(13))
+                                    .foregroundStyle(BrimTheme.ink)
+                            }
+                            // Round 6 (decision 4): the crown count, once there is one or every star is in.
+                            if let crowns = VenuesView.crownLine(crowns: store.data.crownsEarned(in: venue),
+                                                                 shifts: levels.count,
+                                                                 stars: store.data.starsEarned(in: venue)) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "crown.fill").foregroundStyle(BrimTheme.goldDeep)
+                                    Text(crowns)
+                                        .font(BrimTheme.number(13))
+                                        .foregroundStyle(BrimTheme.ink)
+                                }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("\(store.data.crownsEarned(in: venue)) of \(levels.count) flawless crowns")
+                            }
                         }
                         .font(.system(size: 11, weight: .heavy))
                         .padding(.top, 1)
@@ -170,7 +192,7 @@ private struct VenueCard: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 12) {
                     ForEach(levels) { level in
                         ShiftBubble(level: level, stars: store.stars(for: level.id), playable: store.isPlayable(level),
-                                    accent: accent) {
+                                    accent: accent, crowned: store.hasCrown(level.id)) {
                             if store.isPlayable(level) {
                                 onPick(level)
                             } else {
@@ -207,9 +229,10 @@ private struct VenueCard: View {
         case .lemonadeStand: return "Pour to the line"
         case .sodaFountain: return "Foam: pour slow, then top up"
         case .milkshakeDiner: return "Thick drinks: stop early"
-        case .conveyor: return "Moving glasses"
-        case .potionShop: return "Tiny vials, fading lines"
-        case .sandBar: return "Sand waits, then rushes"
+        // REVIEW-5 §1 P2: instructions, not nouns.
+        case .conveyor: return "Moving glasses: pour early"
+        case .potionShop: return "Fading lines: remember the mark"
+        case .sandBar: return "Sand sticks, then slides"
         }
     }
 }
@@ -219,6 +242,8 @@ private struct ShiftBubble: View {
     let stars: Int
     let playable: Bool
     let accent: Color
+    /// Round 6: the Flawless crown (every glass Perfect): a cyan ring and a crown on the bubble.
+    var crowned: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -227,11 +252,19 @@ private struct ShiftBubble: View {
             action()
         } label: {
             VStack(spacing: 5) {
-                ZStack {
+                ZStack(alignment: .topTrailing) {
                     Circle()
                         .fill(playable ? accent : BrimTheme.creamDeep)
-                        .overlay(Circle().stroke(BrimTheme.ink.opacity(playable ? 0.12 : 0.06), lineWidth: 2))
+                        .overlay(Circle().stroke(crowned ? BrimTheme.cyan : BrimTheme.ink.opacity(playable ? 0.12 : 0.06),
+                                                 lineWidth: crowned ? 3.5 : 2))
                         .shadow(color: BrimTheme.ink.opacity(playable ? 0.15 : 0), radius: 4, y: 3)
+                    if crowned && playable {
+                        CrownMark(size: 20)
+                            .offset(x: 5, y: -5)
+                    }
+                }
+                .frame(width: 54, height: 54)
+                .overlay {
                     if playable {
                         Text("\(level.index)")
                             .font(BrimTheme.number(22))
@@ -242,11 +275,10 @@ private struct ShiftBubble: View {
                             .foregroundStyle(BrimTheme.inkFaint)
                     }
                 }
-                .frame(width: 54, height: 54)
                 StarRow(filled: stars, size: 11, spacing: 1)
             }
         }
         .buttonStyle(PressScaleStyle())
-        .accessibilityLabel("Shift \(level.index), \(stars) stars\(playable ? "" : ", locked")")
+        .accessibilityLabel("Shift \(level.index), \(stars) stars\(crowned ? ", flawless crown" : "")\(playable ? "" : ", locked")")
     }
 }

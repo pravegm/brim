@@ -101,16 +101,25 @@ struct HUDView: View {
     /// Phones without a fold (every one is < 440 pt wide; the Duo's inner canvas is 669).
     private var narrow: Bool { info.size.width < 440 }
 
+    /// The score's text and halo colours: ink on cream for light venues, cream on ink for dark ones. Pure.
+    static func scoreColors(dark: Bool) -> (text: Color, halo: Color) {
+        dark ? (BrimTheme.cream, BrimTheme.ink.opacity(0.9)) : (BrimTheme.ink, BrimTheme.cream.opacity(0.9))
+    }
+
     private func scoreText(size: CGFloat) -> some View {
-        Text(ShareText.grouped(hud.score))
+        // Round 6 (REVIEW-5 §3 P2): ink on the light venues; cream with an ink halo on dark ones (Potion indigo, Rush
+        // dusk), where ink read at ~1.6:1.
+        let colors = HUDView.scoreColors(dark: hud.darkBackdrop)
+        return Text(ShareText.grouped(hud.score))
             .font(BrimTheme.number(size))
-            .foregroundStyle(BrimTheme.ink)
+            .foregroundStyle(colors.text)
             .lineLimit(1)
             .minimumScaleFactor(0.6)
             .contentTransition(.numericText())
             .animation(reduceMotion ? nil : Animation.snappy(duration: 0.25), value: hud.score)
             .scaleEffect(bump ? 1.14 : 1, anchor: .trailing)
-            .shadow(color: BrimTheme.cream.opacity(0.9), radius: 3)
+            .shadow(color: colors.halo, radius: 3)
+            .shadow(color: colors.halo.opacity(hud.darkBackdrop ? 0.6 : 0), radius: 1)
             .accessibilityLabel("Score \(hud.score)")
     }
 
@@ -219,6 +228,7 @@ struct HintsOverlay: View {
             return touch ? "Let go just before the line: the stream keeps falling."
                          : "Lay it flat just before the line: the stream keeps falling."
         case .anticipate: return "A little earlier next time: the stream keeps falling."
+        case .foam, .thick, .belt, .fade, .sand: return VenueIntroCard.line(for: hint)
         }
     }
 
@@ -226,7 +236,7 @@ struct HintsOverlay: View {
         switch hint {
         case .lift: return touch ? "hand.point.up.left.fill" : "arrow.up"
         case .stop: return touch ? "hand.raised.fill" : "arrow.down"
-        case .anticipate: return nil
+        case .anticipate, .foam, .thick, .belt, .fade, .sand: return nil
         }
     }
 
@@ -234,7 +244,8 @@ struct HintsOverlay: View {
 
     var body: some View {
         ZStack {
-            if let hint, !hud.showFlatGate {
+            // Venue intro cards have their own overlay (VenueIntroOverlay: it takes a tap).
+            if let hint, !hint.isVenueIntro, !hud.showFlatGate {
                 // Goal first, before the first pour only (REVIEW-3 P2-2: no faded pill lingering mid-pour; the lift
                 // hint ends when the pour starts).
                 if hint == .lift, let glass = hud.anchors?.glass {
@@ -315,8 +326,9 @@ struct HintSpot: Equatable {
     var width: CGFloat
     var compact: Bool
 
-    static func place(size: CGSize, anchors: PlayAnchors?, info: CanvasInfo) -> HintSpot {
-        let top = info.hudTop + HUDMetrics.rowHeight + 8
+    /// `topGap`: clear room under the HUD row (round 6: the venue intro card leaves the banner's lane free).
+    static func place(size: CGSize, anchors: PlayAnchors?, info: CanvasInfo, topGap: CGFloat = 8) -> HintSpot {
+        let top = info.hudTop + HUDMetrics.rowHeight + topGap
         let topHalf = CGRect(x: info.sidePad - 6, y: top, width: info.size.width - 2 * (info.sidePad - 6),
                              height: max(info.topHalfHeight - 8 - top, 0))
         let jug = anchors.map { info.mapper.rect($0.jug) }

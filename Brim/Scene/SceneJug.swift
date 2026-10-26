@@ -60,6 +60,13 @@ final class SceneJug {
     /// and a last drop hanging from the lip that swells and falls now and then (world space).
     private let residue: SKShapeNode
     private let lastDrop: SKShapeNode
+    /// Sand Bar (round 6, REVIEW-5 §4): grains creeping over the lip and trickling down as the scoop nears its angle
+    /// of repose (`JugState.reposeProgress` 0.7 → 1). Cosmetic: no volume. World space.
+    private let trickle: SKShapeNode
+    /// How many trickle grains are drawn this frame (tests).
+    private(set) var trickleGrains = 0
+    /// Repose progress where the trickle starts.
+    static let trickleStart: Double = 0.7
 
     /// 0 = has liquid, 1 = dry (eased). See `dryFill`.
     private(set) var dryAmount: CGFloat = 0
@@ -143,6 +150,7 @@ final class SceneJug {
         lipGlint = SKShapeNode()
         residue = SKShapeNode()
         lastDrop = SKShapeNode()
+        trickle = SKShapeNode()
 
         let ink = SceneColor.ink
         shadow.fillColor = ink.withAlphaComponent(0.10)
@@ -177,6 +185,10 @@ final class SceneJug {
         lastDrop.lineWidth = 1.4
         lastDrop.zPosition = 3.5
         lastDrop.isHidden = true
+        trickle.strokeColor = .clear
+        trickle.lineWidth = 0
+        trickle.zPosition = 3.6
+        trickle.isHidden = true
         backFrame.addChild(handleOutline)
         backFrame.addChild(handleBody)
         backFrame.addChild(handleShine)
@@ -296,6 +308,7 @@ final class SceneJug {
         root.addChild(surface)
         root.addChild(frontFrame)
         root.addChild(lastDrop)
+        root.addChild(trickle)
         applyStyleColors()
     }
 
@@ -321,6 +334,7 @@ final class SceneJug {
         handleBody.strokeColor = style.form == .scoop ? SceneJug.wood : style.accent
         windowFrame.strokeColor = SceneColor.darker(style.accent, 0.35)
         ticks.strokeColor = ink.withAlphaComponent(0.55)
+        ticks.fillColor = .clear
         switch style.form {
         case .shakeTin:
             skin.fillTexture = SceneArt.sheenTexture(key: "jug-steel", base: SceneColor.hex(0xBCC7D0))
@@ -399,9 +413,11 @@ final class SceneJug {
             residue.fillColor = look.body.withAlphaComponent(0.75)
             lastDrop.fillColor = look.body
             lastDrop.strokeColor = look.edge
+            trickle.fillColor = SceneColor.darker(look.body, 0.12)
             openingFull = nil
         }
         updateDry(j, time: time, dt: dt)
+        updateTrickle(j, time: time)
         if style.form == .scoop {
             // Open top: sand shows in the mouth once the scoop is well filled.
             let full = j.fill > 0.55
@@ -491,6 +507,49 @@ final class SceneJug {
         lastDrop.path = p
         lastDrop.isHidden = false
         lastDrop.alpha = a * dryAmount
+    }
+
+    // MARK: Sand trickle
+
+    /// Telegraphs the avalanche: from `trickleStart` to 1 a few grains sit on the lip and more and more of them
+    /// trickle off it (deterministic on the session clock, so a paused frame holds still). Gone once sand flows.
+    private func updateTrickle(_ j: JugState, time: Double) {
+        let rp = min(max(j.reposeProgress, 0), 1)
+        guard j.liquid.id == .sand, rp > SceneJug.trickleStart, j.flow < 0.02, j.fill > SceneJug.dryFill else {
+            if !trickle.isHidden {
+                trickle.isHidden = true
+                trickle.path = nil
+            }
+            trickleGrains = 0
+            return
+        }
+        let u = CGFloat((rp - SceneJug.trickleStart) / (1 - SceneJug.trickleStart))
+        let lip = j.lip
+        let p = CGMutablePath()
+        // Grains gathered on the lip (they creep outward as u grows).
+        let sitting = 2 + Int(u * 3)
+        for k in 0..<sitting {
+            let dx = (CGFloat(k) - CGFloat(sitting - 1) * 0.5) * 2.6 + u * 2
+            let r: CGFloat = k % 2 == 0 ? 1.5 : 1.2
+            p.addEllipse(in: CGRect(x: lip.x + dx - r, y: lip.y + 0.6 - r, width: r * 2, height: r * 2))
+        }
+        // Falling grains: each loops a short fall from the lip, staggered; more of them (and faster) near 1.
+        let falling = 1 + Int(u * 6)
+        let period = 0.42 - 0.12 * Double(u)
+        let fallTime: CGFloat = 0.3
+        for k in 0..<falling {
+            let ph = (time / period + Double(k) * 0.618).truncatingRemainder(dividingBy: 1)
+            let t = CGFloat(ph < 0 ? ph + 1 : ph) * fallTime
+            let jitter = CGFloat((k * 37) % 7) - 3
+            let x = lip.x + 1.5 + jitter * 0.6 + t * 10
+            let y = lip.y - 1 - 0.5 * 1500 * t * t
+            let r: CGFloat = 1.0 + CGFloat((k * 13) % 3) * 0.3
+            p.addEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+        }
+        trickleGrains = sitting + falling
+        trickle.path = p
+        trickle.isHidden = false
+        trickle.alpha = min(1, 0.35 + u)
     }
 
     /// Residue beads on the inner walls (jug-local), built with the static parts.
@@ -671,8 +730,8 @@ final class SceneJug {
         }
         localDrawnBounds = lb.insetBy(dx: -3, dy: -3)
 
-        // The belly decal (none on the steel tin; small on the scoop, beside its sight glass).
-        if form == .shakeTin {
+        // The belly decal (none on the steel tin; none on the scoop since round 6 — with the sight glass it made a face).
+        if form == .shakeTin || form == .scoop {
             decal.isHidden = true
         } else {
             decal.isHidden = false
@@ -699,9 +758,13 @@ final class SceneJug {
         var sil = outer
         if ScenePaths.signedArea(sil) < 0 { sil.reverse() }
         let bw = max(20, bodyR - bodyL)
-        let cx = bodyL + bw * (style.form == .scoop ? 0.6 : 0.5)
-        let hw = max(14, bw * 0.15)
-        let y0 = b.minY + b.height * 0.1, y1 = b.minY + b.height * 0.8
+        let scoop = style.form == .scoop
+        let cx = bodyL + bw * (scoop ? 0.64 : 0.5)
+        // Round 6 (REVIEW-5 §4): the scoop's wide oval window with ticks inside it read as a grinning mouth with
+        // teeth (and the sun decal above it as an eye). It is now a slim gauge slot with the graduations engraved on
+        // the copper beside it, and no belly decal.
+        let hw = scoop ? max(7, bw * 0.07) : max(14, bw * 0.15)
+        let y0 = b.minY + b.height * (scoop ? 0.16 : 0.1), y1 = b.minY + b.height * (scoop ? 0.78 : 0.8)
         let win = ScenePaths.pillClockwise(centerX: cx, minY: y0, maxY: y1, halfWidth: hw)
         let path = ScenePaths.polygon(sil)
         path.addPath(ScenePaths.polygon(win))
@@ -710,18 +773,25 @@ final class SceneJug {
         windowFrame.path = ScenePaths.polygon(win)
         windowFrame.isHidden = false
         let glare = CGMutablePath()
-        glare.move(to: CGPoint(x: cx - hw + 5, y: y1 - hw - 4))
-        glare.addLine(to: CGPoint(x: cx - hw + 5, y: y0 + hw + 10))
+        let gx = cx - hw + (scoop ? 3 : 5)
+        glare.move(to: CGPoint(x: gx, y: y1 - hw - 4))
+        glare.addLine(to: CGPoint(x: gx, y: y0 + hw + 10))
         windowGlare.path = glare
+        windowGlare.lineWidth = scoop ? 2 : 3
         windowGlare.isHidden = false
-        if style.form == .scoop {
+        if scoop {
+            // Engraved graduations on the copper, left of the slot (a ruler, not teeth), plus two rivets that pin the
+            // slot's frame top and bottom.
             let tp = CGMutablePath()
-            for k in 1...4 {
-                let y = y0 + (y1 - y0) * CGFloat(k) / 5
-                tp.move(to: CGPoint(x: cx + hw - 1, y: y))
-                tp.addLine(to: CGPoint(x: cx + hw - (k % 2 == 0 ? 13 : 8), y: y))
+            for k in 1...5 {
+                let y = y0 + (y1 - y0) * CGFloat(k) / 6
+                tp.move(to: CGPoint(x: cx - hw - 4, y: y))
+                tp.addLine(to: CGPoint(x: cx - hw - (k == 3 ? 15 : 9), y: y))
             }
+            tp.addEllipse(in: CGRect(x: cx - 2, y: y1 + 3, width: 4, height: 4))
+            tp.addEllipse(in: CGRect(x: cx - 2, y: y0 - 7, width: 4, height: 4))
             ticks.path = tp
+            ticks.strokeColor = SceneColor.hex(0x6A3418, 0.75)
             ticks.isHidden = false
         } else {
             ticks.isHidden = true

@@ -25,3 +25,10 @@
 21-daily-results|mode=daily;screen=results|8
 22-shift-failed|mode=shift:2-4;autopilot=spill;freezeOn=finished|40
 23-venues-full|screen=venues;progress=full|6
+# Round 6 (ROUND-6 decisions 1, 2, 4, 5). 09 and 23 above now also show Flawless crowns (cyan rings, "3/8" counts).
+24-venue-intro|mode=shift:4-1;hints=fresh;freezeOn=intro|8
+25-shift-banner|mode=shift:5-3;freezeOn=intro|8
+26-rush-tier|mode=rush;autopilot=perfect;streak=11;freezeOn=tier|30
+27-flawless-results|mode=shift:1-1;screen=results|8
+28-results-chase|mode=shift:1-3;screen=results;autopilot=great;progress=mid|8
+29-daily-ceremony|mode=daily;screen=results;progress=mid|8

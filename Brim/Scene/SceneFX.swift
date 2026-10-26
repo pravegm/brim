@@ -14,6 +14,10 @@ struct SceneParticle {
     var spin: CGFloat = 0
     var stretch: Bool = false
     var shrink: Bool = true
+    /// Round 6: grows instead (dust puffs billow out as they fade).
+    var grow: Bool = false
+    /// Round 6: peak opacity (dust is translucent).
+    var alphaScale: CGFloat = 1
     var active: Bool = false
 }
 
@@ -66,8 +70,8 @@ final class ParticlePool {
             }
             let k = max(0, min(1, p.life / max(p.maxLife, 0.001)))
             s.position = p.position
-            s.alpha = min(1, k * 3)
-            let scale: CGFloat = p.shrink ? (0.35 + 0.65 * k) : 1
+            s.alpha = min(1, k * 3) * p.alphaScale
+            let scale: CGFloat = p.grow ? (1 + 1.3 * (1 - k)) : (p.shrink ? (0.35 + 0.65 * k) : 1)
             if p.stretch {
                 let speed = hypot(p.velocity.dx, p.velocity.dy)
                 s.zRotation = atan2(p.velocity.dy, p.velocity.dx)
@@ -103,7 +107,7 @@ final class ParticlePool {
         s.position = q.position
         s.zRotation = 0
         s.setScale(1)
-        s.alpha = 1
+        s.alpha = q.alphaScale
         s.isHidden = false
     }
 }
@@ -331,6 +335,41 @@ final class SceneFX {
             p.drag = 1.5
             p.spin = rng.range(-4, 4)
             pool.spawn(p, size: rng.range(12, 18), color: SceneColor.gold, texture: sparkleTexture)
+        }
+    }
+
+    /// Sand Bar (round 6, REVIEW-5 §4): the scoop reached its angle of repose — a tiny puff of dust at the lip,
+    /// billowing out and drifting up as it thins.
+    func dustPuff(at pos: CGPoint, color: UIColor) {
+        let n = reduceMotion ? 3 : 7
+        let dust = SceneColor.lighter(color, 0.25)
+        for i in 0..<n {
+            let a = CGFloat(i) / CGFloat(n) * .pi + rng.range(-0.3, 0.3) + .pi       // a downward-facing fan
+            let speed = rng.range(18, 46)
+            var p = SceneParticle()
+            p.position = CGPoint(x: pos.x + rng.range(-5, 5), y: pos.y + rng.range(-3, 2))
+            p.velocity = CGVector(dx: cos(a) * speed + rng.range(4, 14), dy: sin(a) * speed * 0.5 + rng.range(6, 22))
+            p.life = rng.range(0.45, 0.7)
+            p.gravity = -12
+            p.drag = 2.2
+            p.shrink = false
+            p.grow = true
+            p.alphaScale = rng.range(0.32, 0.5)
+            pool.spawn(p, size: rng.range(9, 15), color: dust, texture: dotTexture)
+        }
+    }
+
+    /// Conveyor (round 6): the service bell rings — a couple of small glints at its knob.
+    func ding(at pos: CGPoint, big: Bool) {
+        let n = reduceMotion ? 1 : (big ? 4 : 2)
+        for _ in 0..<n {
+            var p = SceneParticle()
+            p.position = CGPoint(x: pos.x + rng.range(-8, 8), y: pos.y + rng.range(0, 6))
+            p.velocity = CGVector(dx: rng.range(-30, 30), dy: rng.range(30, 70))
+            p.life = rng.range(0.35, 0.55)
+            p.drag = 2
+            p.spin = rng.range(-5, 5)
+            pool.spawn(p, size: rng.range(9, 14), color: SceneColor.hex(0xFFE7A0), texture: sparkleTexture)
         }
     }
 
