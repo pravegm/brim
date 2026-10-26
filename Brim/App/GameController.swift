@@ -431,6 +431,12 @@ final class GameController: ObservableObject, SceneDriver {
     /// Demo `freezeOn=lowjug` (round 8, frame 33): mid-pour with the jug under this fill.
     static let lowJugFreezeBelow = 0.2
 
+    /// Round 9 (REVIEW-7 P2-1): the jug fill demo `jugFill=` sets on a live run (never the Home attract loop). Pure.
+    static func demoJugFill(_ demo: DemoConfig?, isAttract: Bool) -> Double? {
+        guard let demo, !isAttract, let fill = demo.jugFill, fill.isFinite else { return nil }
+        return min(max(fill, 0), 1)
+    }
+
     /// How long (session seconds) the shift banner stays up, and the tier banner after a change.
     static let shiftBannerSeconds = 1.6
     static let tierBannerSeconds = 1.6
@@ -440,13 +446,18 @@ final class GameController: ObservableObject, SceneDriver {
     /// Applies demo routing once the view is up.
     func launch() {
         if let demo {
-            store.replace(with: DemoConfig.progressData(demo.progress))
+            // Round 9: `crowns=N` and `vessel=` ride on top of the `progress=` preset (DemoMode.swift).
+            store.replace(with: DemoConfig.progressData(demo.progress, crowns: demo.crowns, vessel: demo.vessel))
             if demo.hints == .fresh { store.resetHints() }
             streakSeed = max(demo.streak ?? 0, 0)
             servedSeed = max(demo.served ?? 0, 0)
             switch demo.effectiveScreen {
             case .menu, .icon:
                 startAttract()
+            case .cabinet:
+                // Round 9 (REVIEW-7 P1-2): Home over the attract loop with the Glass Cabinet open (HomeView opens it).
+                startAttract()
+                trace("BRIM-T cabinet open crowns=\(store.data.totalCrowns) vessel=\(store.data.activeVessel?.rawValue ?? "house") sandBar=\(store.isUnlocked(.sandBar) ? 1 : 0)")
             case .standup, .cover:
                 if let mode = demo.mode { start(mode: mode) } else { startAttract() }
             case .venues:
@@ -789,6 +800,15 @@ final class GameController: ObservableObject, SceneDriver {
     func showSettings() { setRoute(.settings) }
     func showHome() {
         if isAttract { setRoute(.home) } else { startAttract() }
+        // Round 9 (QA-4 P2-1): the Home loop never keeps a vessel the progress no longer holds.
+        syncVessel()
+    }
+
+    /// Settings › Reset progress (round 9, QA-4 P2-1): the store forgets, and the scene drops the chosen vessel at once
+    /// (the Home attract loop would otherwise keep pouring from it until the next run).
+    func resetProgress() {
+        store.resetProgress()
+        syncVessel()
     }
 
     /// Big Play button: the next shift to earn stars on.
@@ -1138,6 +1158,13 @@ final class GameController: ObservableObject, SceneDriver {
             servedCount = progress.served
             if let last = progress.recap.last { hud.lastJudgement = last.judgement }
         }
+        // Round 9 (REVIEW-7 P2-1, frame 33): `jugFill=x` sets the jug's fill after any seeding, so the low-jug moment
+        // the frame needs really comes (a `great` pilot with refills never gets under 20 % on its own).
+        if let fill = Self.demoJugFill(demo, isAttract: isAttract) {
+            newSession.debugSetJugFill(fill)
+            // (The snapshot catches up on the next step.)
+            trace(String(format: "BRIM-T jug fill set %.2f", fill))
+        }
         syncLook(newSession.snapshot)
         syncBeltQueue(newSession.snapshot)
         scene?.reset(for: newSession.snapshot)
@@ -1376,7 +1403,9 @@ final class GameController: ObservableObject, SceneDriver {
         if isAttract {
             // REVIEW-3 P1-2: the menu capture (`screen=menu`, with or without `freezeOn=midpour`) holds the attract
             // loop once, mid-pour with the jug really flowing, so the home frame shows a stream, never a tail of drops.
-            guard demo.effectiveScreen == .menu, !attractFrozeOnce, route == .home else { return }
+            // Round 9: the cabinet frame holds the same loop under its sheet.
+            guard demo.effectiveScreen == .menu || demo.effectiveScreen == .cabinet, !attractFrozeOnce,
+                  route == .home else { return }
             guard s.jug.flow > 0.05 else { return }
             target = .midpour
         } else {

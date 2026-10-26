@@ -177,6 +177,12 @@ if [[ " $PASSES " == *" ui "* ]]; then
   launch ui-menu "screen=menu;orient=portrait;duo;freezeOn=midpour"; sleep 6; shoot duo-ui-menu inner
   launch ui-venues "screen=venues;progress=mid;orient=portrait;duo"; shoot duo-ui-venues inner
   launch ui-results "mode=shift:1-1;screen=results;progress=mid;orient=portrait;duo"; shoot duo-ui-results inner
+  # Round 9 (REVIEW-7 P1-2): the Glass Cabinet sheet in the flat half under the crease (fresh: all locked, the secret
+  # vessel a "???" silhouette; mid + 4 crowns: the Soda dispenser in use).
+  launch ui-cabinet-fresh "screen=cabinet;progress=fresh;orient=portrait;duo;freezeOn=midpour"
+  store_wait ui-cabinet-fresh "freezeOn=midpour" 6; shoot duo-ui-cabinet-fresh inner
+  launch ui-cabinet-mid "screen=cabinet;progress=mid;crowns=4;vessel=sodaFountain;orient=portrait;duo;freezeOn=midpour"
+  store_wait ui-cabinet-mid "freezeOn=midpour" 6; shoot duo-ui-cabinet-mid inner
   # Book pose: no orient request, the sim's own landscape inner canvas → the "stand me up" card.
   launch ui-book "mode=shift:1-1;duo"; shoot duo-ui-book inner
   hinge_sweep 40 1.5; hinge_set 0; sleep 3; shoot duo-ui-cover cover

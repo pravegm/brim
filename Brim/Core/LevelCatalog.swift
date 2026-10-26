@@ -30,7 +30,8 @@ enum LevelCatalog {
         }
     }
 
-    /// Total stars needed to open a venue. The Sand Bar needs every campaign shift 3-starred (40 × 3 = 120).
+    /// Total stars needed to open a venue. The Sand Bar (round 8, founder): 105 of the 120 campaign stars, so up to
+    /// fifteen shifts may stay at 2★ (was every shift 3★).
     static func starsToUnlock(_ venue: VenueID) -> Int {
         switch venue {
         case .lemonadeStand: return 0
@@ -38,7 +39,7 @@ enum LevelCatalog {
         case .milkshakeDiner: return 18
         case .conveyor: return 30
         case .potionShop: return 44
-        case .sandBar: return 120
+        case .sandBar: return 105
         }
     }
 
@@ -211,16 +212,20 @@ enum LevelCatalog {
     // climbs ~35 % slower per unit of flow than a tumbler: the novice's friend), 1-3 waits 18 s; 1-4 waits 16 s with
     // its low lines at 0.5 in the widest glasses. 1-8 stays the venue's finale (third flute, 10 s). Model: a fresh
     // novice's first four tries clear 1-1 0.85, 1-2 0.88, 1-3 0.93, 1-4 0.88.
+    //
+    // Round 8 pass 2 (CI full sweep: novice 1-1 and 1-2 at 0.75 over four cold tries, misses mostly overs): 1-1's
+    // later lines 0.75 → 0.65 (the first stays 0.66 for CoreTests' fill-time and "over, not spill" checks), 1-2's
+    // 0.62–0.72 → 0.58–0.65. Model, cold novice over four tries: 1-1 0.82 → ~0.87, 1-2 0.85 → ~0.88.
     private static func lemonadeStand() -> [Level] {
         let v: VenueID = .lemonadeStand
         return [
             lv(v, 1, "Grand Opening", jug: 1.0, band: 0.05, [
-                o("tumbler", .water, 0.66), o("tumbler", .water, 0.75), o("tumbler", .water, 0.75),
-                o("tumbler", .lemonade, 0.75), o("tumbler", .lemonade, 0.75),
+                o("tumbler", .water, 0.66), o("tumbler", .water, 0.65), o("tumbler", .water, 0.65),
+                o("tumbler", .lemonade, 0.65), o("tumbler", .lemonade, 0.65),
             ]),
             lv(v, 2, "Squeeze the Day", jug: 1.0, band: 0.045, [
-                o("tumbler", .lemonade, 0.7), o("pint", .lemonade, 0.62), o("tumbler", .lemonade, 0.68),
-                o("highball", .lemonade, 0.7), o("pint", .lemonade, 0.66), o("tumbler", .lemonade, 0.72),
+                o("tumbler", .lemonade, 0.65), o("pint", .lemonade, 0.58), o("tumbler", .lemonade, 0.62),
+                o("highball", .lemonade, 0.65), o("pint", .lemonade, 0.6), o("tumbler", .lemonade, 0.65),
             ]),
             lv(v, 3, "Fresh Squeezed", jug: 1.0, band: 0.042, [
                 o("jar", .orangeJuice, 0.65, p: 18), o("highball", .orangeJuice, 0.7, p: 18),
@@ -271,6 +276,11 @@ enum LevelCatalog {
     // is the shift CoreTests' "foam judged once the head settles" check picks (the first shift that opens on root
     // beer); that check pauses once the head passes 0.62 and resumes under 0.55, so the glass is an untimed mug of root
     // beer to 0.55, exactly the 2-2 glass it was written against. Model casual: 2-1 2.2★, 2-2 2.2★, 1-8 2.0★.
+    //
+    // Round 8 pass 2 (CI sweep: venue 2 casual 0.69; 2-4 and 2-8 at 0.25): foam in wide glasses (mug, pint, jar) is
+    // what spills, because a player pours a wide glass faster and the head grows with flow. 2-4/2-6/2-8 get lower
+    // lines and +1–2 s, 2-4 loses a glass, and 2-6 and 2-8 lose a root beer each (to drinks/glasses already on the
+    // menu, so the Daily is unchanged). Model (CI-shaped): venue 2 casual ~0.80.
     private static func sodaFountain() -> [Level] {
         let v: VenueID = .sodaFountain
         return [
@@ -288,19 +298,18 @@ enum LevelCatalog {
                 o("tumbler", .creamSoda, 0.8, p: 14), o("highball", .creamSoda, 0.6, p: 14),
             ]),
             lv(v, 4, "Pop Quiz", jug: 0.9, band: 0.03, [
-                o("highball", .cola, 0.7, p: 13), o("mug", .rootBeer, 0.6, p: 13), o("pint", .creamSoda, 0.7, p: 13),
-                o("tumbler", .cola, 0.72, p: 13), o("pint", .rootBeer, 0.58, p: 13),
-                o("highball", .creamSoda, 0.78, p: 13), o("mug", .cola, 0.6, p: 13),
+                o("highball", .cola, 0.62, p: 15), o("mug", .rootBeer, 0.5, p: 15), o("pint", .creamSoda, 0.7, p: 15),
+                o("tumbler", .cola, 0.62, p: 15), o("pint", .rootBeer, 0.5, p: 15), o("mug", .cola, 0.5, p: 15),
             ]),
             lv(v, 5, "Fizzy Lifting", jug: 0.85, band: 0.028, [
                 o("flute", .cola, 0.7, p: 14), o("flute", .creamSoda, 0.75, p: 14), o("flute", .rootBeer, 0.6, p: 14),
                 o("flute", .cola, 0.72, p: 14), o("tumbler", .creamSoda, 0.7, p: 14), o("flute", .rootBeer, 0.6, p: 14),
             ]),
             lv(v, 6, "Soda Jerk", jug: 0.8, band: 0.028, [
-                o("highball", .cola, 0.72, p: 12, pre: 0.3), o("mug", .rootBeer, 0.62, p: 12, pre: 0.25),
-                o("pint", .creamSoda, 0.75, p: 12, pre: 0.35), o("tumbler", .lemonade, 0.7, p: 12, pre: 0.2),
-                o("pint", .cola, 0.7, p: 12), o("mug", .rootBeer, 0.66, p: 12, pre: 0.3),
-                o("highball", .cola, 0.65, p: 12, pre: 0.2),
+                o("highball", .cola, 0.65, p: 14, pre: 0.3), o("mug", .rootBeer, 0.55, p: 14, pre: 0.25),
+                o("pint", .creamSoda, 0.7, p: 14, pre: 0.35), o("tumbler", .lemonade, 0.7, p: 14, pre: 0.2),
+                o("pint", .cola, 0.62, p: 14), o("mug", .cola, 0.55, p: 14, pre: 0.3),
+                o("highball", .cola, 0.62, p: 14, pre: 0.2),
             ]),
             // The slow-pour exam: every glass root beer, lines just under the head's comfort zone, time to pour slowly.
             // Round 8 balance pass (stars = no misses, Sand Bar = all 120): the model expert cleared it every time but
@@ -313,9 +322,9 @@ enum LevelCatalog {
                 o("jar", .rootBeer, 0.5, p: 15), o("highball", .rootBeer, 0.65, p: 15), o("mug", .rootBeer, 0.62, p: 15),
             ]),
             lv(v, 8, "Fizz Finale", jug: 0.8, band: 0.025, [
-                o("flute", .cola, 0.72, p: 11), o("mug", .rootBeer, 0.62, p: 11), o("pint", .creamSoda, 0.78, p: 11),
-                o("highball", .lemonade, 0.6, p: 11), o("tumbler", .cola, 0.78, p: 11), o("jar", .rootBeer, 0.58, p: 11),
-                o("flute", .creamSoda, 0.7, p: 11), o("pint", .cola, 0.75, p: 11),
+                o("flute", .cola, 0.7, p: 12), o("mug", .rootBeer, 0.55, p: 12), o("pint", .creamSoda, 0.72, p: 12),
+                o("highball", .lemonade, 0.62, p: 12), o("tumbler", .cola, 0.68, p: 12),
+                o("highball", .creamSoda, 0.7, p: 12), o("flute", .creamSoda, 0.7, p: 12), o("pint", .cola, 0.65, p: 12),
             ]),
         ]
     }
@@ -346,10 +355,10 @@ enum LevelCatalog {
                 o("bowl", .berrySmoothie, 0.7, p: 14), o("sundae", .milkshake, 0.85, p: 14),
             ]),
             lv(v, 6, "Smooth Operator", jug: 0.8, band: 0.028, [
-                o("highball", .berrySmoothie, 0.7, p: 13), o("bowl", .berrySmoothie, 0.5, p: 13),
-                o("tumbler", .berrySmoothie, 0.75, p: 13), o("highball", .berrySmoothie, 0.85, p: 13),
-                o("bowl", .berrySmoothie, 0.65, p: 13), o("pint", .berrySmoothie, 0.6, p: 13),
-                o("tumbler", .berrySmoothie, 0.6, p: 13),
+                o("highball", .berrySmoothie, 0.7, p: 13), o("bowl", .berrySmoothie, 0.55, p: 13),
+                o("tumbler", .berrySmoothie, 0.75, p: 13), o("highball", .berrySmoothie, 0.8, p: 13),
+                o("bowl", .berrySmoothie, 0.72, p: 13), o("pint", .berrySmoothie, 0.7, p: 13),
+                o("tumbler", .berrySmoothie, 0.68, p: 13),
             ]),
             lv(v, 7, "Sticky Situation", jug: 0.75, band: 0.026, [
                 o("jar", .honey, 0.6, p: 15, pre: 0.25), o("shot", .mapleSyrup, 0.7, p: 15, pre: 0.2),
@@ -384,30 +393,33 @@ enum LevelCatalog {
                 o("tumbler", .cola, 0.5), o("shot", .orangeJuice, 0.6), o("mug", .cola, 0.5),
             ]),
             lv(v, 4, "Fizz on the Move", jug: 1.0, band: 0.03, belt: 22, [
-                o("mug", .cola, 0.45), o("bowl", .creamSoda, 0.5), o("mug", .rootBeer, 0.4),
-                o("tumbler", .cola, 0.5), o("shot", .creamSoda, 0.55), o("bowl", .rootBeer, 0.45),
+                o("mug", .cola, 0.45), o("bowl", .creamSoda, 0.5), o("mug", .rootBeer, 0.38),
+                o("tumbler", .cola, 0.45), o("shot", .creamSoda, 0.4), o("bowl", .rootBeer, 0.42),
             ]),
             // Round 5 balance pass: 4-5 was the hardest belt of the venue for simulated casual players (shorts), harder
             // than 4-6/4-7; belt 26 → 23 and its last tiny cup 0.7 → 0.6. 4-7 30 → 27, 4-8 36 → 33 keep the finale the
             // peak without making it a wall.
-            lv(v, 5, "Assembly Line", jug: 1.0, band: 0.028, belt: 23, [
-                o("bowl", .water, 0.6), o("shot", .lemonade, 0.6), o("mug", .orangeJuice, 0.5),
-                o("tumbler", .water, 0.55), o("sundae", .lemonade, 0.5), o("shot", .orangeJuice, 0.6),
-                o("mug", .water, 0.55),
+    // Round 8 pass 2 (CI sweep: venue 4 casual 0.62, 4-8 expert never 3★): tiny cups on fast belts were short for
+    // casuals and over for experts, so 4-5 trades its two for tumblers and 4-8 drops its one; belts 4-5 21, 4-7 25,
+    // 4-8 28; low mugs up to 0.55–0.6. Model (CI-shaped): venue 4 casual ~0.80, every shift's expert 3★ ≥ 0.38 a try.
+            lv(v, 5, "Assembly Line", jug: 1.0, band: 0.028, belt: 21, [
+                o("bowl", .water, 0.6), o("tumbler", .lemonade, 0.6), o("mug", .orangeJuice, 0.55),
+                o("tumbler", .water, 0.6), o("sundae", .lemonade, 0.55), o("tumbler", .orangeJuice, 0.55),
+                o("mug", .water, 0.6),
             ]),
             lv(v, 6, "Slow Pour, Fast Belt", jug: 1.0, band: 0.028, belt: 20, [
-                o("mug", .milkshake, 0.45), o("bowl", .honey, 0.4), o("sundae", .milkshake, 0.5),
-                o("shot", .mapleSyrup, 0.5), o("mug", .berrySmoothie, 0.45), o("shot", .honey, 0.45),
+                o("mug", .milkshake, 0.5), o("bowl", .honey, 0.5), o("sundae", .milkshake, 0.55),
+                o("mug", .mapleSyrup, 0.5), o("mug", .berrySmoothie, 0.5), o("shot", .honey, 0.4),
             ]),
-            lv(v, 7, "Rush Hour", jug: 1.0, band: 0.026, belt: 27, [
-                o("bowl", .cola, 0.5), o("mug", .lemonade, 0.45), o("shot", .orangeJuice, 0.55),
-                o("sundae", .water, 0.55), o("mug", .rootBeer, 0.4), o("bowl", .lemonade, 0.6),
-                o("shot", .water, 0.65),
+            lv(v, 7, "Rush Hour", jug: 1.0, band: 0.026, belt: 25, [
+                o("bowl", .cola, 0.5), o("mug", .lemonade, 0.55), o("shot", .orangeJuice, 0.45),
+                o("sundae", .water, 0.55), o("mug", .rootBeer, 0.38), o("bowl", .lemonade, 0.6),
+                o("shot", .water, 0.45),
             ]),
-            lv(v, 8, "Full Speed Ahead", jug: 1.0, band: 0.025, belt: 33, [
-                o("bowl", .water, 0.55), o("sundae", .lemonade, 0.55), o("mug", .orangeJuice, 0.45),
-                o("bowl", .cola, 0.5), o("shot", .water, 0.5), o("mug", .lemonade, 0.5),
-                o("bowl", .creamSoda, 0.45), o("sundae", .orangeJuice, 0.6),
+            lv(v, 8, "Full Speed Ahead", jug: 1.0, band: 0.025, belt: 28, [
+                o("bowl", .water, 0.6), o("sundae", .lemonade, 0.6), o("mug", .orangeJuice, 0.6),
+                o("bowl", .cola, 0.5), o("mug", .lemonade, 0.6), o("bowl", .creamSoda, 0.45),
+                o("sundae", .orangeJuice, 0.6),
             ]),
         ]
     }
@@ -417,8 +429,8 @@ enum LevelCatalog {
         let v: VenueID = .potionShop
         return [
             lv(v, 1, "Apprentice Hours", jug: 1.0, band: 0.025, [
-                o("beaker", .potionBlue, 0.5), o("beaker", .potionBlue, 0.6), o("vial", .potionBlue, 0.7),
-                o("beaker", .potionBlue, 0.45), o("vial", .potionBlue, 0.6),
+                o("beaker", .potionBlue, 0.55), o("beaker", .potionBlue, 0.65), o("vial", .potionBlue, 0.75),
+                o("beaker", .potionBlue, 0.55), o("vial", .potionBlue, 0.7),
             ]),
             lv(v, 2, "Love Potion No. 9", jug: 1.0, band: 0.024, [
                 o("vial", .potionPink, 0.65), o("beaker", .potionPink, 0.55), o("vial", .potionPink, 0.8),
@@ -434,9 +446,9 @@ enum LevelCatalog {
                 o("shot", .potionPink, 0.55, p: 13), o("beaker", .potionBlue, 0.8, p: 13), o("vial", .potionPink, 0.45, p: 13),
             ]),
             lv(v, 5, "Small Doses", jug: 0.8, band: 0.022, [
-                o("vial", .potionBlue, 0.35, p: 13), o("shot", .potionPink, 0.4, p: 13), o("beaker", .potionBlue, 0.32, p: 13),
-                o("vial", .potionPink, 0.4, p: 13), o("shot", .potionBlue, 0.35, p: 13), o("beaker", .potionPink, 0.38, p: 13),
-                o("vial", .potionBlue, 0.45, p: 13),
+                o("vial", .potionBlue, 0.42, p: 13), o("shot", .potionPink, 0.42, p: 13), o("beaker", .potionBlue, 0.42, p: 13),
+                o("vial", .potionPink, 0.42, p: 13), o("shot", .potionBlue, 0.42, p: 13), o("beaker", .potionPink, 0.4, p: 13),
+                o("vial", .potionBlue, 0.5, p: 13),
             ]),
             lv(v, 6, "Vanishing Act", jug: 0.8, band: 0.02, [
                 o("flute", .potionPink, 0.75, p: 13, fade: 1.0), o("beaker", .potionBlue, 0.55, p: 13, fade: 1.0),

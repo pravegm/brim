@@ -50,6 +50,17 @@ struct VenuesView: View {
         return "\(min(max(crowns, 0), shifts))/\(shifts)"
     }
 
+    /// A locked venue's subtitle: "★ 18 to unlock · 7 to go". Round 9 (founder decision): the secret Sand Bar counts
+    /// the five main venues' stars against `LevelCatalog.starsToUnlock(.sandBar)` and keeps its name hidden:
+    /// "Collect ★ 105 to find it · 12 to go" (no more "three-star every shift"). Pure; tested.
+    static func lockLine(venue: VenueID, totalStars: Int, campaignStars: Int) -> String {
+        let need = LevelCatalog.starsToUnlock(venue)
+        if venue == .sandBar {
+            return "Collect ★ \(need) to find it · \(max(need - campaignStars, 0)) to go"
+        }
+        return "★ \(need) to unlock · \(max(need - totalStars, 0)) to go"
+    }
+
     /// Round 8 (REVIEW-6 N2): the venue's best Perfects against its glasses, "41/52" beside the crowns. nil until a
     /// Perfect is on file. Pure; tested.
     static func perfectLine(best: Int, glasses: Int) -> String? {
@@ -245,10 +256,7 @@ private struct VenueCard: View {
 
     private var subtitle: String {
         if unlocked { return teaches }
-        if venue == .sandBar { return "Three-star every shift to find it" }
-        let need = LevelCatalog.starsToUnlock(venue)
-        let missing = max(need - store.totalStars, 0)
-        return "★ \(need) to unlock · \(missing) to go"
+        return VenuesView.lockLine(venue: venue, totalStars: store.totalStars, campaignStars: store.data.campaignStars)
     }
 
     private var teaches: String {

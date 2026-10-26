@@ -38,7 +38,7 @@ f) Closed: the outer display shows a calm status card (today's Daily Pour, best 
 
 4. MODES AND UNLOCKS (nothing hidden, nothing to buy)
 - Shifts: five venues (Lemonade Stand, Soda Fountain, Milkshake Diner, The Conveyor, Potion Shop). Stars earned in one venue open the next.
-- A sixth, secret venue (Sand Bar) opens after earning 3 stars on every shift. There is no code, shortcut or purchase for it.
+- A sixth, secret venue (Sand Bar) opens after earning 105 of the 120 stars in the five main venues. There is no code, shortcut or purchase for it.
 - Rush: endless; ends after 3 spills or when the jug runs dry. Leaving a Rush run from the pause menu keeps its score.
 - Daily Pour: 10 glasses, the same for everyone that day, one scored attempt (once the first glass is in place, leaving part-way keeps the score so far); practice afterwards is unscored. The result can be shared as text through the system share sheet.
 
@@ -78,7 +78,7 @@ Round 4 (App engineer) checked each line against the code; "Source today" names 
 | Cover card: Rush best, Daily Pour #N, "Open me to pour" | `UI/PoseCards.swift` (`CoverView`) | [x] |
 | Never uses `status == .closed` in play | `Input/HingeReader.swift` (angle only) | [x] grep |
 | Rush ends after 3 spills or a dry jug | `Core/GameSession.swift` | [x] |
-| Unlock rule for Sand Bar = 3 stars on every shift | `Persistence/ProgressStore.swift` (`hasAllStars`) | [x] |
+| Unlock rule for Sand Bar = 105 stars in the five main venues (round 9; `LevelCatalog.starsToUnlock(.sandBar)`) | `Persistence/ProgressStore.swift` (`isUnlocked`, `campaignStars`) | [x] |
 | Daily: one scored attempt (marked at start; leaving files the score so far), then unscored practice | `Persistence/ProgressStore.swift` (`dailyStarted`), `App/GameController.swift` | [x] |
 | Setting name "Respect silent mode", default off | `UI/SettingsView.swift`, `Feedback/FeedbackDirector.swift` | [x] exact label |
 | No notifications, no rating prompt | no `UNUserNotificationCenter` / `requestReview` in `Brim/` | [x] if a rating prompt is added, add a line: "A one-time rating prompt may appear after a finished run, never mid-pour." |
@@ -92,7 +92,7 @@ Reply in the Resolution Center, calmly and specifically:
 
 ## If rejected under 2.3.1 (hidden features)
 
-Point to §4: the secret venue is reachable through normal play (3 stars on every shift), is described in the store copy as a tease ("three-star everything to find out what's behind the counter"), and has no code, shortcut or purchase.
+Point to §4: the secret venue is reachable through normal play (105 of the 120 stars in the five main venues), is described in the store copy as a tease ("collect enough to find out what's behind the counter"), and has no code, shortcut or purchase.
 
 ## If rejected under 2.1 (couldn't use the hinge)
 

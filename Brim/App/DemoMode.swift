@@ -7,7 +7,7 @@ import UIKit
 // Unknown keys are ignored. Every line CI greps starts with `BRIM-` (CLAUDE.md: never rename them).
 //
 // Keys
-// - `screen=menu|venues|results|settings|game|standup|cover|icon|badges`
+// - `screen=menu|venues|results|settings|game|standup|cover|icon|badges|cabinet`
 //     menu      home screen over the attract loop (practice + perfect autopilot behind it). Round 4 (REVIEW-3 P1-2):
 //               the attract loop is held ONCE, mid-pour, the first time the jug is really flowing (flow > 0.05) and
 //               the glass is ≥ 55 % of its line — so the menu capture shows a real stream, never the drops of a tail.
@@ -26,6 +26,10 @@ import UIKit
 //     badges    render every Game Center achievement badge (UI/AchievementArt.swift, GameCenterManager.achievementIDs)
 //               with ImageRenderer, 1024 × 1024 px opaque, to Documents/badges/<id>.png (logs `BRIM-T badges done <n>`).
 //               Not a Screen case (only sets `badges`), so the app itself opens on the menu.
+//     cabinet   round 9 (REVIEW-7 P1-2, frames 34/35 and duo-ui-cabinet): Home over the attract loop with the Glass
+//               Cabinet sheet open (HomeView opens it on appear). Like `menu`, the loop is held once mid-pour (add
+//               `freezeOn=midpour` to make CI wait for it). Logs `BRIM-T cabinet open crowns=<n> vessel=<v|house>
+//               sandBar=<0|1>`.
 // - `mode=shift:<id>|rush|daily|practice`   e.g. `mode=shift:1-2`. `daily` = today's Daily Pour.
 // - `autopilot=perfect|great|short|spill`   AutopilotTiltSource plays the run.
 // - `freezeOn=midpour|perfect|spill|finished|intro|tier|repose|faded|lowjug`
@@ -69,6 +73,16 @@ import UIKit
 // - `duo`        treat the canvas as a Duo (crease band) from the first frame and use the real hinge tilt source
 //                (HingeTiltSource) even in demo. Without `autopilot`/`duo` a demo game uses TouchTiltSource.
 // - `seed=N`     GameSession seed (default: day number for daily, 7 otherwise, so CI frames are stable).
+// - Round 9:
+//   `crowns=N`   on top of `progress=`: Flawless crowns on the first campaign shifts in play order (never the Sand Bar)
+//                until the save holds at least N; each crowned shift is a 3★ all-Perfect clear (stars, best, best
+//                Perfects follow). Never removes a crown. Frame 35: `progress=mid;crowns=4` opens the Soda dispenser.
+//   `vessel=sodaFountain|milkshakeDiner|potionShop|sandBar|house`   the Glass Cabinet pick (Rush, Practice, the Home
+//                loop), applied after `crowns`; only if the save really holds it (crowns, and the Sand Bar found for
+//                the scoop), else the house jug. Frame 36: `mode=rush;crowns=3;vessel=sodaFountain`.
+//   `jugFill=x`  (0…1) the live run's jug fill, set after any `streak`/`served` seeding (REVIEW-7 P2-1, frame 33:
+//                `freezeOn=lowjug` needs the jug under 20 % mid-pour, which a `great` pilot with refills never reaches).
+//                Logs `BRIM-T jug fill set <x>`.
 //
 // Log lines
 // - `BRIM-T demo '<args>' starts` at launch (stdout is line-buffered in demo runs).
@@ -105,7 +119,7 @@ import UIKit
 enum DemoAutopilot: String, Equatable { case perfect, great, short, over, spill }
 
 struct DemoConfig: Equatable {
-    enum Screen: String, Equatable { case menu, venues, results, settings, game, standup, cover, icon }
+    enum Screen: String, Equatable { case menu, venues, results, settings, game, standup, cover, icon, cabinet }
     enum Freeze: String, Equatable { case midpour, perfect, spill, finished, intro, tier, repose, faded, lowjug }
     enum ProgressPreset: String, Equatable { case fresh, mid, full }
     enum HintsPreset: String, Equatable { case fresh, off }
@@ -125,6 +139,10 @@ struct DemoConfig: Equatable {
     var duo = false
     var seed: UInt64?
     var badges = false
+    /// Round 9: `crowns=N`, `vessel=<venue>|house`, `jugFill=x`.
+    var crowns: Int?
+    var vessel: VenueID?
+    var jugFill: Double?
 
     /// The screen the app opens on.
     var effectiveScreen: Screen {
@@ -154,6 +172,10 @@ struct DemoConfig: Equatable {
             case "orient": config.orientPortrait = value == "portrait"
             case "duo": config.duo = value.isEmpty || value == "on" || value == "1" || value == "true"
             case "seed": config.seed = UInt64(value)
+            case "crowns": config.crowns = Int(value).map { max($0, 0) }
+            case "vessel": config.vessel = VenueID(rawValue: value)
+            case "jugFill":
+                if let f = Double(value), f.isFinite { config.jugFill = min(max(f, 0), 1) }
             default: break
             }
         }
@@ -193,8 +215,30 @@ struct DemoConfig: Equatable {
 
     // MARK: Seeded state
 
-    /// In-memory progress for `progress=`.
-    static func progressData(_ preset: ProgressPreset?) -> ProgressData {
+    /// In-memory progress for `progress=`, then (round 9) the `crowns=N` and `vessel=` overrides on top.
+    static func progressData(_ preset: ProgressPreset?, crowns: Int? = nil, vessel: VenueID? = nil) -> ProgressData {
+        var data = presetData(preset)
+        if let crowns { addCrowns(to: &data, upTo: crowns) }
+        // Only a vessel the save really holds (crowns, and the Sand Bar found for the scoop): never a fake pick.
+        if let vessel, data.isVesselUnlocked(vessel) { data.vessel = vessel }
+        return data
+    }
+
+    /// Round 9 (`crowns=N`): Flawless crowns on the first campaign shifts (play order, never the Sand Bar) until the
+    /// save holds at least N. A crowned shift is a real 3★ all-Perfect clear, so its stars, best and best Perfects
+    /// follow. Never removes a crown. Pure; tested.
+    static func addCrowns(to data: inout ProgressData, upTo target: Int) {
+        for level in LevelCatalog.levels where level.venue != .sandBar {
+            if data.totalCrowns >= target { return }
+            guard !data.crowns.contains(level.id) else { continue }
+            data.crowns.insert(level.id)
+            data.stars[level.id] = 3
+            data.bestScores[level.id] = max(data.bestScores[level.id] ?? 0, 1600)
+            data.bestPerfects[level.id] = level.orders.count
+        }
+    }
+
+    private static func presetData(_ preset: ProgressPreset?) -> ProgressData {
         var data = ProgressData()
         switch preset ?? .fresh {
         case .fresh:

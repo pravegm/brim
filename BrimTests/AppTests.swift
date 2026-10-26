@@ -379,6 +379,8 @@ struct ResultsCopyTests {
     @Test func flawlessOnlyWhenEveryGlassIsPerfect() {
         #expect(ResultsView.headline(for: run([.perfect, .perfect, .perfect], stars: 3), dailyOnFile: false) == "Flawless shift!")
         #expect(ResultsView.headline(for: run([.perfect, .good, .perfect], stars: 3), dailyOnFile: false) == "Great shift!")
+        // Round 9 (REVIEW-7 P2-3): under half Perfect, a 3★ card is "Clean shift!".
+        #expect(ResultsView.headline(for: run([.good, .good, .perfect], stars: 3), dailyOnFile: false) == "Clean shift!")
         #expect(ResultsView.headline(for: run([.good, .short], stars: 1), dailyOnFile: false) == "Shift cleared")
         // REVIEW-2 P2-6: a failed shift never says "So close"; three spills say what ended it.
         #expect(ResultsView.headline(for: run([.spill, .spill], stars: 0), dailyOnFile: false) == "Not quite")
@@ -834,14 +836,15 @@ struct Round5AppTests {
         if let last = soda.last { data.stars[last.id] = 1 }
         #expect(data.earnedAchievements.contains("brim.venue.soda"))
         #expect(!data.earnedAchievements.contains("brim.venue.diner"))
-        // The Sand Bar: one cleared shift isn't "every Sand Bar shift cleared".
+        // Round 9 (founder decision): "Grain by Grain" (brim.sandbar) fires when the Sand Bar is found, at its star
+        // gate; Sand Bar stars never count toward that gate.
         let sand = LevelCatalog.levels(in: .sandBar)
-        if let first = sand.first {
-            data.stars[first.id] = 1
-            #expect(data.earnedAchievements.contains("brim.sandbar") == (sand.count == 1))
-            for level in sand { data.stars[level.id] = 1 }
-            #expect(data.earnedAchievements.contains("brim.sandbar"))
-        }
+        for level in sand { data.stars[level.id] = 3 }
+        #expect(!data.isUnlocked(.sandBar))
+        #expect(!data.earnedAchievements.contains("brim.sandbar"))
+        for level in LevelCatalog.levels where level.venue != .sandBar { data.stars[level.id] = 3 }
+        #expect(data.isUnlocked(.sandBar))
+        #expect(data.earnedAchievements.contains("brim.sandbar"))
         // The ids never change (they are live in App Store Connect).
         for id in ["brim.venue.soda", "brim.venue.diner", "brim.venue.conveyor", "brim.venue.potions", "brim.sandbar"] {
             #expect(GameCenterManager.achievementIDs.contains(id))
@@ -1625,19 +1628,19 @@ struct Round8AppTests {
         #expect(GlassCabinet.crownsNeeded(.potionShop) == 10)
         #expect(GlassCabinet.crownsNeeded(.sandBar) == 14)
         #expect(GlassCabinet.crownsNeeded(.conveyor) == nil)
-        #expect(GlassCabinet.isUnlocked(nil, crowns: 0))
-        #expect(!GlassCabinet.isUnlocked(.sodaFountain, crowns: 2))
-        #expect(GlassCabinet.isUnlocked(.sodaFountain, crowns: 3))
-        #expect(!GlassCabinet.isUnlocked(.conveyor, crowns: 99))
-        #expect(GlassCabinet.nextUnlock(crowns: 4)?.vessel.venue == VenueID.milkshakeDiner)
-        #expect(GlassCabinet.nextUnlock(crowns: 4)?.missing == 2)
-        #expect(GlassCabinet.nextUnlock(crowns: 14) == nil)
-        #expect(GlassCabinet.nextLine(crowns: 0) == "3 more 👑 for the Soda dispenser")
-        #expect(GlassCabinet.nextLine(crowns: 20) == nil)
+        #expect(GlassCabinet.isUnlocked(nil, crowns: 0, sandBarFound: false))
+        #expect(!GlassCabinet.isUnlocked(.sodaFountain, crowns: 2, sandBarFound: false))
+        #expect(GlassCabinet.isUnlocked(.sodaFountain, crowns: 3, sandBarFound: false))
+        #expect(!GlassCabinet.isUnlocked(.conveyor, crowns: 99, sandBarFound: true))
+        #expect(GlassCabinet.nextUnlock(crowns: 4, sandBarFound: false)?.vessel.venue == VenueID.milkshakeDiner)
+        #expect(GlassCabinet.nextUnlock(crowns: 4, sandBarFound: false)?.missing == 2)
+        #expect(GlassCabinet.nextUnlock(crowns: 14, sandBarFound: true) == nil)
+        #expect(GlassCabinet.nextLine(crowns: 0, sandBarFound: false) == "3 more 👑 for the Soda dispenser")
+        #expect(GlassCabinet.nextLine(crowns: 20, sandBarFound: true) == nil)
         let soda = GlassCabinet.vessels[1]
-        #expect(CabinetSheet.caption(for: soda, crowns: 1, chosen: nil) == "3 👑")
-        #expect(CabinetSheet.caption(for: soda, crowns: 3, chosen: nil) == "Tap to use")
-        #expect(CabinetSheet.caption(for: soda, crowns: 3, chosen: .sodaFountain) == "In use")
+        #expect(CabinetSheet.caption(for: soda, crowns: 1, chosen: nil, sandBarFound: false) == "3 👑")
+        #expect(CabinetSheet.caption(for: soda, crowns: 3, chosen: nil, sandBarFound: false) == "Tap to use")
+        #expect(CabinetSheet.caption(for: soda, crowns: 3, chosen: .sodaFountain, sandBarFound: false) == "In use")
         // The pick falls back to the house jug while the crowns don't hold it; unknown level ids don't count.
         var data = ProgressData()
         data.vessel = .potionShop
@@ -1842,5 +1845,224 @@ struct Round8AppTests {
         #expect(GameController.rushBeltQueue(next: [a, b], nextIndex: 2 * every - 1, slotGlassWaiting: false).isEmpty)
         #expect(GameController.rushBeltQueue(next: [a, b], nextIndex: 2 * every, slotGlassWaiting: true).isEmpty)
         #expect(GameController.rushBeltQueue(next: [GlassOrder](), nextIndex: 2 * every, slotGlassWaiting: false).isEmpty)
+    }
+}
+
+// MARK: - Round 9: REVIEW-7 P1-2/P1-3/P2-1/P2-3/P2-6, QA-4 P2-1/P2-4/P2-6, the star-gated Sand Bar (ROUND-9 App row)
+
+@MainActor
+struct Round9AppTests {
+    private func makeController(_ args: String, canvas: CGSize = CGSize(width: 669, height: 951), fold: Bool = true,
+                                store: ProgressStore? = nil) -> GameController {
+        let c = GameController(store: store ?? ProgressStore(inMemory: ProgressData()),
+                               settings: SettingsStore(defaults: nil),
+                               demo: DemoConfig.parse(args, today: 33))
+        c.updateCanvas(canvas, hasFold: fold)
+        return c
+    }
+
+    private func shift(_ id: String, _ judgements: [Judgement], stars: Int, cleared: Bool = true) -> RunResult {
+        RunResult(mode: .shift(id), score: 1000, stars: stars,
+                  perfects: judgements.filter { $0 == .perfect }.count, bestStreak: 0,
+                  judgements: judgements, poured: 0, cleared: cleared)
+    }
+
+    /// Stars on the five main venues' shifts, in play order (3 each, the remainder on the next), totalling `target`.
+    private func campaign(_ target: Int) -> ProgressData {
+        var data = ProgressData()
+        var left = max(target, 0)
+        for level in LevelCatalog.levels where level.venue != .sandBar && left > 0 {
+            let s = min(3, left)
+            data.stars[level.id] = s
+            left -= s
+        }
+        return data
+    }
+
+    // Founder decision: the Sand Bar opens at `starsToUnlock(.sandBar)` main-venue stars, not "3★ on every shift".
+    @Test func theSandBarOpensAtItsStarGate() throws {
+        let need = LevelCatalog.starsToUnlock(.sandBar)
+        let mainShifts = LevelCatalog.levels.filter { $0.venue != .sandBar }.count
+        try #require(need > 12 && need <= mainShifts * 3)
+        var below = campaign(need - 1)
+        below.stars["9-99"] = 3                                                         // unknown ids never count
+        for level in LevelCatalog.levels(in: .sandBar) { below.stars[level.id] = 3 }   // nor do Sand Bar stars
+        #expect(below.campaignStars == need - 1)
+        #expect(!below.isUnlocked(.sandBar))
+        #expect(!below.earnedAchievements.contains("brim.sandbar"))
+        let at = campaign(need)
+        #expect(at.isUnlocked(.sandBar))
+        #expect(at.earnedAchievements.contains("brim.sandbar"))
+        if need < mainShifts * 3 {
+            // All Stars stays "3★ on every shift": the gate opens before it.
+            #expect(!at.hasAllStars)
+            #expect(!at.earnedAchievements.contains("brim.allstars"))
+        }
+        // Crossing the gate in a real run announces it on the results card ("Unlocked: Sand Bar!").
+        var data = campaign(need - 1)
+        let before = data
+        let open = LevelCatalog.levels.first(where: { $0.venue != .sandBar && before.stars(for: $0.id) < 3 })
+        let level = try #require(open)
+        let outcome = data.record(shift(level.id, Array(repeating: .good, count: level.orders.count), stars: 3),
+                                  today: 1)
+        #expect(outcome.newlyUnlocked.contains(VenueID.sandBar))
+        // The Venues lock line counts toward the gate and never says "three-star every shift".
+        let line = VenuesView.lockLine(venue: .sandBar, totalStars: 200, campaignStars: need - 12)
+        #expect(line == "Collect ★ \(need) to find it · 12 to go")
+        #expect(!line.contains("Sand"))
+        let soda = LevelCatalog.starsToUnlock(.sodaFountain)
+        #expect(VenuesView.lockLine(venue: .sodaFountain, totalStars: 3, campaignStars: 3)
+                == "★ \(soda) to unlock · \(max(soda - 3, 0)) to go")
+    }
+
+    // REVIEW-7 P1-3: the cabinet keeps the secret until the Sand Bar is found.
+    @Test func theCabinetKeepsTheSecretVenue() throws {
+        let secretVessel = GlassCabinet.vessels.first(where: { $0.venue == VenueID.sandBar })
+        let scoop = try #require(secretVessel)
+        var data = ProgressData()
+        for level in LevelCatalog.levels.filter({ $0.venue != .sandBar }).prefix(14) { data.crowns.insert(level.id) }
+        try #require(data.totalCrowns == 14)
+        #expect(!data.isUnlocked(.sandBar))
+        #expect(!data.isVesselUnlocked(.sandBar))
+        #expect(data.isVesselUnlocked(.potionShop))
+        data.vessel = .sandBar
+        #expect(data.activeVessel == nil)
+        #expect(GlassCabinet.isSecret(scoop, sandBarFound: false))
+        #expect(CabinetSheet.name(for: scoop, sandBarFound: false) == "???")
+        #expect(CabinetSheet.caption(for: scoop, crowns: 14, chosen: nil, sandBarFound: false) == "Find the secret venue")
+        let hidden = CabinetSheet.accessibilityText(for: scoop, crowns: 14, chosen: nil, sandBarFound: false)
+        #expect(!hidden.contains("Copper") && !hidden.contains("Sand") && !hidden.contains("scoop"))
+        // "Next" never names it: after the flask there is nothing to announce.
+        #expect(GlassCabinet.nextLine(crowns: 7, sandBarFound: false) == "3 more 👑 for the Potion flask")
+        #expect(GlassCabinet.nextLine(crowns: 11, sandBarFound: false) == nil)
+        #expect(GlassCabinet.nextLine(crowns: 11, sandBarFound: true) == "3 more 👑 for the Copper scoop")
+        data.vessel = nil
+        let store = ProgressStore(inMemory: data)
+        store.setVessel(.sandBar)
+        #expect(store.data.vessel == nil)
+        // Found: the scoop is an ordinary vessel.
+        for level in LevelCatalog.levels where level.venue != .sandBar { data.stars[level.id] = 3 }
+        #expect(data.isVesselUnlocked(.sandBar))
+        #expect(CabinetSheet.name(for: scoop, sandBarFound: true) == "Copper scoop")
+        #expect(CabinetSheet.caption(for: scoop, crowns: 14, chosen: nil, sandBarFound: true) == "Tap to use")
+        let found = ProgressStore(inMemory: data)
+        found.setVessel(.sandBar)
+        #expect(found.data.activeVessel == VenueID.sandBar)
+    }
+
+    // REVIEW-7 P2-3 / QA-4 P2-4: the words follow the quality of a 3★ shift, and the glyph follows the goal.
+    @Test func starWordingFollowsQuality() throws {
+        let level = try #require(LevelCatalog.level("1-3"))
+        let total = level.orders.count
+        try #require(total >= 4)
+        let allGood = shift(level.id, Array(repeating: .good, count: total), stars: 3)
+        #expect(ResultsView.headline(for: allGood, dailyOnFile: false) == "Clean shift!")
+        var half = Array(repeating: Judgement.great, count: total)
+        for i in 0..<((total + 1) / 2) { half[i] = .perfect }
+        #expect(ResultsView.headline(for: shift(level.id, half, stars: 3), dailyOnFile: false) == "Great shift!")
+        var under = Array(repeating: Judgement.great, count: total)
+        under[0] = .perfect
+        #expect(ResultsView.headline(for: shift(level.id, under, stars: 3), dailyOnFile: false) == "Clean shift!")
+        let flawless = shift(level.id, Array(repeating: .perfect, count: total), stars: 3)
+        #expect(ResultsView.headline(for: flawless, dailyOnFile: false) == "Flawless shift!")
+        // The glyph: a crown only beside the crown chase; a star beside a stars goal.
+        #expect(ResultsView.chaseSymbol(for: allGood, hasCrown: false) == "crown.fill")
+        var oneMiss = Array(repeating: Judgement.great, count: total)
+        oneMiss[1] = .over
+        let twoStar = shift(level.id, oneMiss, stars: 2)
+        #expect(ResultsView.chaseSymbol(for: twoStar, hasCrown: false) == "star.fill")
+        #expect(ResultsView.chaseLine(for: twoStar, hasCrown: false) == "3★ needs every glass a hit. You had 1 miss.")
+        #expect(ResultsView.chaseSymbol(for: flawless, hasCrown: true) == nil)
+        let failed = shift(level.id, [.spill, .spill, .spill], stars: 0, cleared: false)
+        #expect(ResultsView.chaseSymbol(for: failed, hasCrown: false) == nil)
+    }
+
+    // REVIEW-7 P1-2 / P2-1: the evidence keys.
+    @Test func demoParsesTheRound9Keys() {
+        let c = DemoConfig.parse("screen=cabinet;progress=mid;crowns=4;vessel=sodaFountain;jugFill=0.22", today: 1)
+        #expect(c.screen == DemoConfig.Screen.cabinet)
+        #expect(c.effectiveScreen == DemoConfig.Screen.cabinet)
+        #expect(c.crowns == Int(4))
+        #expect(c.vessel == VenueID.sodaFountain)
+        #expect(c.jugFill == Double(0.22))
+        let bad = DemoConfig.parse("crowns=x;vessel=teapot;jugFill=nan", today: 1)
+        #expect(bad.crowns == nil)
+        #expect(bad.vessel == nil)
+        #expect(bad.jugFill == nil)
+        #expect(DemoConfig.parse("jugFill=2", today: 1).jugFill == Double(1))
+        #expect(HomeView.opensCabinet(demoScreen: .cabinet))
+        #expect(!HomeView.opensCabinet(demoScreen: .menu))
+        #expect(!HomeView.opensCabinet(demoScreen: nil))
+        #expect(GameController.demoJugFill(c, isAttract: false) == Double(0.22))
+        #expect(GameController.demoJugFill(c, isAttract: true) == nil)
+        #expect(GameController.demoJugFill(nil, isAttract: false) == nil)
+    }
+
+    @Test func demoCrownsAndVesselAreHonest() {
+        let mid = DemoConfig.progressData(.mid, crowns: 4, vessel: .sodaFountain)
+        #expect(mid.totalCrowns == 4)
+        #expect(mid.activeVessel == VenueID.sodaFountain)
+        #expect(mid.crowns.allSatisfy { mid.stars(for: $0) == 3 })
+        let sandCrowns = mid.crowns.filter { LevelCatalog.level($0)?.venue == VenueID.sandBar }
+        #expect(sandCrowns.isEmpty)
+        // A vessel the save doesn't hold is never set.
+        #expect(DemoConfig.progressData(.fresh, crowns: nil, vessel: .sodaFountain).vessel == nil)
+        #expect(DemoConfig.progressData(.fresh, crowns: 3, vessel: .sodaFountain).activeVessel == VenueID.sodaFountain)
+        #expect(DemoConfig.progressData(.fresh, crowns: 14, vessel: .sandBar).vessel == nil)
+        // Never removes a crown; the plain preset is unchanged.
+        #expect(DemoConfig.progressData(.full, crowns: 1, vessel: nil) == DemoConfig.progressData(.full))
+        #expect(DemoConfig.progressData(.mid) == DemoConfig.progressData(.mid, crowns: nil, vessel: nil))
+    }
+
+    // Frame 33: the jug really gets low.
+    @Test func theJugFillKeySetsTheLiveJug() {
+        let session = GameSession(mode: .rush, layout: DemoRunner.headlessLayout, seed: 7)
+        _ = DemoRunner.playUpToServed(session, served: 2, style: .perfect)
+        session.debugSetJugFill(0.22)
+        session.step(dt: 1.0 / 60, tilt: 0)
+        #expect(abs(session.snapshot.jug.fill - 0.22) < 0.02)
+        #expect(0.22 > GameController.lowJugFreezeBelow)
+    }
+
+    // QA-4 P2-1: Reset progress drops the chosen vessel from the Home loop at once.
+    @Test func resetProgressDropsTheVesselAtOnce() {
+        let store = ProgressStore(inMemory: DemoConfig.progressData(.fresh, crowns: 3, vessel: .sodaFountain))
+        let c = makeController("mode=practice", store: store)
+        c.start(mode: .practice)
+        #expect(c.scene?.vesselOverride == VenueID.sodaFountain)
+        c.resetProgress()
+        #expect(store.data.vessel == nil)
+        #expect(c.scene?.vesselOverride == nil)
+        // And Home re-syncs whatever changed the store.
+        store.replace(with: DemoConfig.progressData(.fresh, crowns: 3, vessel: .sodaFountain))
+        c.start(mode: .practice)
+        store.resetProgress()
+        c.showHome()
+        #expect(c.scene?.vesselOverride == nil)
+    }
+
+    // QA-4 P2-6: a struck-out Daily shows its unserved glasses, like a shift.
+    @Test func aStruckOutDailyGetsGhostGlasses() throws {
+        let orders = LevelCatalog.dailyOrders(day: 33)
+        try #require(orders.count > 4)
+        let failed = RunResult(mode: .daily(33), score: 120, stars: 0, perfects: 0, bestStreak: 0,
+                               judgements: [.good, .spill, .spill, .spill], poured: 0, cleared: false)
+        let ghosts = ResultsView.ghostRecap(for: failed)
+        #expect(ghosts.count == orders.count - 4)
+        #expect(ghosts.allSatisfy { $0.ghost })
+        #expect(ghosts.first?.line == orders[4].line)
+        let done = RunResult(mode: .daily(33), score: 900, stars: 0, perfects: 0, bestStreak: 0,
+                             judgements: Array(repeating: .good, count: orders.count), poured: 0, cleared: true)
+        #expect(ResultsView.ghostRecap(for: done).isEmpty)
+    }
+
+    // REVIEW-7 P2-6: the preview puts the squares on their own line; Share posts exactly the two parts.
+    @Test func thePreviewKeepsTheSquaresTogether() {
+        let ten: [Judgement] = [.perfect, .great, .great, .good, .spill, .perfect, .great, .perfect, .good, .great]
+        let parts = ShareText.dailyParts(day: 12, judgements: ten, score: 1840, streak: 4)
+        #expect(parts.title == "Brim Daily #12")
+        #expect(parts.grid == "⭐️🟩🟩🟨🟥⭐️🟩⭐️🟨🟩 1,840 🔥4")
+        #expect(ShareText.daily(day: 12, judgements: ten, score: 1840, streak: 4) == "\(parts.title) \(parts.grid)")
+        #expect(!ShareText.dailyParts(day: 3, judgements: [.short], score: 0).grid.contains("🔥"))
     }
 }

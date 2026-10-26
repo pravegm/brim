@@ -30,14 +30,20 @@ struct ResultsView: View {
 
     /// The line the Share button sends: the day's scored attempt (this run, or the one already on file).
     private var shareText: String? {
+        guard let parts = shareParts else { return nil }
+        return "\(parts.title) \(parts.grid)"
+    }
+
+    /// The share line in two pieces (round 9, REVIEW-7 P2-6: the preview puts the squares on their own line).
+    private var shareParts: (title: String, grid: String)? {
         guard let day = dailyDay else { return nil }
         let streak = controller.store.dailyStreak(today: day)
         if let onFile = outcome.dailyOnFile {
-            return ShareText.daily(day: day, judgements: onFile.judgements, score: onFile.score, streak: streak)
+            return ShareText.dailyParts(day: day, judgements: onFile.judgements, score: onFile.score, streak: streak)
         }
         // Only the scored attempt is shared as "Brim Daily #N".
         guard outcome.dailyCounted else { return nil }
-        return ShareText.daily(day: day, judgements: result.judgements, score: result.score, streak: streak)
+        return ShareText.dailyParts(day: day, judgements: result.judgements, score: result.score, streak: streak)
     }
 
     /// A struck-out shift: "3 of 7 glasses" leads, the score steps down (REVIEW-5 P1-6).
@@ -45,11 +51,17 @@ struct ResultsView: View {
 
     /// Pure (tested): "Flawless" only when every glass was Perfect. A failed shift says what ended it (REVIEW-2 P2-6:
     /// never "So close" on a three-spill run).
+    /// Round 9 (REVIEW-7 P2-3): a 3★ card says how good it was, so the star rule ("3★ = no misses") never inverts the
+    /// words: "Flawless shift!" for a crown (every glass Perfect), "Great shift!" with at least half the glasses
+    /// Perfect, "Clean shift!" below that (an all-Good 3★ run).
     static func headline(for result: RunResult, dailyOnFile: Bool) -> String {
         switch result.mode {
         case .shift:
             if !result.judgements.isEmpty && result.judgements.allSatisfy({ $0 == .perfect }) { return "Flawless shift!" }
-            if result.stars >= 3 { return "Great shift!" }
+            if result.stars >= 3 {
+                let perfects = result.judgements.filter { $0 == .perfect }.count
+                return 2 * perfects >= result.judgements.count ? "Great shift!" : "Clean shift!"
+            }
             if result.cleared { return "Shift cleared" }
             // REVIEW-5 P1-6: what ended it, counting every strike (short, over, spill), itemised when mixed:
             // "Shift over — 3 spills", "Shift over — 2 over, 1 spill".
@@ -142,6 +154,13 @@ struct ResultsView: View {
         return "3★ needs every glass a hit. You had \(misses) miss\(misses == 1 ? "" : "es")."
     }
 
+    /// Round 9 (QA-4 P2-4, REVIEW-7 P2-3): the glyph beside the chase line: the crown only for the crown chase (3★),
+    /// a star for a stars goal (under 3★), none when there is no chase line. Pure.
+    static func chaseSymbol(for result: RunResult, hasCrown: Bool) -> String? {
+        guard chaseLine(for: result, hasCrown: hasCrown) != nil else { return nil }
+        return result.stars >= 3 ? "crown.fill" : "star.fill"
+    }
+
     /// Round 8 (REVIEW-6 N2/N3): the line under the score, never a row of zeros ("best streak 0", "0 perfect").
     /// - a cleared shift: the crown chase (`chaseLine`); at 3★ it adds the shift's best Perfects when this run fell
     ///   short of them ("… You had 3 of 6. Best 5."); a crowned shift: "5 of 6 Perfect · best streak 4";
@@ -181,10 +200,21 @@ struct ResultsView: View {
 
     /// Round 8 (REVIEW-6 N3): a struck-out shift's unserved orders, as faint outlines after the served glasses, so
     /// "3 of 7" has its picture. Empty for a cleared shift and every other mode. Pure; tested.
+    /// Round 9 (QA-4 P2-6): a struck-out Daily gets its unserved glasses too (`LevelCatalog.dailyOrders(day:)`).
     static func ghostRecap(for result: RunResult) -> [GlassRecap] {
-        guard case let .shift(id) = result.mode, !result.cleared, let level = LevelCatalog.level(id) else { return [] }
-        let served = min(result.judgements.count, level.orders.count)
-        return level.orders.dropFirst(served).map { GlassRecap(ghostOf: $0) }
+        guard !result.cleared else { return [] }
+        let orders: [GlassOrder]
+        switch result.mode {
+        case let .shift(id):
+            guard let level = LevelCatalog.level(id) else { return [] }
+            orders = level.orders
+        case let .daily(day):
+            orders = LevelCatalog.dailyOrders(day: day)
+        case .rush, .practice:
+            return []
+        }
+        let served = min(result.judgements.count, orders.count)
+        return orders.dropFirst(served).map { GlassRecap(ghostOf: $0) }
     }
 
     /// The recap the card draws: the served glasses, then (struck out) the ghosts of the rest.
@@ -430,8 +460,9 @@ struct ResultsView: View {
             if let statsLine {
                 // REVIEW-6 N2: on a cleared shift this is the crown chase, so it gets the crown and room for two lines.
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    if statsIsCrownChase {
-                        Image(systemName: "crown.fill")
+                    if let symbol = chaseSymbol {
+                        // Round 9 (QA-4 P2-4): the crown only beside the crown chase; a star beside a stars goal.
+                        Image(systemName: symbol)
                             .font(.system(size: 12, weight: .black))
                             .foregroundStyle(BrimTheme.goldDeep)
                             .accessibilityHidden(true)
@@ -466,15 +497,19 @@ struct ResultsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             // QA-3 P2-15: SE-size phones (667 pt) have no room for the preview; the Share button stays.
-            if let shareText, !info.isCompact {
-                // Round 6 (decision 5, REVIEW-5 §6 P2): exactly what Share posts.
+            if let shareText, let shareParts, !info.isCompact {
+                // Round 6 (decision 5, REVIEW-5 §6 P2): exactly what Share posts. Round 9 (REVIEW-7 P2-6): the title on
+                // one line, the squares and score on their own (never 9 + 1 across a wrap).
                 Label {
-                    Text(shareText)
-                        .font(BrimTheme.text(12, .heavy))
-                        .foregroundStyle(BrimTheme.inkSoft)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.7)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(shareParts.title)
+                            .lineLimit(1)
+                        Text(shareParts.grid)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
+                    .font(BrimTheme.text(12, .heavy))
+                    .foregroundStyle(BrimTheme.inkSoft)
                 } icon: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 11, weight: .heavy))
@@ -515,10 +550,14 @@ struct ResultsView: View {
         return Self.statsLine(for: result, hasCrown: outcome.hasCrown, bestPerfects: outcome.bestPerfects)
     }
 
-    /// The stats line is the crown chase (a cleared shift with something left to chase).
-    private var statsIsCrownChase: Bool {
-        ceremonyDay == nil && Self.chaseLine(for: result, hasCrown: outcome.hasCrown) != nil
+    /// The stats line is a chase (a cleared shift with something left to chase): its glyph, nil otherwise.
+    private var chaseSymbol: String? {
+        guard ceremonyDay == nil else { return nil }
+        return Self.chaseSymbol(for: result, hasCrown: outcome.hasCrown)
     }
+
+    /// The stats line is the crown chase (a cleared shift with something left to chase).
+    private var statsIsCrownChase: Bool { chaseSymbol != nil }
 
     private var note: String? {
         if !outcome.newlyUnlocked.isEmpty {

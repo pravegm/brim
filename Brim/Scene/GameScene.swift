@@ -33,7 +33,10 @@ final class GameScene: SKScene {
 
     /// Respect Reduce Motion: no camera bump, no shake, no hop, fewer particles, fades instead of pops.
     var reduceMotion: Bool = false {
-        didSet { fx.reduceMotion = reduceMotion }
+        didSet {
+            fx.reduceMotion = reduceMotion
+            jug.reduceMotion = reduceMotion
+        }
     }
 
     /// Venue look. nil = derive from the session's mode (shift levels), falling back to the Lemonade Stand.
@@ -87,6 +90,8 @@ final class GameScene: SKScene {
     private(set) var activeGlassWorldFrame: CGRect?
     /// World rect of the next glass waiting on the counter (ROUND-3 decision 2), nil when none is waiting.
     private(set) var waitingGlassWorldFrame: CGRect?
+    /// Tests (QA-4 P1-1): the settled ink of glass `id`'s verdict stamp (world), nil when it shows none.
+    func stampInkWorldRect(glassID id: Int) -> CGRect? { glasses[id]?.stampInkWorldRect }
     /// ROUND-3 decision 3: no scene text (stamps, streak pops) reaches above this world y (crease bottom − 8).
     var foldKeepOutTop: CGFloat { layout.creaseMinY - 8 }
     /// The x range (world) that is on screen on every supported device: visibleRect inset by 14, ≥ 130…540 on phones.
@@ -510,6 +515,17 @@ final class GameScene: SKScene {
         var activeID: Int?
         for g in s.glasses where g.phase == .filling { activeID = g.id; break }
         activeLineWorld = nil
+        // Round 9 (QA-4 P1-1): where the glass waiting in the slot stands (its look as last drawn, at this frame's x),
+        // so the judged glass's stamp never sits over it.
+        var slotGlassID: Int?
+        var slotGlassRect: CGRect?
+        for g in s.glasses where g.isWaitingInSlot {
+            if let v = glasses[g.id], v.drawnAlpha > 0.05 {
+                slotGlassID = g.id
+                slotGlassRect = v.occupiedWorldRect(centreX: g.x)
+            }
+            break
+        }
         var waitingID: Int?
         var seen = Set<Int>()
         for (i, g) in s.glasses.enumerated() {
@@ -543,6 +559,7 @@ final class GameScene: SKScene {
             gf.waitingAlpha = GameScene.waitingAlpha
             gf.suppressed = suppress
             gf.beltWindow = beltWindow(g)
+            if g.id != slotGlassID { gf.waitingGlassRect = slotGlassRect }
             view.update(g, gf)
             if g.id == activeID {
                 activeLineWorld = CGPoint(x: g.x + view.outerRimHalfWidth + 12, y: cy + view.base + g.lineHeight)
@@ -1239,8 +1256,10 @@ final class GameScene: SKScene {
     static let rushBackdropScale: CGFloat = 2
     /// Paint the next Rush tier's look once this many glasses of the current tier are done and nothing is pouring…
     static let prewarmFromGlass = CoreTuning.rushTierEvery - 4
-    /// …or at this many regardless (still well before the change).
+    /// …or at this many at any moment between glasses, even with the jug tipped (round 9, QA-4 P2-3)…
     static let prewarmForcedFromGlass = CoreTuning.rushTierEvery - 2
+    /// …or, on the tier's last glass, regardless (the cache-miss at the change stays the last fallback).
+    static let prewarmLastFromGlass = CoreTuning.rushTierEvery - 1
     /// Tests: full-canvas backdrops painted since the scene was made.
     private(set) var backdropRenderCount = 0
     /// Tests: how many looks the cache holds.
@@ -1281,12 +1300,32 @@ final class GameScene: SKScene {
     }
 
     /// Rush: paint the next tier's look ahead of the change (once per tier), so the change is a cache hit.
+    /// Round 9 (QA-4 P2-3): the paint (~10 MB, main thread) never lands while the stream fills a glass. From
+    /// `prewarmFromGlass` it waits for the jug to rest; from `prewarmForcedFromGlass` for any moment between glasses
+    /// (no glass filling, the stamp up, the next one sliding in), even with the jug still tipped; only on the tier's
+    /// last glass, if the player never once stopped filling, does it paint regardless.
     private func prewarmNextRushLook(_ s: GameSnapshot) {
         guard case .rush = s.mode, s.rushTier >= 1, s.rushTier != prewarmedTier, backdropScale > 0,
               s.phase == .playing else { return }
         let into = s.ordersDone - (s.rushTier - 1) * CoreTuning.rushTierEvery
-        let quiet = s.stream.isEmpty && s.jug.flow < 0.01
-        guard into >= GameScene.prewarmForcedFromGlass || (into >= GameScene.prewarmFromGlass && quiet) else { return }
+        guard into >= GameScene.prewarmFromGlass else { return }
+        let pouring = !s.stream.isEmpty || s.jug.flow >= 0.01
+        var filling = false
+        if pouring {
+            for g in s.glasses where g.phase == .filling {
+                filling = true
+                break
+            }
+        }
+        let ready: Bool
+        if into >= GameScene.prewarmLastFromGlass {
+            ready = true
+        } else if into >= GameScene.prewarmForcedFromGlass {
+            ready = !filling
+        } else {
+            ready = !pouring
+        }
+        guard ready else { return }
         prewarmedTier = s.rushTier
         let next = Rules.rushVenue(tier: s.rushTier + 1)
         var p = ScenePalette.forVenue(next)

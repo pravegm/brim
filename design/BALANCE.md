@@ -5,7 +5,7 @@
 round-5 content (§9); this pass was tuned on the Node mirror of Core + the same player model and waits for the next
 sweep. Treat every number as a model estimate until the real-Duo TestFlight session calibrates it (§8).*
 
-**Latest pass: §10 (round 8: Rush Fizz tier, Sand Bar hourglass, 2-7).**
+**Latest pass: §11 (round 8 pass 2: Sand Bar at 105★, CI walls). §10: Rush Fizz tier, hourglass.**
 
 ## 1. What we want, and why
 
@@ -37,7 +37,7 @@ the Flawless crown (every glass Perfect) is the mastery goal.
 | Venue v shift 1 vs venue v−1 shift 8 | shift 1 easier (casual ★) | each venue opens with a breather |
 | Rush reaches tier 3 | casual ≥ 70 % of runs (round 8) | "Rush travels" is worthless if runs die in the Fizz tier |
 | Rush run length | casual 3–5 min, expert 5–9 min (round 8; were 2–3 and 5–8) | the long session; leaderboard spread |
-| Sand Bar reachable | expert likely to 3★ every campaign shift within 10 tries | it opens at 120★ (all 3★) |
+| Sand Bar reachable | an expert holds ≥ 105★ after 10 tries a shift (`expertBest10`); no shift where 3★ is unlikely | it opens at 105 of 120★ (round 8; was all 120) |
 | Daily clear | casual ≥ 70 % | one scored attempt; most should finish it |
 | Shift length | 30–70 s | "one more go" |
 
@@ -307,3 +307,56 @@ model, lines at 0.4–0.55 are over-pour magnets (casual over 16–25 %), while 
 served in 6-2 (first glass, 0.75, so CI/store can freeze an honest `mode=shift:6-2` mid-pour frame, scenario 32), 6-3
 (0.32 and 0.75) and 6-4 (0.72). Sand Bar after (casual / expert clear): 6-2 0.75 / 1.00, 6-3 0.92 / 1.00, 6-4 0.92 /
 0.75: within noise of before.
+
+## 11. Round 8 pass 2 (first `full` sweep of round 8: CI run 40261158155)
+
+**The sweep.** Rush on target (casual reachTier3 0.75, 252 s; expert 514 s). Daily casual 0.75, casual likely-3★ 0.57.
+Still off: novice 1-1/1-2 0.75; venue 2 casual 0.69 (2-4 0.25, 2-8 0.25; 2-6 novice 0); venue 4 casual 0.62 (4-7 0);
+and six shifts where no expert try 3-starred (3-6, 4-4, 4-5, 4-8, 5-1, 5-5).
+
+**A CI-shaped mirror.** CI plays each shift and profile with one fresh player over four tries, so one line moves 0.25
+per try. The mirror now does the same with ten players each (`ci.js`, `cisweep.js`: 40 cold tries per unit), which is
+the number the CI line scatters around. Per-glass miss tables showed what was going on:
+- **Foam:** root beer and cola in wide glasses (mug, pint, jar) spill 45–60 % for the casual. The model's casual
+  pours a wide glass faster, and the head grows with flow.
+- **Tiny cups on fast belts:** casual short 84–100 %, expert over 45–60 %.
+- **Low lines:** potion lines at 0.32–0.45 and the late conveyor mugs at 0.45–0.5 are over magnets, even for experts.
+
+**Founder decision: the Sand Bar opens at 105★** (`starsToUnlock(.sandBar)`; LevelTests updated; the App's gate reads
+it). The harness now projects what an expert holds after ten tries at every campaign shift: `expertBest10` on the
+`BRIM-BAL stars` line, from per-try rates smoothed as (k + 0.5)/(n + 1). It WARNs when that is under 105 or more than
+three shifts make a 3★ unlikely. Four cold tries without a 3★ no longer read as a wall.
+
+**Changes** (`LevelCatalog`; every glass/drink pair keeps its first appearance, so `dailyMenu` and every Daily are
+byte-identical; checked):
+- **1-1:** later lines 0.75 → 0.65. The first stays 0.66 for CoreTests' fill-time and "over, not spill" checks.
+- **1-2:** lines 0.58–0.65 (were 0.62–0.72).
+- **2-4:** lines 0.5–0.7, 15 s, and 6 glasses (the 0.78 cream soda goes).
+- **2-6:** 14 s, lower lines, and the second root beer becomes a cola mug.
+- **2-8:** 12 s, lower lines, and the jar of root beer becomes a highball of cream soda.
+- **3-6:** smoothie lines 0.55–0.8. The over-prone low pint and bowl move up.
+- **4-4:** belt foam lines −0.05 to −0.15.
+- **4-5:** belt 23 → 21; the two tiny cups become tumblers.
+- **4-6:** the maple tiny cup becomes a mug; lines 0.4–0.55.
+- **4-7:** belt 27 → 25; tiny cups at 0.45.
+- **4-8:** belt 33 → 28; no tiny cup, 7 glasses, mugs at 0.6. It stays the venue's peak.
+- **5-1:** lines +0.05 to +0.1.
+- **5-5:** "small doses" at 0.4–0.5 (were 0.32–0.45).
+
+**After (mirror, CI-shaped, 40 cold tries per unit; CI's run in brackets):**
+
+| | novice | casual | expert |
+|---|---|---|---|
+| 1-1 / 1-2 | 0.85 / 0.88 (0.75 / 0.75) | 0.97 / 1.00 | 1.00 |
+| venue 2 | 0.73 | **0.80** (0.69) | 0.99 |
+| venue 4 | 0.54 | **0.80** (0.62) | 0.98 |
+| all shifts, mean clear | 0.61 | 0.86 | 0.98 |
+| likely-3★ share | 0.36 | 0.68 (0.57) | 0.98 (0.85) |
+
+Expert 3★ a try, before → after: 3-6 0.23 → 0.42; 4-4 0.35 → 0.60; 4-5 0.17 → 0.63; 4-8 0.02 → 0.63; 5-1 0.33 → 0.42;
+5-5 0.27 → 0.35. No campaign shift is below 0.35, so `expertBest10` is about 119 against the 105 needed.
+
+Casual walls, before → after: 2-4 0.55 → 0.65, 2-6 0.63 → 0.80, 2-8 0.60 → 0.72, 4-7 0.47 → 0.68, 4-8 0.28 → 0.68.
+
+2-7 stays the venue's exam (casual 0.55). Novice 2-6 goes 0.57 → 0.75. CI's own lines will scatter around these by
+about ±0.2 per shift and ±0.07 per venue.

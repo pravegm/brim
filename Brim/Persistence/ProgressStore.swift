@@ -151,10 +151,17 @@ struct ProgressData: Codable, Equatable {
 
     // MARK: Glass Cabinet (round 8, REVIEW-6 #6)
 
-    /// The chosen vessel while the crowns still hold it (nil = the house jug).
+    /// The chosen vessel while the crowns (and, for the copper scoop, the found Sand Bar) still hold it (nil = the house
+    /// jug).
     var activeVessel: VenueID? {
-        guard let vessel, GlassCabinet.isUnlocked(vessel, crowns: totalCrowns) else { return nil }
+        guard let vessel, isVesselUnlocked(vessel) else { return nil }
         return vessel
+    }
+
+    /// Round 9 (REVIEW-7 P1-3): a cabinet vessel is open with its crowns, and the secret venue's only once the Sand Bar
+    /// has been found.
+    func isVesselUnlocked(_ venue: VenueID?) -> Bool {
+        GlassCabinet.isUnlocked(venue, crowns: totalCrowns, sandBarFound: isUnlocked(.sandBar))
     }
 
     // MARK: Daily week strip (round 6, decision 5)
@@ -169,15 +176,28 @@ struct ProgressData: Codable, Equatable {
     /// Pure rule: a venue opens once the player holds its star threshold.
     static func unlockRule(totalStars: Int, threshold: Int) -> Bool { totalStars >= max(threshold, 0) }
 
-    /// Every non-secret shift has three stars (opens the Sand Bar, `brim.allstars`).
+    /// Every non-secret shift has three stars (`brim.allstars`). Round 9 (founder decision): no longer the Sand Bar's
+    /// gate; see `campaignStars`.
     var hasAllStars: Bool {
         let levels = LevelCatalog.levels.filter { $0.venue != .sandBar }
         guard !levels.isEmpty else { return false }
         return levels.allSatisfy { stars(for: $0.id) >= 3 }
     }
 
+    /// Round 9 (founder decision): stars on the five main venues' shifts (0…120). The secret Sand Bar opens at
+    /// `LevelCatalog.starsToUnlock(.sandBar)` of them, not at "3★ on every shift" (a few late shifts were out of
+    /// reach for experts, so the secret was nearly unreachable). Unknown level ids don't count.
+    var campaignStars: Int {
+        stars.reduce(0) { sum, entry in
+            guard let level = LevelCatalog.level(entry.key), level.venue != .sandBar else { return sum }
+            return sum + min(max(entry.value, 0), 3)
+        }
+    }
+
     func isUnlocked(_ venue: VenueID) -> Bool {
-        if venue == .sandBar { return hasAllStars }
+        if venue == .sandBar {
+            return Self.unlockRule(totalStars: campaignStars, threshold: LevelCatalog.starsToUnlock(.sandBar))
+        }
         return Self.unlockRule(totalStars: totalStars, threshold: LevelCatalog.starsToUnlock(venue))
     }
 
@@ -353,7 +373,8 @@ struct ProgressData: Codable, Equatable {
         if clearedEveryShift(in: .conveyor) { ids.insert("brim.venue.conveyor") }
         if clearedEveryShift(in: .potionShop) { ids.insert("brim.venue.potions") }
         if hasAllStars { ids.insert("brim.allstars") }
-        if clearedEveryShift(in: .sandBar) { ids.insert("brim.sandbar") }
+        // Round 9 (founder decision): the hidden "Grain by Grain" fires when the Sand Bar is found (its star gate).
+        if isUnlocked(.sandBar) { ids.insert("brim.sandbar") }
         return ids
     }
 
@@ -425,20 +446,35 @@ enum GlassCabinet {
         vessels.first(where: { $0.venue == venue })?.crowns
     }
 
-    static func isUnlocked(_ venue: VenueID?, crowns: Int) -> Bool {
+    /// Round 9 (REVIEW-7 P1-3): the secret venue's vessel needs its crowns AND the Sand Bar found (`sandBarFound` =
+    /// `ProgressData.isUnlocked(.sandBar)`), so nobody pours Rush from the scoop before finding the bar.
+    static func isUnlocked(_ venue: VenueID?, crowns: Int, sandBarFound: Bool) -> Bool {
         guard let need = crownsNeeded(venue) else { return false }
+        if venue == .sandBar && !sandBarFound { return false }
         return crowns >= need
     }
 
-    /// The next vessel still locked, and how many crowns it needs (nil once all are open).
-    static func nextUnlock(crowns: Int) -> (vessel: Vessel, missing: Int)? {
-        guard let next = vessels.first(where: { $0.crowns > crowns }) else { return nil }
+    /// Round 9 (REVIEW-7 P1-3): the vessel is the secret venue's and the venue hasn't been found: the cabinet shows a
+    /// locked "???" silhouette, never its name, accent or symbol.
+    static func isSecret(_ vessel: Vessel, sandBarFound: Bool) -> Bool {
+        vessel.venue == .sandBar && !sandBarFound
+    }
+
+    /// What a secret tile says instead of the vessel's name and crowns.
+    static let secretName = "???"
+    static let secretCaption = "Find the secret venue"
+
+    /// The next vessel still locked, and how many crowns it needs (nil once all are open). A secret vessel is never
+    /// named here.
+    static func nextUnlock(crowns: Int, sandBarFound: Bool) -> (vessel: Vessel, missing: Int)? {
+        guard let next = vessels.first(where: { $0.crowns > crowns && !isSecret($0, sandBarFound: sandBarFound) })
+        else { return nil }
         return (next, next.crowns - max(crowns, 0))
     }
 
-    /// "3 more 👑 for the Shake tin" (nil once everything is open).
-    static func nextLine(crowns: Int) -> String? {
-        guard let next = nextUnlock(crowns: crowns) else { return nil }
+    /// "3 more 👑 for the Shake tin" (nil once everything shown is open).
+    static func nextLine(crowns: Int, sandBarFound: Bool) -> String? {
+        guard let next = nextUnlock(crowns: crowns, sandBarFound: sandBarFound) else { return nil }
         return "\(next.missing) more 👑 for the \(next.vessel.name)"
     }
 }
@@ -561,7 +597,7 @@ final class ProgressStore: ObservableObject {
 
     /// Round 8 (Glass Cabinet): picks the Rush/Practice vessel (nil = the house jug). A locked vessel is refused.
     func setVessel(_ venue: VenueID?) {
-        if let venue, !GlassCabinet.isUnlocked(venue, crowns: data.totalCrowns) { return }
+        if let venue, !data.isVesselUnlocked(venue) { return }
         guard data.vessel != venue else { return }
         data.vessel = venue
         save()

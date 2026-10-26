@@ -43,7 +43,7 @@ Rotation ideas for later (count before pasting):
 
 ## 4. Description (limit 4,000)
 
-**en-GB 2,763 / 4,000; en-US 2,762 / 4,000.**
+**en-GB 2,736 / 4,000; en-US 2,735 / 4,000.**
 
 ### en-GB (English U.K.)
 
@@ -69,7 +69,7 @@ FIVE VENUES, ONE SHIFT AT A TIME
 • Milkshake Diner: thick shakes, honey and syrup that keep coming after you stop
 • The Conveyor: glasses that won't wait for you
 • Potion Shop: tiny vials, millilitre marks and lines that fade
-Earn up to three stars a shift to open the next venue. Three-star everything to find out what's behind the counter.
+Earn stars to open the next venue. Collect enough to find out what's behind the counter.
 
 RUSH
 One big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the run is over. Chase your best on the Game Center leaderboard.
@@ -119,7 +119,7 @@ FIVE VENUES, ONE SHIFT AT A TIME
 • Milkshake Diner: thick shakes, honey and syrup that keep coming after you stop
 • The Conveyor: glasses that won't wait for you
 • Potion Shop: tiny vials, milliliter marks and lines that fade
-Earn up to three stars a shift to open the next venue. Three-star everything to find out what's behind the counter.
+Earn stars to open the next venue. Collect enough to find out what's behind the counter.
 
 RUSH
 One big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the run is over. Chase your best on the Game Center leaderboard.
@@ -258,7 +258,7 @@ The build didn't exist when this was written. Before submission, Claude (or whoe
 | Claim (where) | Source today | Check |
 |---|---|---|
 | Drag up anywhere tips the jug; let go and it eases upright (description, promo, review notes) | Bible §3, `TouchTiltSource` | [ ] |
-| Five venues + a secret one unlocked by 3-starring everything; stars open the next venue | Bible §6 | [ ] |
+| Five venues + a secret one unlocked by stars (round 9: `LevelCatalog.starsToUnlock(.sandBar)` stars in the five main venues, not 3★ on every shift); stars open the next venue | Bible §6, `ProgressData.isUnlocked` (`campaignStars`) | [ ] |
 | Potion Shop has millilitre marks and lines that fade | Bible §6 | [ ] |
 | Rush: Perfect tops up the jug; multiplier to ×5; ends on 3 spills or empty jug | Bible §6, `Rules.multiplier` | [ ] |
 | Daily Pour: 10 glasses, one scored try, share sheet result | Bible §6 | [ ] |

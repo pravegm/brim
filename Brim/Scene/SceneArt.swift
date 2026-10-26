@@ -294,6 +294,36 @@ enum SceneArt {
         return t
     }
 
+    /// Round 9 (REVIEW-7 P1-1): one sand grain for the scoop's slide telegraph: a `fill` disc with a thin ink outline
+    /// (~0.75 pt at the drawn 2.2–3 pt radius, 0.45 alpha). The disc spans 1 / `grainTexturePad` of the texture.
+    static let grainTexturePad: CGFloat = 1.2
+
+    static func grain(fill: UIColor) -> SKTexture {
+        let rgba = SceneColor.rgba(fill)
+        let key = "grain-\(Int(rgba.r * 255))-\(Int(rgba.g * 255))-\(Int(rgba.b * 255))"
+        if let t = cache[key] { return t }
+        let s: CGFloat = 12
+        let outer = s / 2 / grainTexturePad
+        let line: CGFloat = 1.45
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 3
+        fmt.opaque = false
+        let img = UIGraphicsImageRenderer(size: CGSize(width: s, height: s), format: fmt).image { _ in
+            let c = CGPoint(x: s / 2, y: s / 2)
+            let r = outer - line / 2
+            let disc = UIBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+            fill.setFill()
+            disc.fill()
+            SceneColor.ink.withAlphaComponent(0.45).setStroke()
+            disc.lineWidth = line
+            disc.stroke()
+        }
+        let t = SKTexture(image: img)
+        t.filteringMode = .linear
+        cache[key] = t
+        return t
+    }
+
     /// Four-point twinkle with a soft halo.
     static var sparkle: SKTexture {
         if let t = cache["sparkle"] { return t }

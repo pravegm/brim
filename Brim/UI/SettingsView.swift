@@ -94,7 +94,8 @@ struct SettingsView: View {
         }
         .alert("Reset all progress?", isPresented: $confirmReset) {
             Button("Reset", role: .destructive) {
-                store.resetProgress()
+                // Round 9 (QA-4 P2-1): through the controller, so the Home loop drops the chosen vessel at once.
+                controller.resetProgress()
                 FeedbackDirector.shared.uiConfirm()
             }
             Button("Cancel", role: .cancel) {}

@@ -48,10 +48,17 @@
 # - 22 (failed card) now shows ghost outlines for the unserved glasses, a small "N pts" (none for 0) under the hero and
 #   only the Perfects/streak in its stats line.
 # - 24 on the phone: the compact intro card sits low over the floor (jug in view) and the shift banner waits for it.
-# - 32-hourglass is NOT captured yet: no level, Daily or practice pool serves the `hourglass` glass (Balance/Core), so
-#   there is no honest moment to freeze. Add `32-hourglass|mode=shift:<id>;autopilot=perfect;freezeOn=midpour|14` once
-#   one does.
 30-sand-slide|mode=shift:6-1;autopilot=perfect;freezeOn=repose|14
 31-potion-faded|mode=shift:5-3;autopilot=perfect;freezeOn=faded|16
-33-rush-low-jug|mode=rush;autopilot=great;served=10;freezeOn=lowjug|60
+33-rush-low-jug|mode=rush;autopilot=great;served=10;jugFill=0.22;freezeOn=lowjug|60
 32-hourglass|mode=shift:6-2;autopilot=perfect;freezeOn=midpour|14
+# Round 9 (REVIEW-7 P1-2, P2-1; DemoMode keys `screen=cabinet`, `crowns`, `vessel`, `jugFill`):
+# - 33 now sets the jug to 22 % after seeding 10 glasses (`jugFill=0.22`), so `freezeOn=lowjug` really fires mid-pour
+#   (round 8 timed out at 65 %: a great pilot with refills never got under 20 %).
+# - 34: the Glass Cabinet on a fresh save: every vessel locked, the secret one a "???" silhouette ("Find the secret
+#   venue"), the house jug in use.
+# - 35: the mid save plus crowns up to 4: the Soda dispenser open and in use, the Shake tin "6 👑", the scoop still "???".
+# - 36: Rush poured from the Soda dispenser (3 crowns hold it) over the Lemonade tier backdrop.
+34-cabinet-fresh|screen=cabinet;progress=fresh;freezeOn=midpour|8
+35-cabinet-mid|screen=cabinet;progress=mid;crowns=4;vessel=sodaFountain;freezeOn=midpour|8
+36-rush-vessel|mode=rush;crowns=3;vessel=sodaFountain;autopilot=perfect;freezeOn=midpour|12

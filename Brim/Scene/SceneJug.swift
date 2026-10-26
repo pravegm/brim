@@ -62,11 +62,34 @@ final class SceneJug {
     private let lastDrop: SKShapeNode
     /// Sand Bar (round 6, REVIEW-5 §4): grains creeping over the lip and trickling down as the scoop nears its angle
     /// of repose (`JugState.reposeProgress` 0.7 → 1). Cosmetic: no volume. World space.
-    private let trickle: SKShapeNode
+    /// Round 9 (REVIEW-7 P1-1, frame 30): a pool of outlined grain sprites (2.2–3 pt, darker than the sand, so they
+    /// read against a sand-coloured wall), made once and only moved per frame.
+    private let trickle: SKNode
+    private var grains: [SKSpriteNode] = []
+    private var grainTint: LiquidID?
     /// How many trickle grains are drawn this frame (tests).
     private(set) var trickleGrains = 0
+    /// The largest trickle grain's radius this frame (world pt; 0 when none). Tests.
+    private(set) var trickleGrainRadius: CGFloat = 0
     /// Repose progress where the trickle starts.
     static let trickleStart: Double = 0.7
+    /// Pool size: at most `2 + 4` grains on the lip and `2 + 9` falling.
+    static let maxSittingGrains = 6
+    static let maxFallingGrains = 11
+    /// Round 9 (REVIEW-7 P1-1): over the last half of the telegraph the scoop shivers, up to this much (radians,
+    /// ±1.2°) at `shiverHz`, growing as the slide nears. Never under Reduce Motion.
+    static let shiverMax: CGFloat = 1.2 * .pi / 180
+    static let shiverHz: Double = 14
+    /// The shiver's current angle (radians, added to the tip; 0 = still). Tests.
+    private(set) var shiverAngle: CGFloat = 0
+    /// Set by the scene (Reduce Motion): no shiver.
+    var reduceMotion = false
+    /// Round 9 (REVIEW-7 P1-1): the scoop's sight-glass slot pulses amber-red as the slide nears (an overlay on its
+    /// frame, so the colour is never re-made per frame).
+    private let windowWarn: SKShapeNode
+    static let warnColor = SceneColor.hex(0xE8553A)
+    /// The sight-slot warning's strength this frame (0 = none). Tests.
+    var sightWarning: CGFloat { windowWarn.isHidden ? 0 : windowWarn.alpha }
 
     /// 0 = has liquid, 1 = dry (eased). See `dryFill`.
     private(set) var dryAmount: CGFloat = 0
@@ -150,7 +173,8 @@ final class SceneJug {
         lipGlint = SKShapeNode()
         residue = SKShapeNode()
         lastDrop = SKShapeNode()
-        trickle = SKShapeNode()
+        trickle = SKNode()
+        windowWarn = SKShapeNode()
 
         let ink = SceneColor.ink
         shadow.fillColor = ink.withAlphaComponent(0.10)
@@ -185,10 +209,20 @@ final class SceneJug {
         lastDrop.lineWidth = 1.4
         lastDrop.zPosition = 3.5
         lastDrop.isHidden = true
-        trickle.strokeColor = .clear
-        trickle.lineWidth = 0
         trickle.zPosition = 3.6
         trickle.isHidden = true
+        for _ in 0..<(SceneJug.maxSittingGrains + SceneJug.maxFallingGrains) {
+            let g = SKSpriteNode()
+            g.isHidden = true
+            grains.append(g)
+            trickle.addChild(g)
+        }
+        windowWarn.fillColor = .clear
+        windowWarn.strokeColor = SceneJug.warnColor
+        windowWarn.lineWidth = 3.5
+        windowWarn.glowWidth = 0
+        windowWarn.zPosition = 0.134
+        windowWarn.isHidden = true
         backFrame.addChild(handleOutline)
         backFrame.addChild(handleBody)
         backFrame.addChild(handleShine)
@@ -294,8 +328,8 @@ final class SceneJug {
         lipGlint.strokeColor = .clear
         lipGlint.zPosition = 0.5
         lipGlint.path = CGPath(ellipseIn: CGRect(x: -2.6, y: -2.6, width: 5.2, height: 5.2), transform: nil)
-        for n in [wallBody, wallInner, skin, windowFrame, windowGlare, ticks, wallOuter, footBand, hoops, rimBand,
-                  rimBandShine, opening, lid, lidShine, knob, knobShine, twine, metalLines, shine, shineDot] {
+        for n in [wallBody, wallInner, skin, windowFrame, windowWarn, windowGlare, ticks, wallOuter, footBand, hoops,
+                  rimBand, rimBandShine, opening, lid, lidShine, knob, knobShine, twine, metalLines, shine, shineDot] {
             frontFrame.addChild(n)
         }
         frontFrame.addChild(decal)
@@ -327,6 +361,12 @@ final class SceneJug {
     /// The dressing in use (tests, and `GameScene.vesselOverride`).
     var form: VesselForm { style.form }
     var decalKind: VesselDecal { style.decal }
+    /// The belly decal's rotation on screen (radians; nil when none is drawn). Tests.
+    var decalWorldRotation: CGFloat? { decal.isHidden ? nil : frontFrame.zRotation + decal.zRotation }
+    /// The jug body's rotation on screen (radians). Tests.
+    var bodyWorldRotation: CGFloat { frontFrame.zRotation }
+    /// The decals' slight jaunty tilt (radians); the Conveyor's badge keeps it on screen whatever the tip.
+    static let decalTilt: CGFloat = -0.08
     /// Whether the static parts have been built for the current dressing (false until the next frame after a change).
     var isBuilt: Bool { !localOutline.isEmpty }
     /// Whether a lid / a handle is drawn (tests: the scoop is open; the tin and flask have no handle).
@@ -402,12 +442,25 @@ final class SceneJug {
         }
         let lipLocal = ScenePaths.toLocal(j.lip, pivot: j.pivot, radians: rad)
 
+        // Round 9 (REVIEW-7 P1-1): the sand-slide telegraph's strength (nil = none): grains, shiver, sight-slot pulse.
+        let tele = telegraphStrength(j)
+        shiverAngle = 0
+        if let u = tele, u > 0.5, !reduceMotion {
+            // On the session clock, so a paused frame holds still. The liquid polygon is Core's and stays put: the
+            // sand seems to sit still while the copper trembles around it.
+            let k = min(1, (u - 0.5) / 0.5)
+            shiverAngle = SceneJug.shiverMax * k * CGFloat(sin(2 * Double.pi * SceneJug.shiverHz * time))
+        }
+        let tip = -rad - shiverAngle
         backFrame.position = j.pivot
-        backFrame.zRotation = -rad
+        backFrame.zRotation = tip
         frontFrame.position = j.pivot
-        frontFrame.zRotation = -rad
+        frontFrame.zRotation = tip
         shadow.position = CGPoint(x: j.pivot.x + 8, y: j.pivot.y - 10)
-        shadow.zRotation = -rad
+        shadow.zRotation = tip
+        // Round 9 (REVIEW-7 P2-8, N11): the Conveyor's chevron badge stays level as the jug tips; turning with it, its
+        // two chevrons in a ring read as clock hands.
+        if style.decal == .ticket && !decal.isHidden { decal.zRotation = SceneJug.decalTilt - tip }
         lipGlint.position = CGPoint(x: lipLocal.x, y: lipLocal.y + 1)
         lipGlint.alpha = CGFloat(min(1, 0.4 + j.flow * 2))
 
@@ -423,11 +476,11 @@ final class SceneJug {
             residue.fillColor = look.body.withAlphaComponent(0.75)
             lastDrop.fillColor = look.body
             lastDrop.strokeColor = look.edge
-            trickle.fillColor = SceneColor.darker(look.body, 0.12)
             openingFull = nil
         }
         updateDry(j, time: time, dt: dt)
-        updateTrickle(j, time: time)
+        updateTrickle(j, u: tele, time: time)
+        updateSightWarning(u: tele, time: time)
         if style.form == .scoop {
             // Open top: sand shows in the mouth once the scoop is well filled.
             let full = j.fill > 0.55
@@ -521,45 +574,93 @@ final class SceneJug {
 
     // MARK: Sand trickle
 
-    /// Telegraphs the avalanche: from `trickleStart` to 1 a few grains sit on the lip and more and more of them
-    /// trickle off it (deterministic on the session clock, so a paused frame holds still). Gone once sand flows.
-    private func updateTrickle(_ j: JugState, time: Double) {
+    /// 0…1 over the telegraph (`reposeProgress` `trickleStart` → 1) while sand sits tipped in the jug and nothing
+    /// flows; nil otherwise.
+    private func telegraphStrength(_ j: JugState) -> CGFloat? {
         let rp = min(max(j.reposeProgress, 0), 1)
         guard j.liquid.id == .sand, rp > SceneJug.trickleStart, j.flow < 0.02, j.fill > SceneJug.dryFill else {
+            return nil
+        }
+        return CGFloat((rp - SceneJug.trickleStart) / (1 - SceneJug.trickleStart))
+    }
+
+    /// Telegraphs the avalanche: from `trickleStart` to 1 a few grains sit on the lip and more and more of them
+    /// trickle off it (deterministic on the session clock, so a paused frame holds still). Gone once sand flows.
+    /// Round 9 (REVIEW-7 P1-1): grains 2.2–3 pt with an ink outline in a darker sand (was 1–1.5 pt, the stream's own
+    /// colour), 2–6 on the lip and 2–11 falling (was 2–5 and 1–7), fully opaque from u ≈ 0.4.
+    private func updateTrickle(_ j: JugState, u tele: CGFloat?, time: Double) {
+        guard let u = tele else {
             if !trickle.isHidden {
                 trickle.isHidden = true
-                trickle.path = nil
+                for g in grains { g.isHidden = true }
             }
             trickleGrains = 0
+            trickleGrainRadius = 0
             return
         }
-        let u = CGFloat((rp - SceneJug.trickleStart) / (1 - SceneJug.trickleStart))
+        if grainTint != j.liquid.id {
+            grainTint = j.liquid.id
+            let tex = SceneArt.grain(fill: SceneColor.darker(SceneLiquidLook.stream(j.liquid).body, 0.25))
+            for g in grains { g.texture = tex }
+        }
         let lip = j.lip
-        let p = CGMutablePath()
+        var used = 0
+        var biggest: CGFloat = 0
         // Grains gathered on the lip (they creep outward as u grows).
-        let sitting = 2 + Int(u * 3)
+        let sitting = min(SceneJug.maxSittingGrains, 2 + Int(u * 4))
         for k in 0..<sitting {
-            let dx = (CGFloat(k) - CGFloat(sitting - 1) * 0.5) * 2.6 + u * 2
-            let r: CGFloat = k % 2 == 0 ? 1.5 : 1.2
-            p.addEllipse(in: CGRect(x: lip.x + dx - r, y: lip.y + 0.6 - r, width: r * 2, height: r * 2))
+            let dx = (CGFloat(k) - CGFloat(sitting - 1) * 0.5) * 4.6 + u * 3
+            let r: CGFloat = k % 2 == 0 ? 3.0 : 2.4
+            placeGrain(used, x: lip.x + dx, y: lip.y + r * 0.5, r: r)
+            used += 1
+            biggest = max(biggest, r)
         }
         // Falling grains: each loops a short fall from the lip, staggered; more of them (and faster) near 1.
-        let falling = 1 + Int(u * 6)
+        let falling = min(SceneJug.maxFallingGrains, 2 + Int(u * 9))
         let period = 0.42 - 0.12 * Double(u)
         let fallTime: CGFloat = 0.3
         for k in 0..<falling {
             let ph = (time / period + Double(k) * 0.618).truncatingRemainder(dividingBy: 1)
             let t = CGFloat(ph < 0 ? ph + 1 : ph) * fallTime
             let jitter = CGFloat((k * 37) % 7) - 3
-            let x = lip.x + 1.5 + jitter * 0.6 + t * 10
-            let y = lip.y - 1 - 0.5 * 1500 * t * t
-            let r: CGFloat = 1.0 + CGFloat((k * 13) % 3) * 0.3
-            p.addEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+            let x = lip.x + 2 + jitter * 1.1 + t * 12
+            let y = lip.y - 2 - 0.5 * 1500 * t * t
+            let r: CGFloat = 2.2 + CGFloat((k * 13) % 3) * 0.4
+            placeGrain(used, x: x, y: y, r: r)
+            used += 1
+            biggest = max(biggest, r)
         }
-        trickleGrains = sitting + falling
-        trickle.path = p
+        if used < grains.count {
+            for i in used..<grains.count where !grains[i].isHidden { grains[i].isHidden = true }
+        }
+        trickleGrains = used
+        trickleGrainRadius = biggest
         trickle.isHidden = false
-        trickle.alpha = min(1, 0.35 + u)
+        trickle.alpha = min(1, 0.6 + u)
+    }
+
+    /// Moves pooled grain `i` (world centre, radius `r`) and shows it.
+    private func placeGrain(_ i: Int, x: CGFloat, y: CGFloat, r: CGFloat) {
+        guard i >= 0 && i < grains.count else { return }
+        let g = grains[i]
+        g.position = CGPoint(x: x, y: y)
+        // The texture's padding: size the sprite so its outlined disc is 2r across.
+        let side = r * 2 * SceneArt.grainTexturePad
+        g.size = CGSize(width: side, height: side)
+        g.isHidden = false
+    }
+
+    /// Round 9 (REVIEW-7 P1-1): the scoop's sight-glass slot glows amber-red from a quarter of the way through the
+    /// telegraph, pulsing (steady under Reduce Motion) and strongest as the slide nears.
+    private func updateSightWarning(u tele: CGFloat?, time: Double) {
+        guard style.form == .scoop, windowWarn.path != nil, let u = tele, u > 0.25 else {
+            if !windowWarn.isHidden { windowWarn.isHidden = true }
+            return
+        }
+        let k = min(1, (u - 0.25) / 0.75)
+        let beat: CGFloat = reduceMotion ? 1 : 0.6 + 0.4 * CGFloat(sin(2 * Double.pi * (3 + 3 * Double(u)) * time))
+        windowWarn.alpha = k * beat
+        windowWarn.isHidden = false
     }
 
     /// Residue beads on the inner walls (jug-local), built with the static parts.
@@ -754,7 +855,7 @@ final class SceneJug {
             let rightX = ScenePaths.xOnPolygon(local, atY: decalY, rightmost: true) ?? b.maxX
             let frac: CGFloat = form == .scoop ? (side < 0 ? 0.25 : 0.75) : (side < 0 ? 0.56 : 0.44)
             decal.position = CGPoint(x: leftX + (rightX - leftX) * frac, y: decalY)
-            decal.zRotation = -0.08
+            decal.zRotation = SceneJug.decalTilt
         }
     }
 
@@ -762,7 +863,8 @@ final class SceneJug {
     /// player still reads the level (REVIEW-2 P1-9).
     private func buildSkin(outer: [CGPoint], b: CGRect, bodyL: CGFloat, bodyR: CGFloat) {
         guard hasSkin else {
-            for nd in [skin, windowFrame, windowGlare, ticks] { nd.isHidden = true }
+            for nd in [skin, windowFrame, windowGlare, ticks, windowWarn] { nd.isHidden = true }
+            windowWarn.path = nil
             return
         }
         var sil = outer
@@ -782,6 +884,9 @@ final class SceneJug {
         skin.isHidden = false
         windowFrame.path = ScenePaths.polygon(win)
         windowFrame.isHidden = false
+        // The scoop's slot carries the slide warning (an amber-red ring over its frame; shown by `updateSightWarning`).
+        windowWarn.path = scoop ? windowFrame.path : nil
+        windowWarn.isHidden = true
         let glare = CGMutablePath()
         let gx = cx - hw + (scoop ? 3 : 5)
         glare.move(to: CGPoint(x: gx, y: y1 - hw - 4))

@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Round 8 (REVIEW-6 #6, Glass Cabinet lite): a small sheet from Home that picks the jug Rush and Practice pour from.
 /// Venue vessels unlock with Flawless crowns (`GlassCabinet`: 3 → soda dispenser, 6 → shake tin, 10 → potion flask,
-/// 14 → copper scoop); the pick is saved in the progress (`ProgressData.vessel`) and drawn by the scene
+/// 14 → copper scoop, which also needs the secret Sand Bar found and shows as a "???" silhouette until then, round 9
+/// REVIEW-7 P1-3); the pick is saved in the progress (`ProgressData.vessel`) and drawn by the scene
 /// (`GameScene.vesselOverride`). Off the fold: on a Duo the card sits in the flat half under the crease, on a phone at
 /// the bottom. A tap outside the card closes it.
 struct CabinetSheet: View {
@@ -18,14 +19,36 @@ struct CabinetSheet: View {
         return (info.hudTop + HUDMetrics.rowHeight + 12, bottom)
     }
 
-    /// The tile's caption: "In use", "Tap to use", or the crowns it still needs. Pure.
-    static func caption(for vessel: GlassCabinet.Vessel, crowns: Int, chosen: VenueID?) -> String {
-        if !GlassCabinet.isUnlocked(vessel.venue, crowns: crowns) { return "\(vessel.crowns) 👑" }
+    /// The tile's caption: "In use", "Tap to use", the crowns it still needs, or (round 9, REVIEW-7 P1-3) "Find the
+    /// secret venue" for the secret venue's vessel before the Sand Bar is found. Pure.
+    static func caption(for vessel: GlassCabinet.Vessel, crowns: Int, chosen: VenueID?, sandBarFound: Bool) -> String {
+        if GlassCabinet.isSecret(vessel, sandBarFound: sandBarFound) { return GlassCabinet.secretCaption }
+        if !GlassCabinet.isUnlocked(vessel.venue, crowns: crowns, sandBarFound: sandBarFound) {
+            return "\(vessel.crowns) 👑"
+        }
         return vessel.venue == chosen ? "In use" : "Tap to use"
+    }
+
+    /// The tile's name (the secret one: "???"). Pure.
+    static func name(for vessel: GlassCabinet.Vessel, sandBarFound: Bool) -> String {
+        GlassCabinet.isSecret(vessel, sandBarFound: sandBarFound) ? GlassCabinet.secretName : vessel.name
+    }
+
+    /// VoiceOver for a tile. Pure (tested): the secret tile never names the vessel or its venue.
+    static func accessibilityText(for vessel: GlassCabinet.Vessel, crowns: Int, chosen: VenueID?,
+                                  sandBarFound: Bool) -> String {
+        if GlassCabinet.isSecret(vessel, sandBarFound: sandBarFound) {
+            return "Secret vessel, locked. \(GlassCabinet.secretCaption)"
+        }
+        if GlassCabinet.isUnlocked(vessel.venue, crowns: crowns, sandBarFound: sandBarFound) {
+            return "\(vessel.name)\(vessel.venue == chosen ? ", in use" : "")"
+        }
+        return "\(vessel.name), locked, needs \(vessel.crowns) crowns"
     }
 
     private var crowns: Int { store.data.totalCrowns }
     private var chosen: VenueID? { store.data.activeVessel }
+    private var sandBarFound: Bool { store.isUnlocked(.sandBar) }
 
     var body: some View {
         let m = Self.margins(info: info)
@@ -81,7 +104,7 @@ struct CabinetSheet: View {
                     tile(vessel)
                 }
             }
-            if let next = GlassCabinet.nextLine(crowns: crowns) {
+            if let next = GlassCabinet.nextLine(crowns: crowns, sandBarFound: sandBarFound) {
                 Label("Earn crowns: every glass of a shift Perfect. \(next).", systemImage: "lock.fill")
                     .font(BrimTheme.text(12, .bold))
                     .foregroundStyle(BrimTheme.inkSoft)
@@ -99,7 +122,9 @@ struct CabinetSheet: View {
     }
 
     private func tile(_ vessel: GlassCabinet.Vessel) -> some View {
-        let open = GlassCabinet.isUnlocked(vessel.venue, crowns: crowns)
+        let found = sandBarFound
+        let secret = GlassCabinet.isSecret(vessel, sandBarFound: found)
+        let open = GlassCabinet.isUnlocked(vessel.venue, crowns: crowns, sandBarFound: found)
         let inUse = open && vessel.venue == chosen
         let accent = vessel.venue.map { BrimTheme.color(for: $0) } ?? BrimTheme.lemonade
         return Button {
@@ -109,25 +134,42 @@ struct CabinetSheet: View {
         } label: {
             VStack(spacing: 5) {
                 ZStack {
-                    Circle()
-                        .fill(open ? accent : BrimTheme.creamDeep)
-                        .overlay(Circle().stroke(inUse ? BrimTheme.cyan : BrimTheme.ink.opacity(0.12),
-                                                 lineWidth: inUse ? 3.5 : 1.5))
-                    Image(systemName: open ? Self.symbol(for: vessel.venue) : "lock.fill")
-                        .font(.system(size: open ? 20 : 15, weight: .heavy))
-                        .foregroundStyle(BrimTheme.ink.opacity(open ? 0.85 : 0.45))
+                    if secret {
+                        // Round 9 (REVIEW-7 P1-3): the secret venue's vessel is a grey "?" silhouette with a dashed
+                        // rim and a small lock: no name, no venue accent, no venue symbol.
+                        Circle()
+                            .fill(BrimTheme.inkFaint.opacity(0.28))
+                            .overlay(Circle().stroke(BrimTheme.ink.opacity(0.25),
+                                                     style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+                        Image(systemName: "questionmark")
+                            .font(.system(size: 22, weight: .black))
+                            .foregroundStyle(BrimTheme.ink.opacity(0.4))
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(BrimTheme.ink.opacity(0.5))
+                            .offset(x: 17, y: 17)
+                    } else {
+                        Circle()
+                            .fill(open ? accent : BrimTheme.creamDeep)
+                            .overlay(Circle().stroke(inUse ? BrimTheme.cyan : BrimTheme.ink.opacity(0.12),
+                                                     lineWidth: inUse ? 3.5 : 1.5))
+                        Image(systemName: open ? Self.symbol(for: vessel.venue) : "lock.fill")
+                            .font(.system(size: open ? 20 : 15, weight: .heavy))
+                            .foregroundStyle(BrimTheme.ink.opacity(open ? 0.85 : 0.45))
+                    }
                 }
                 .frame(width: 52, height: 52)
-                Text(vessel.name)
+                Text(Self.name(for: vessel, sandBarFound: found))
                     .font(BrimTheme.text(12, .heavy))
                     .foregroundStyle(open ? BrimTheme.ink : BrimTheme.inkFaint)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(Self.caption(for: vessel, crowns: crowns, chosen: chosen))
+                Text(Self.caption(for: vessel, crowns: crowns, chosen: chosen, sandBarFound: found))
                     .font(BrimTheme.text(11, .bold))
                     .foregroundStyle(inUse ? BrimTheme.ink : BrimTheme.inkSoft)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(secret ? 0.6 : 0.7)
+                    .padding(.horizontal, 2)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -138,8 +180,7 @@ struct CabinetSheet: View {
         }
         .buttonStyle(PressScaleStyle())
         .disabled(!open)
-        .accessibilityLabel(open ? "\(vessel.name)\(inUse ? ", in use" : "")"
-                                 : "\(vessel.name), locked, needs \(vessel.crowns) crowns")
+        .accessibilityLabel(Self.accessibilityText(for: vessel, crowns: crowns, chosen: chosen, sandBarFound: found))
     }
 
     /// The tile's symbol: the venue's own (the house jug: a drop).

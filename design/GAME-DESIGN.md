@@ -62,7 +62,7 @@ Paid, one time (£1.99 / $1.99 tier), no ads, no in-app purchases, no data colle
    | 3. **Milkshake Diner** | Viscosity: shakes, honey, maple syrup; stop early. |
    | 4. **The Conveyor** | Moving glasses: they slide under the spout and keep going; fill inside the window. |
    | 5. **Potion Shop** | Precision: tiny vials, beakers with mL lines, lines that fade after 1 s. |
-   | Secret: **Sand Bar** | Hourglasses and sand (repose threshold). Unlocked by 3-starring everything. |
+   | Secret: **Sand Bar** | Hourglasses and sand (repose threshold). Unlocked at 105★ of the 120 in the five main venues (round 9; all-3★ proved nearly unreachable in the balance sweep). |
 2. **Rush (endless).** One big shared jug. Glasses keep coming, mixed liquids, speed tiers every 8 glasses. Perfect refills the jug +6% and grows the multiplier (×1→×2→×3→×5); Spills and Shorts break the streak; the run ends after **3 spills** or when the jug runs dry. Local best + Game Center leaderboard.
 3. **Daily Pour.** A seeded 10-glass run, the same for everyone that day, one scored attempt (practice afterwards doesn't count). Leaderboard. A shareable result card (e.g. `Brim · Daily #12 · 🟨🟩🟩⭐️⭐️🟩🟥⭐️🟩🟩 · 1,840`).
 

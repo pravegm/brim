@@ -140,7 +140,11 @@ struct LevelTests {
         #expect(LevelCatalog.starsToUnlock(.milkshakeDiner) == 18)
         #expect(LevelCatalog.starsToUnlock(.conveyor) == 30)
         #expect(LevelCatalog.starsToUnlock(.potionShop) == 44)
-        #expect(LevelCatalog.starsToUnlock(.sandBar) == 120)
+        // Round 8 (founder): 105 of the 120 campaign stars, not all of them.
+        #expect(LevelCatalog.starsToUnlock(.sandBar) == 105)
+        #expect(LevelCatalog.starsToUnlock(.sandBar) <= 3 * LevelCatalog.levels.filter { (l: Level) -> Bool in
+            l.venue != .sandBar
+        }.count)
     }
 
     @Test func dailyOrdersAreDeterministicAndValid() {

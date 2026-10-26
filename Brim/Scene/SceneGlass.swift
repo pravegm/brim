@@ -29,6 +29,10 @@ struct GlassFrame {
     /// Round 6 (REVIEW-5 §2): a glass riding a conveyor belt — how much of its pour window is left (1 = the mouth
     /// hasn't reached the stream yet, 0 = it has passed). The line tab drains with it. nil = not on a belt.
     var beltWindow: CGFloat? = nil
+    /// Round 9 (QA-4 P1-1): where the glass waiting in the next-glass slot stands (world, as drawn: walls, foot,
+    /// handle, plinth, up to the top of its rim; `SceneGlass.occupiedWorldRect`). A verdict stamp never sits over it.
+    /// nil = no glass waits.
+    var waitingGlassRect: CGRect? = nil
 }
 
 /// One glass on the counter. Two roots so the stream can be drawn *between* them:
@@ -481,6 +485,19 @@ final class SceneGlass {
 
     /// How far the glass reaches left of its centre line in LOCAL units (walls, foot, mug handle).
     var localLeftHalfWidth: CGFloat { max(maxHW + (hasHandle ? 30 : 0), footHW) }
+
+    /// Round 9 (QA-4 P1-1): the world rect the glass occupies as drawn now, centred on `centreX` (default: where it was
+    /// last drawn): walls, foot, mug handle and hourglass plinth/posts across (not the line tab: a waiting glass shows
+    /// none), from its foot to the top of its rim. The scene hands the waiting glass's to the glass being judged.
+    func occupiedWorldRect(centreX: CGFloat? = nil) -> CGRect {
+        let k = displayScale
+        let cx = centreX ?? x
+        let reach = sideReach
+        let left = cx - reach.left * k
+        let right = cx + reach.body * k
+        let bottom = counterY - dropY - 1
+        return CGRect(x: left, y: bottom, width: max(0, right - left), height: max(0, rimTopWorld - bottom))
+    }
 
     /// 0…1 across the liquid surface if `worldX` is inside the mouth, else nil.
     func surfaceFraction(worldX: CGFloat) -> CGFloat? {
@@ -1340,6 +1357,9 @@ final class SceneGlass {
     /// (ROUND-3 decision 3). Round 8 (REVIEW-6 N5, frame 18): on a glass too tall for that — flute, highball, soda
     /// glass — the old clamp pressed PERFECT down onto the rim over the line tab; now it stands beside the glass
     /// instead (left first, inside `safeX`, scaled down to fit). Computed from the live root (Perfect hop).
+    /// Round 9 (QA-4 P1-1): never over the glass waiting in the slot (`GlassFrame.waitingGlassRect`). Beside: the other
+    /// side if it is free and has room (the Duo), else raised so the ink clears the waiting rim by `stampWaitingGap`
+    /// (phones). Above the rim: slid right off it, else lifted clear of its rim, both inside the crop and keep-out.
     private func placeStamp(_ f: GlassFrame) {
         let full = stampFullSize == .zero ? stamp.size : stampFullSize       // settled size, not the pop-in scale
         let ks = max(displayScale, 0.01)
@@ -1357,11 +1377,34 @@ final class SceneGlass {
         // a little smaller is fine (REVIEW-6 N5: 0.85), much smaller is not — then it goes beside.
         let fit = (decisionLimit - floorY) / max(inkHalfH + popTop, 1)
         let above = min(1, fit)
+        // Round 9 (QA-4 P1-1): the glass waiting in the slot. A stamp whose ink would overlap it across (with a little
+        // air) and not stand ≥ `stampWaitingGap` over its rim reads as ITS verdict, so it moves off it.
+        var waiting: CGRect?
+        if let wr = f.waitingGlassRect, !wr.isNull, !wr.isEmpty { waiting = wr }
+        let pad = SceneGlass.stampWaitingPad
         if above >= SceneGlass.stampMinAboveScale {
             let minCentre = floorY + inkHalfH * above
             let desired = rimY + 12 + full.height * 0.5 * above
-            stampCentre = CGPoint(x: clampedLocalX(halfWidth: full.width * 0.5 * above * ks, f) / ks,
-                                  y: max(minCentre, min(desired, liveLimit - popTop * above)))
+            var cx = clampedLocalX(halfWidth: full.width * 0.5 * above * ks, f) / ks
+            var cy = max(minCentre, min(desired, liveLimit - popTop * above))
+            if let wr = waiting {
+                // World, at rest: the ink's half-width and its bottom.
+                let hw = full.width * SceneGlass.labelSideFrac * above * ks
+                var wx = x + cx * ks
+                let bottom = restBase + (cy - inkHalfH * above) * ks
+                if wx + hw > wr.minX - pad && wx - hw < wr.maxX + pad && bottom < wr.maxY + SceneGlass.stampWaitingGap {
+                    // 1. Slide right, off the waiting glass (the next glass always waits on the left), inside the crop.
+                    let hi = f.safeX.upperBound - full.width * 0.5 * above * ks
+                    wx = max(wx, min(wr.maxX + pad + hw, hi))
+                    cx = (wx - x) / ks
+                    // 2. Still over it: lift until the ink clears its rim, never past the keep-out.
+                    if wx - hw < wr.maxX + pad {
+                        let need = (wr.maxY + SceneGlass.stampWaitingGap - restBase) / ks + inkHalfH * above
+                        cy = max(cy, min(need, liveLimit - popTop * above))
+                    }
+                }
+            }
+            stampCentre = CGPoint(x: cx, y: cy)
             stampScale = above
             stampSide = 0
         } else {
@@ -1375,15 +1418,46 @@ final class SceneGlass {
             let leftRoom = (x - leftReach - margin) - f.safeX.lowerBound
             let rightRoom = f.safeX.upperBound - (x + rightReach + margin)
             let sL = min(1, leftRoom / w), sR = min(1, rightRoom / w)
-            let side: CGFloat
-            if sL >= SceneGlass.stampMinSideScale || sL >= sR { side = -1 } else { side = 1 }
-            let s = max(SceneGlass.stampFloorScale, side < 0 ? sL : sR)
-            var wx = side < 0 ? x - leftReach - margin - w * s * 0.5 : x + rightReach + margin + w * s * 0.5
-            let lo = f.safeX.lowerBound + w * s * 0.5, hi = f.safeX.upperBound - w * s * 0.5
-            if lo <= hi { wx = min(max(wx, lo), hi) }
+            let safe = f.safeX
+            // Centre x (world) of a stamp of world scale `s` on `side`, kept inside the crop.
+            func centreX(_ side: CGFloat, _ s: CGFloat) -> CGFloat {
+                var wx = side < 0 ? x - leftReach - margin - w * s * 0.5 : x + rightReach + margin + w * s * 0.5
+                let lo = safe.lowerBound + w * s * 0.5, hi = safe.upperBound - w * s * 0.5
+                if lo <= hi { wx = min(max(wx, lo), hi) }
+                return wx
+            }
+            // Whether a stamp on `side` would stand over (across) the waiting glass.
+            func overWaiting(_ side: CGFloat, _ wr: CGRect) -> Bool {
+                let s = max(SceneGlass.stampFloorScale, side < 0 ? sL : sR)
+                let c = centreX(side, s)
+                let hw = w * SceneGlass.labelSideFrac * s
+                return c + hw > wr.minX - pad && c - hw < wr.maxX + pad
+            }
+            var side: CGFloat = (sL >= SceneGlass.stampMinSideScale || sL >= sR) ? -1 : 1
+            // World y the ink's bottom must clear (the waiting rim + the gap), when neither side is free of it.
+            var clearY: CGFloat?
+            if let wr = waiting, overWaiting(side, wr) {
+                let other = -side
+                let otherScale = other < 0 ? sL : sR
+                if otherScale >= SceneGlass.stampMinAvoidScale && !overWaiting(other, wr) {
+                    side = other                                   // the Duo: the right side has room
+                } else {
+                    clearY = wr.maxY + SceneGlass.stampWaitingGap  // phones: no room either side; stand above it
+                }
+            }
+            var s = max(SceneGlass.stampFloorScale, side < 0 ? sL : sR)
+            if let c = clearY {
+                // Ink bottom ≥ c and pop top ≤ the keep-out (3 % slack for the hop's stretch): shrink if it must.
+                let fitS = (f.keepOutTop - c) / max(inkHalfH * 2.2 * 1.03, 1)
+                s = max(SceneGlass.stampFloorScale, min(s, fitS))
+            }
+            let wx = centreX(side, s)
             let local = s / ks
-            // Level with the rim (reads as "this glass"), never above the keep-out.
-            stampCentre = CGPoint(x: (wx - x) / ks, y: min(rimY, liveLimit - popTop * local))
+            // Level with the rim (reads as "this glass"), raised over a waiting glass if it must be, never above the
+            // keep-out.
+            var cy = rimY
+            if let c = clearY { cy = max(cy, (c - restBase) / ks + inkHalfH * local) }
+            stampCentre = CGPoint(x: (wx - x) / ks, y: min(cy, liveLimit - popTop * local))
             stampScale = local
             stampSide = side
         }
@@ -1404,6 +1478,13 @@ final class SceneGlass {
     static let stampMinSideScale: CGFloat = 0.4
     /// …and never below this one.
     static let stampFloorScale: CGFloat = 0.25
+    /// Round 9 (QA-4 P1-1): a stamp keeps this much air (world pt) across from the waiting glass…
+    static let stampWaitingPad: CGFloat = 4
+    /// …or, standing over it, its ink clears the waiting glass's rim by this much (world pt).
+    static let stampWaitingGap: CGFloat = 10
+    /// The far side takes a stamp off the waiting glass only at this scale or more (smaller reads as a speck: on
+    /// phones it stands over the waiting glass's rim instead).
+    static let stampMinAvoidScale: CGFloat = 0.34
     /// How far the fill-line tab reaches past the outer wall (`buildLine`: 8 + 2 + 31), plus a point.
     static let tabReach: CGFloat = 42
 
@@ -1436,17 +1517,18 @@ final class SceneGlass {
     }
 
     /// How far (local) the glass reaches left (walls, foot, mug handle, plinth) and right (walls, foot, plinth, the
-    /// line tab) of its centre line. Cached per shape (`woodReach` measures paths).
-    private var sideReach: (left: CGFloat, right: CGFloat) {
+    /// line tab) of its centre line, and right without the tab (`body`). Cached per shape (`woodReach` measures paths).
+    private var sideReach: (left: CGFloat, right: CGFloat, body: CGFloat) {
         if sideReachShape != shapeID {
             sideReachShape = shapeID
             let wood = woodReach
-            sideReachCache = (max(localLeftHalfWidth, wood), max(maxHW + SceneGlass.tabReach, max(footHW, wood)))
+            let body = max(maxHW, max(footHW, wood))
+            sideReachCache = (max(localLeftHalfWidth, wood), max(maxHW + SceneGlass.tabReach, body), body)
         }
         return sideReachCache
     }
     private var sideReachShape = "\u{0}"
-    private var sideReachCache: (left: CGFloat, right: CGFloat) = (0, 0)
+    private var sideReachCache: (left: CGFloat, right: CGFloat, body: CGFloat) = (0, 0, 0)
     /// The stamp's current scale relative to its full size (world). Tests.
     var stampWorldScale: CGFloat { stampScale * displayScale }
 

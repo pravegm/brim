@@ -28,6 +28,9 @@ struct HomeView: View {
 
     private var roomy: Bool { info.size.width >= Self.roomyWidth }
 
+    /// Round 9 (demo `screen=cabinet`): Home opens with the Glass Cabinet sheet up. Pure.
+    static func opensCabinet(demoScreen: DemoConfig.Screen?) -> Bool { demoScreen == .cabinet }
+
     /// Pure (tested): the button row's frame (canvas points), always ≥ 12 pt below the lowest coaster on the counter
     /// (`lowestGlassWorldY`: the lowest glass base, world; a waiting glass may stand a little lower than the counter).
     /// The row may shrink to 52 pt rather than sink into the home-indicator edge.
@@ -65,6 +68,8 @@ struct HomeView: View {
         .animation(BrimTheme.settle(reduceMotion), value: showCabinet)
         .onAppear {
             withAnimation(BrimTheme.pop(reduceMotion).delay(0.05)) { appeared = true }
+            // Round 9 (REVIEW-7 P1-2): demo `screen=cabinet` opens on the Glass Cabinet.
+            if Self.opensCabinet(demoScreen: controller.demo?.screen) { showCabinet = true }
         }
         .task {
             while !Task.isCancelled {

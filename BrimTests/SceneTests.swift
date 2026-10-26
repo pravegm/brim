@@ -993,14 +993,32 @@ final class SceneTests: XCTestCase {
         XCTAssertEqual(scene.lookCrossFadeCount, 1)
         XCTAssertEqual(scene.backdropRenderCount, painted + 1, "no repaint at the tier change")
 
-        // Pouring through the end of a tier: painted anyway, two glasses before the change.
+        // Pouring through the end of a tier (round 9, QA-4 P2-3): never while the stream fills a glass; two glasses
+        // before the change, at the first moment between glasses even with the jug still tipped.
+        guard !driver.snapshot.glasses.isEmpty else { return XCTFail("a glass") }
         driver.snapshot.jug.flow = 0.5
+        driver.snapshot.glasses[0].phase = .filling
         driver.snapshot.ordersDone = 2 * every + GameScene.prewarmFromGlass
         drive(scene, driver, frames: 2, dx: 0, t: &t)
         XCTAssertEqual(scene.backdropRenderCount, painted + 1, "waits for a quiet moment")
         driver.snapshot.ordersDone = 2 * every + GameScene.prewarmForcedFromGlass
+        drive(scene, driver, frames: 3, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 1, "not mid-fill")
+        driver.snapshot.glasses[0].phase = .served
         drive(scene, driver, frames: 2, dx: 0, t: &t)
-        XCTAssertEqual(scene.backdropRenderCount, painted + 2)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 2, "between glasses, the jug still tipped")
+        XCTAssertLessThanOrEqual(scene.cachedLookCount, 3)
+
+        // A player who never once stops filling: painted on the tier's last glass regardless.
+        driver.snapshot.rushTier = 4
+        driver.snapshot.venue = Rules.rushVenue(tier: 4)
+        driver.snapshot.glasses[0].phase = .filling
+        driver.snapshot.ordersDone = 3 * every + GameScene.prewarmForcedFromGlass
+        drive(scene, driver, frames: 3, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 2, "mid-fill")
+        driver.snapshot.ordersDone = 3 * every + GameScene.prewarmLastFromGlass
+        drive(scene, driver, frames: 2, dx: 0, t: &t)
+        XCTAssertEqual(scene.backdropRenderCount, painted + 3, "the last glass of the tier")
         XCTAssertLessThanOrEqual(scene.cachedLookCount, 3)
     }
 
@@ -1169,6 +1187,261 @@ final class SceneTests: XCTestCase {
         c.scene.vesselOverride = nil
         drive(c.scene, c.driver, frames: 2, dx: 0, t: &t)
         XCTAssertEqual(c.scene.shownVesselForm, .scoop)
+    }
+
+    // MARK: Round 9 (QA-4, REVIEW-7)
+
+    /// QA-4 P1-1: a verdict stamp never stands over the glass waiting in the slot. Every glass at the stop (tall ones
+    /// put their stamp beside themselves) × every glass that can wait beside it, at the slot Core gives it, on the Duo
+    /// and the phone crop, PERFECT and GOOD, once the pop and the Perfect hop have settled: the ink keeps clear of the
+    /// waiting glass across, or (no room either side) its bottom clears the waiting rim by 10 pt. It still stays inside
+    /// the crop, under the crease keep-out, and off its own glass. On the Duo a beside stamp takes the free right side.
+    @MainActor
+    func testStampNeverSitsOverTheWaitingGlass() {
+        let crops: [(name: String, layout: WorldLayout)] = [
+            ("Duo", WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)),
+            ("phone", WorldLayout.make(canvas: CGSize(width: 402, height: 874), hasFold: false)),
+        ]
+        let lemonade = LiquidCatalog.liquid(.lemonade)
+        var duoRight = 0
+        var phoneRaised = 0
+        var besideCases = 0
+        for crop in crops {
+            let layout = crop.layout
+            let keepOut = layout.creaseMinY - 8
+            let safe = GameScene(layout: layout).safeX
+            let fold = layout.hasFold
+            var waitingViews: [String: SceneGlass] = [:]
+            for shape in GlassCatalog.all {
+                for x in [CGFloat(340), 372, 400] {
+                    // The glasses that can wait beside this one, where Core parks them.
+                    var slots: [(shape: GlassShape, x: CGFloat)] = []
+                    for w in GlassCatalog.all {
+                        if let sx = NextGlassSlot.x(for: w, layout: layout, stop: (x: Double(x), shape: shape)) {
+                            slots.append((shape: w, x: CGFloat(sx)))
+                        }
+                    }
+                    if slots.isEmpty { continue }
+                    for verdict in [Judgement.perfect, .good] {
+                        let glass = SceneGlass(id: 1, darkBackdrop: false)
+                        let state = GlassState(id: 1, shape: shape, liquid: lemonade, x: x, phase: .served,
+                                               liquidHeight: shape.interiorHeight * 0.9, foamHeight: 0,
+                                               lineHeight: shape.interiorHeight * 0.9, lineOpacity: 1,
+                                               inPerfectBand: true, overflowing: false, patienceLeft: nil,
+                                               patienceTotal: nil, result: verdict)
+                        var f = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: 1, pouring: false,
+                                           tail: nil, advanced: true, reduceMotion: false, band: 0.025, projected: nil,
+                                           safeX: safe, keepOutTop: keepOut)
+                        glass.update(state, f)
+                        if verdict == .perfect { glass.celebrate() }
+                        for k in 1...45 {
+                            f.time = 1 + Double(k) / 60
+                            glass.update(state, f)
+                        }
+                        let body = glass.bodyWorldXRange
+                        for slot in slots {
+                            let wv: SceneGlass
+                            if let v = waitingViews[slot.shape.id] {
+                                wv = v
+                            } else {
+                                wv = SceneGlass(id: 2, darkBackdrop: false)
+                                waitingViews[slot.shape.id] = wv
+                            }
+                            var wf = GlassFrame(counterY: layout.counterY, dt: 1.0 / 60.0, time: f.time, pouring: false,
+                                                tail: nil, advanced: true, reduceMotion: false, band: 0.025,
+                                                projected: nil, safeX: safe, keepOutTop: keepOut)
+                            wf.waitingScale = fold ? GameScene.waitingScaleFold : GameScene.waitingScalePhone
+                            wf.waitingDrop = fold ? GameScene.waitingDropFold : GameScene.waitingDropPhone
+                            wf.waitingAlpha = GameScene.waitingAlpha
+                            let ws = GlassState(id: 2, shape: slot.shape, liquid: lemonade, x: slot.x, phase: .arriving,
+                                                liquidHeight: 0, foamHeight: 0, lineHeight: slot.shape.interiorHeight * 0.7,
+                                                lineOpacity: 0, inPerfectBand: false, overflowing: false,
+                                                patienceLeft: nil, patienceTotal: nil, result: nil)
+                            XCTAssertTrue(ws.isWaitingInSlot)
+                            wv.update(ws, wf)
+                            let wr = wv.occupiedWorldRect()
+                            XCTAssertEqual(wr.midX, slot.x, accuracy: 60, "the waiting glass stands at its slot")
+                            f.waitingGlassRect = wr
+                            for _ in 0..<2 {
+                                f.time += 1.0 / 60.0
+                                glass.update(state, f)
+                            }
+                            let tag = "\(crop.name) \(shape.id) \(verdict) at x \(x), \(slot.shape.id) waiting"
+                            guard let ink = glass.stampInkWorldRect else {
+                                XCTFail("\(tag): no stamp")
+                                continue
+                            }
+                            let across = ink.maxX <= wr.minX + 0.5 || ink.minX >= wr.maxX - 0.5
+                            let overRim = ink.minY >= wr.maxY + SceneGlass.stampWaitingGap - 0.5
+                            XCTAssertTrue(across || overRim, "\(tag): over the waiting glass (ink \(ink), waiting \(wr))")
+                            XCTAssertGreaterThanOrEqual(ink.minX, safe.lowerBound - 0.5, "\(tag): inside the crop")
+                            XCTAssertLessThanOrEqual(ink.maxX, safe.upperBound + 0.5, "\(tag): inside the crop")
+                            XCTAssertLessThanOrEqual(glass.stampReachWorld ?? 0, keepOut + 0.5, "\(tag): crease")
+                            if glass.stampBeside {
+                                besideCases += 1
+                                let clear = ink.maxX <= body.lowerBound + 0.5 || ink.minX >= body.upperBound - 0.5
+                                XCTAssertTrue(clear, "\(tag): beside, not over its own glass (ink \(ink), body \(body))")
+                                XCTAssertGreaterThanOrEqual(glass.stampWorldScale, SceneGlass.stampFloorScale - 0.001, tag)
+                                if fold && x == 372 {
+                                    XCTAssertTrue(across, "\(tag): the Duo has room on the right")
+                                    XCTAssertGreaterThan(ink.midX, x, "\(tag): right of the glass")
+                                    if across && ink.midX > x { duoRight += 1 }
+                                }
+                                if !fold && !across && overRim { phoneRaised += 1 }
+                            } else {
+                                XCTAssertGreaterThanOrEqual(ink.minY, glass.rimTopWorld + SceneGlass.stampRimGap - 0.25,
+                                                            "\(tag): ≥ 10 pt over its own rim")
+                            }
+                        }
+                        // No waiting glass: back where it was (round 8: left first on the Duo).
+                        f.waitingGlassRect = nil
+                        f.time += 1.0 / 60.0
+                        glass.update(state, f)
+                        if fold && x == 372 && glass.stampBeside, let ink = glass.stampInkWorldRect {
+                            XCTAssertLessThan(ink.midX, x, "\(crop.name) \(shape.id): left again with no waiting glass")
+                        }
+                    }
+                }
+            }
+        }
+        XCTAssertGreaterThan(besideCases, 0, "tall glasses were judged")
+        XCTAssertGreaterThan(duoRight, 0, "frame 18's flute and highball go right of the glass on the Duo")
+        XCTAssertGreaterThan(phoneRaised, 0, "phones stand the stamp over the waiting rim")
+    }
+
+    /// QA-4 P1-1 end to end: the scene hands the waiting glass to the judged one, so a highball's PERFECT at the Duo's
+    /// stop stands to its right, clear of the highball waiting in the slot.
+    @MainActor
+    func testSceneKeepsAStampOffTheWaitingGlass() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .rush, layout: layout, seed: 4)
+        var snap = session.snapshot
+        let highball = GlassCatalog.shape("highball")
+        let stop: CGFloat = 372
+        guard let sx = NextGlassSlot.x(for: highball, layout: layout, stop: (x: Double(stop), shape: highball)) else {
+            return XCTFail("a highball waits beside a highball")
+        }
+        let lemonade = LiquidCatalog.liquid(.lemonade)
+        let judged = GlassState(id: 40, shape: highball, liquid: lemonade, x: stop, phase: .served,
+                                liquidHeight: highball.interiorHeight * 0.8, foamHeight: 0,
+                                lineHeight: highball.interiorHeight * 0.8, lineOpacity: 1, inPerfectBand: true,
+                                overflowing: false, patienceLeft: nil, patienceTotal: nil, result: .perfect)
+        let waiting = GlassState(id: 41, shape: highball, liquid: lemonade, x: CGFloat(sx), phase: .arriving,
+                                 liquidHeight: 0, foamHeight: 0, lineHeight: highball.interiorHeight * 0.7,
+                                 lineOpacity: 0, inPerfectBand: false, overflowing: false, patienceLeft: nil,
+                                 patienceTotal: nil, result: nil)
+        snap.glasses = [judged, waiting]
+        snap.phase = .playing
+        snap.stream = []
+        snap.jug.flow = 0
+        let scene = GameScene(layout: layout)
+        let driver = ScriptedSceneDriver(snap)
+        scene.driver = driver
+        scene.reset(for: snap)
+        var t: TimeInterval = 5
+        drive(scene, driver, frames: 50, dx: 0, t: &t)
+        guard let ink = scene.stampInkWorldRect(glassID: 40) else { return XCTFail("PERFECT shows") }
+        guard let w = scene.waitingGlassWorldFrame else { return XCTFail("a glass waits") }
+        XCTAssertGreaterThanOrEqual(ink.minX, w.maxX - 0.5, "not over the waiting glass (ink \(ink), waiting \(w))")
+        XCTAssertGreaterThan(ink.midX, stop, "right of the judged glass")
+        XCTAssertLessThanOrEqual(ink.maxX, scene.safeX.upperBound + 0.5)
+    }
+
+    /// REVIEW-7 P1-1 (frame 30): the sand slide is telegraphed so it reads at arm's length — outlined grains of 2.2 pt
+    /// and up, many more of them near the slide, the scoop shivering (±1.2° at most, none under Reduce Motion) over the
+    /// last half, and the sight-glass slot glowing amber-red. All of it goes once the sand flows.
+    @MainActor
+    func testSandSlideTelegraphIsVisible() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .shift(LevelCatalog.levels.first?.id ?? "1-1"), layout: layout, seed: 2)
+        var j = session.snapshot.jug
+        j.liquid = LiquidCatalog.liquid(.sand)
+        j.fill = 0.7
+        j.flow = 0
+        j.angle = 40
+        let jug = SceneJug()
+        jug.setStyle(ScenePalette.forVenue(.sandBar).vessel)
+
+        // Early in the telegraph: a few big grains, no shiver, no warning yet.
+        j.reposeProgress = 0.75
+        jug.update(j, streamWidth: 0, time: 1, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.form, .scoop)
+        XCTAssertGreaterThanOrEqual(jug.trickleGrains, 4)
+        XCTAssertGreaterThanOrEqual(jug.trickleGrainRadius, 2.2)
+        XCTAssertEqual(jug.shiverAngle, 0)
+        XCTAssertEqual(jug.sightWarning, 0, accuracy: 0.0001)
+        let early = jug.trickleGrains
+
+        // Near the slide.
+        j.reposeProgress = 0.97
+        var maxShiver: CGFloat = 0
+        var maxWarn: CGFloat = 0
+        for k in 0..<30 {
+            jug.update(j, streamWidth: 0, time: 2 + Double(k) / 60, dt: 1.0 / 60.0)
+            maxShiver = max(maxShiver, abs(jug.shiverAngle))
+            maxWarn = max(maxWarn, jug.sightWarning)
+        }
+        XCTAssertGreaterThanOrEqual(jug.trickleGrains, 12)
+        XCTAssertGreaterThan(jug.trickleGrains, early * 2)
+        XCTAssertLessThanOrEqual(jug.trickleGrains, SceneJug.maxSittingGrains + SceneJug.maxFallingGrains)
+        XCTAssertGreaterThanOrEqual(jug.trickleGrainRadius, 2.2)
+        XCTAssertLessThanOrEqual(jug.trickleGrainRadius, 3.0 + 0.001)
+        XCTAssertGreaterThan(maxShiver, SceneJug.shiverMax * 0.6, "the scoop shivers")
+        XCTAssertLessThanOrEqual(maxShiver, SceneJug.shiverMax + 0.0001, "±1.2° at most")
+        XCTAssertGreaterThan(maxWarn, 0.6, "the sight glass glows")
+
+        // Reduce Motion: no shiver; the slot still warns, steadily.
+        jug.reduceMotion = true
+        jug.update(j, streamWidth: 0, time: 2.6, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.shiverAngle, 0)
+        XCTAssertGreaterThan(jug.sightWarning, 0.6)
+        jug.reduceMotion = false
+
+        // It slides: the telegraph is over.
+        j.flow = 0.4
+        jug.update(j, streamWidth: 12, time: 2.7, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.trickleGrains, 0)
+        XCTAssertEqual(jug.shiverAngle, 0)
+        XCTAssertEqual(jug.sightWarning, 0, accuracy: 0.0001)
+
+        // Not sand: nothing.
+        j.flow = 0
+        j.liquid = LiquidCatalog.liquid(.water)
+        jug.update(j, streamWidth: 0, time: 2.8, dt: 1.0 / 60.0)
+        XCTAssertEqual(jug.trickleGrains, 0)
+        XCTAssertEqual(jug.shiverAngle, 0)
+    }
+
+    /// REVIEW-7 P2-8 (N11, frames 16/20): the Conveyor's chevron badge stays level as the jug tips (turning with it,
+    /// it read as clock hands); other venues' roundels still turn with their jug.
+    @MainActor
+    func testConveyorBadgeStaysLevelAsTheJugTips() {
+        let layout = WorldLayout.make(canvas: CGSize(width: 669, height: 951), hasFold: true)
+        let session = GameSession(mode: .practice, layout: layout, seed: 7)
+        for _ in 0..<30 { _ = session.step(dt: 1.0 / 60.0, tilt: 0) }
+        let flat = session.snapshot.jug
+        for _ in 0..<30 { _ = session.step(dt: 1.0 / 60.0, tilt: 48) }
+        let tipped = session.snapshot.jug
+        XCTAssertGreaterThan(abs(tipped.angle - flat.angle), 15, "the jug tipped")
+
+        let conveyor = SceneJug()
+        conveyor.setStyle(ScenePalette.forVenue(.conveyor).vessel)
+        XCTAssertEqual(conveyor.decalKind, .ticket)
+        conveyor.update(flat, streamWidth: 0, time: 1, dt: 1.0 / 60.0)
+        let flatBody = conveyor.bodyWorldRotation
+        guard let a = conveyor.decalWorldRotation else { return XCTFail("the badge shows") }
+        conveyor.update(tipped, streamWidth: 8, time: 1.1, dt: 1.0 / 60.0)
+        guard let b = conveyor.decalWorldRotation else { return XCTFail("the badge shows") }
+        XCTAssertGreaterThan(abs(conveyor.bodyWorldRotation - flatBody), 0.25, "the body turned")
+        XCTAssertEqual(a, SceneJug.decalTilt, accuracy: 0.001)
+        XCTAssertEqual(b, SceneJug.decalTilt, accuracy: 0.001, "the badge stayed level")
+
+        let lemon = SceneJug()
+        lemon.setStyle(ScenePalette.forVenue(.lemonadeStand).vessel)
+        lemon.update(flat, streamWidth: 0, time: 1, dt: 1.0 / 60.0)
+        lemon.update(tipped, streamWidth: 8, time: 1.1, dt: 1.0 / 60.0)
+        guard let c = lemon.decalWorldRotation else { return XCTFail("the lemon roundel shows") }
+        XCTAssertEqual(c, lemon.bodyWorldRotation + SceneJug.decalTilt, accuracy: 0.001)
     }
 }
 

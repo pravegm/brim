@@ -716,6 +716,8 @@ struct BalanceStats {
     var clears: Int = 0
     var stars: Int = 0
     var threeStars: Int = 0
+    /// Attempts that earned at least 2★ (for the Sand Bar unlock projection).
+    var twoStars: Int = 0
     var capped: Int = 0
     var frames: Int = 0
     var glasses: Int = 0
@@ -736,6 +738,7 @@ struct BalanceStats {
         if a.topTier >= 3 { reachedTier3 += 1 }
         stars += a.stars
         if a.stars >= 3 { threeStars += 1 }
+        if a.stars >= 2 { twoStars += 1 }
         if a.capped { capped += 1 }
         frames += a.frames
         duration += a.duration
@@ -759,6 +762,7 @@ struct BalanceStats {
         clears += o.clears
         stars += o.stars
         threeStars += o.threeStars
+        twoStars += o.twoStars
         capped += o.capped
         frames += o.frames
         glasses += o.glasses
@@ -1024,11 +1028,18 @@ struct BalanceTests {
         var expertLevels: Int = 0
         var expertAnyClear: Int = 0
         var expertClearSum: Double = 0
-        // Round 8: the Sand Bar opens at 120 stars (every campaign shift 3★). An expert should be able to 3★ each
-        // campaign shift within ten tries; a shift where that is unlikely is a wall in front of the secret venue.
+        // Round 8: the Sand Bar opens at `starsToUnlock(.sandBar)` (105 of the 120 campaign stars). Project what an
+        // expert holds after ten tries at every campaign shift: E[best of 10] = P(clear) + P(≥ 2★) + P(3★) within ten
+        // tries, from per-try rates smoothed as (k + 0.5) / (n + 1), so four cold tries without a 3★ read as "rare",
+        // not "never". A wall is a shift where a 3★ within ten tries is still unlikely.
         var expertThreeLikely: Int = 0
         var expertCampaign: Int = 0
         var sandWalls: [String] = []
+        var expertBest10: Double = 0
+        func within10(_ k: Int, _ n: Int) -> Double {
+            let p: Double = (Double(k) + 0.5) / (Double(n) + 1)
+            return 1 - pow(1 - p, 10)
+        }
         for l in LevelCatalog.levels {
             if let s = stats(l.id, 1), s.attempts >= 2 {
                 casualLevels += 1
@@ -1038,7 +1049,9 @@ struct BalanceTests {
             if let s = stats(l.id, 2), s.attempts >= 2, l.venue != .sandBar {
                 expertCampaign += 1
                 if 1 - pow(1 - s.threeRate, 5) >= 0.5 { expertThreeLikely += 1 }
-                if 1 - pow(1 - s.threeRate, 10) < 0.5 { sandWalls.append(l.id) }
+                let three10: Double = within10(s.threeStars, s.attempts)
+                if three10 < 0.5 { sandWalls.append(l.id) }
+                expertBest10 += within10(s.clears, s.attempts) + within10(s.twoStars, s.attempts) + three10
             }
             if let s = stats(l.id, 2) {
                 expertLevels += 1
@@ -1060,11 +1073,15 @@ struct BalanceTests {
         if casualLevels > 0 || expertCampaign > 0 {
             var line: String = "BRIM-BAL stars casualLikely3=\(BalanceRun.f2(casualLevels > 0 ? Double(casualThreeLikely) / Double(casualLevels) : 0))"
             line += " expertLikely3=\(BalanceRun.f2(expertCampaign > 0 ? Double(expertThreeLikely) / Double(expertCampaign) : 0))"
-            line += " sandWalls=\(sandWalls.count) n=\(casualLevels)/\(expertCampaign)"
+            line += " sandWalls=\(sandWalls.count) expertBest10=\(BalanceRun.f1(expertBest10))"
+            line += " sandNeeds=\(LevelCatalog.starsToUnlock(.sandBar)) n=\(casualLevels)/\(expertCampaign)"
             BalanceRun.say(line)
         }
-        if expertCampaign >= 20 && !sandWalls.isEmpty {
-            BalanceRun.warn("Sand Bar unlock: expert unlikely to 3★ within 10 tries: \(sandWalls.joined(separator: ","))")
+        let campaignCount: Int = LevelCatalog.levels.filter { (l: Level) -> Bool in l.venue != .sandBar }.count
+        let sandNeeds: Double = Double(LevelCatalog.starsToUnlock(.sandBar))
+        if expertCampaign == campaignCount && (expertBest10 < sandNeeds || sandWalls.count > 3) {
+            BalanceRun.warn("Sand Bar unlock: expert holds ~\(BalanceRun.f1(expertBest10)) of \(Int(sandNeeds)) stars "
+                            + "after 10 tries a shift; 3★ unlikely on \(sandWalls.joined(separator: ","))")
         }
         if expertLevels >= 10 && expertClearSum / Double(expertLevels) < 0.9 {
             BalanceRun.warn("expert mean clear \(BalanceRun.f2(expertClearSum / Double(expertLevels))) < 0.90")

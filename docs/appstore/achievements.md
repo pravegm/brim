@@ -39,8 +39,8 @@
 | 6 | `brim.venue.diner` | Thick and Slow | Clear every shift at the Milkshake Diner. | You stopped early. It paid off. | 50 | No | Every Milkshake Diner shift cleared |
 | 7 | `brim.venue.conveyor` | Moving Target | Clear every shift on The Conveyor. | Nothing got past you. | 75 | No | Every Conveyor shift cleared |
 | 8 | `brim.venue.potions` | Steady Alchemist | Clear every shift at the Potion Shop. | Measured to the drop. | 75 | No | Every Potion Shop shift cleared |
-| 9 | `brim.allstars` | All Stars | Earn 3 stars on every shift in all five venues. | Every shift, three stars. Something just opened behind the counter. | 100 | No | Every shift in the five main venues has 3 stars (this is also the Sand Bar unlock) |
-| 10 | `brim.sandbar` | Grain by Grain | There's one more venue. Keep pouring. | The Sand Bar, cleared. Every last grain. | 100 | **Yes** | Every Sand Bar shift cleared |
+| 9 | `brim.allstars` | All Stars | Earn 3 stars on every shift in all five venues. | Every shift, three stars. Not a drop out of place. | 100 | No | Every shift in the five main venues has 3 stars (round 9: no longer the Sand Bar unlock, which opens at 105★) |
+| 10 | `brim.sandbar` | Grain by Grain | There's one more venue. Keep pouring. | You found the Sand Bar. Mind every grain. | 100 | **Yes** | The Sand Bar unlocks (round 9: 105 stars in the five main venues, `LevelCatalog.starsToUnlock(.sandBar)`) |
 | | | | | | **700** | | |
 
 Points: 25 + 50 + 100 + 75 + 50 + 50 + 75 + 75 + 100 + 100 = **700**. **300 points stay in reserve** for later updates (for example a holiday menu or Bubble Tea venue), well under the 1,000 cap.
