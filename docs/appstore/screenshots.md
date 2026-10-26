@@ -6,11 +6,15 @@
 
 | Set | Pixels (portrait) | Frames | Captured by (`store.yml`) | Artifact | Upload |
 |---|---|---|---|---|---|
-| **iPhone Duo, inner display** (the hero set) | **2007 × 2853** (the 669 × 951 pt tabletop canvas at 3×) | **6** (D1–D6) | job `duo`: `ci/duo.sh` store pass with `STORE_LIST=ci/store-scenarios.txt` | `store-duo` → `duo-screens/store/` | By hand in the web UI, **if** App Store Connect shows an iPhone Duo slot (`DECISIONS.md` #13) |
-| **iPhone 6.9"** | **1320 × 2868** | **5** (P1–P5) | job `phones`: `ci/screenshots.sh` on the iPhone 18 Pro Max (fallback: newest `… Pro Max`) | `store-69` → `store-69/store/` | Web UI, "6.9-inch Display" |
-| **iPhone 6.1" class** | **1179 × 2556** (or 1170 × 2532); **1206 × 2622** when the runner has no 6.1-inch simulator | **5** (P1–P5) | job `phones`: `ci/screenshots.sh` on the newest simulator with a 1179 × 2556 / 1170 × 2532 screen, else the iPhone 18 Pro (6.3") | `store-61` → `store-61/store/` | Web UI: 1179 × 2556 and 1206 × 2622 go in the **6.3-inch** slot, 1170 × 2532 in the **6.1-inch** slot. The MANIFEST header names the device used |
+| **iPhone Duo, inner display** (the hero set) | **2007 × 2853** (the 669 × 951 pt tabletop canvas at 3×) | **5** (D1–D5; D6 dropped at sign-off) | job `duo`: `ci/duo.sh` store pass with `STORE_LIST=ci/store-scenarios.txt` | `store-duo` → `duo-screens/store/` | By hand in the web UI, **if** App Store Connect shows an iPhone Duo slot (`DECISIONS.md` #13) |
+| **iPhone with Dynamic Island, large display** ("6.9-inch" in older docs) | **1320 × 2868** | **5** (P1–P5) | job `phones`: `ci/screenshots.sh` on the iPhone 18 Pro Max (fallback: newest `… Pro Max`) | `store-69` → `store-69/store/` | Web UI, Dynamic Island (large) slot. Optional but recommended (else Apple scales the medium set up) |
+| **iPhone with Dynamic Island, medium display** (**the one required slot**) | **1179 × 2556** (or **1206 × 2622**) | **5** (P1–P5) | job `phones`: `ci/screenshots.sh` on the newest simulator with a 1179 × 2556 screen (26 Oct run: iPhone 16), else the iPhone 18 Pro (1206 × 2622) | `store-61` → `store-61/store/` | Web UI, Dynamic Island (medium) slot. **Never 1170 × 2532**: that size is now "Face ID (medium)" and doesn't fill the required slot. The MANIFEST header names the device used |
 
-Rules: PNG or JPEG, **no alpha channel**, 1–10 per size. The first three frames of each set appear in search results, so **frames 1–3 must each sell the game alone**.
+Rules: PNG or JPEG, **no alpha channel**, up to 10 per size; at least one in Dynamic Island (medium). The first three frames of each set appear in search results, so **frames 1–3 must each sell the game alone**.
+
+**iPhone Duo slot, as of 26 Oct 2026.** Apple's spec lists the Duo inner display (2007 × 2853 / 2853 × 2007) and the outer display (1398 × 2034 / 2034 × 1398). Uploading Duo screenshots is what puts the "optimized for iPhone Duo" badge on the product page. But in September Apple staff said Duo uploads "will be available later this year", and developers still reported no Duo slot in the web UI or the API (`ScreenshotDisplayType`) in late October. **From April 2027 every submission must include Duo screenshots**, so 1.0.1 must have them either way. Outer display: Brim shows only its status card there, so upload no outer set unless the slot insists (then one capture of the real cover card, never a play frame). **Never put Duo frames in an iPhone slot**: the sizes don't fit, and a Duo screen on an iPhone listing is untrue.
+
+**Creative assets (Guideline 2.3.14, new 16 Oct 2026):** product page headers and search-result art are optional. Brim 1.0 ships none; if added later, no prices, no unverifiable claims, nothing the app doesn't do.
 
 ## Pipeline (`store.yml`, manual)
 
@@ -82,10 +86,14 @@ Reserves (not captured by default; `phone_filter: ^(P|R)[0-9]` adds them): `R1-d
 - [ ] **Exact size, PNG, no alpha.** Captions readable at 25% zoom.
 
 ## Upload order and checks (founder, runbook §4.5)
-1. 6.9" slot: P1–P5. 2. 6.1" slot: P1–P5. 3. If an **iPhone Duo** entry appears in the device list: D1–D6, then check them in App Store Connect's iPhone Duo preview tool. If there's no Duo entry, skip; the Duo set ships with 1.0.1 (screenshots can only change with a new version).
+1. Dynamic Island (large) slot, `store-69`: P1–P5. 2. Dynamic Island (medium) slot, `store-61`: P1–P5 (required). 3. If an **iPhone Duo** entry appears in the device list: the inner-display set in the signed-off order **D1 → D2 → D4 → D5 → D3** (no D6, `HANDOVER.md`), then check them in App Store Connect's iPhone Duo preview tool. If there's no Duo entry, skip; the Duo set ships with 1.0.1 (screenshots can only change with a new version).
+
+**Duo frames and "Glasses on the sharp half".** On a real Duo the game runs upside down by default (the counter sits on the half iOS keeps sharp). The store frames are captured upright on the simulator, which is the same picture the player sees once the phone is turned round, so they stay truthful. Don't re-shoot them upside down.
 
 ## Sources
-- App Store Connect Help, *Screenshot specifications* (iPhone Duo inner 2007 × 2853; 6.9" 1320 × 2868; 6.1" class 1206 × 2622; 1–10 per size; no alpha): https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
-- Apple Developer Forums 845505 (Duo slot not yet in the selector or API, Oct 2026): https://developer.apple.com/forums/thread/845505
+- App Store Connect Help, *Screenshot specifications* (Duo inner 2007 × 2853, outer 1398 × 2034; Dynamic Island large 1320 × 2868, medium 1179 × 2556 / 1206 × 2622 required; Face ID medium 1170 × 2532; up to 10 per size; no alpha; Duo screenshots required from April 2027): https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
+- Apple Developer News, *Prepare and submit your apps for iPhone Duo* (5 Oct 2026: badge, preview tool, April 2027 requirement): https://developer.apple.com/news/?id=kkphp5qo
+- Apple, *Three steps to make your app shine on iPhone Duo*: https://developer.apple.com/iphone-duo/prepare/
+- Apple Developer Forums 845505 (Duo slot not yet in the selector or API; Apple staff: "later this year"): https://developer.apple.com/forums/thread/845505
 - App Review Guideline 2.3.7 (no prices in screenshots): https://developer.apple.com/app-store/review/guidelines/
 - Squish's screenshot plan and sign-off (rules mirrored): `C:\Users\59527\Squish\docs\appstore\screenshots.md`, `DECISIONS.md` §3–4

@@ -10,15 +10,15 @@
 | 2 | **Fallback names** | `Brim: Pour to the Line` → `Brimful: Fold to Pour` → `Brim: Fold & Pour` | Keep the "Brim" brand and the home-screen name; avoid the taken "Pour Decisions", "Fill Line", "Top Up" |
 | 3 | **Subtitle** | `Fill every glass to the line` (28/30), both locales | States the goal in plain words and indexes fill/glass/line; no price, superlative or Apple mark (2.3.7), the lesson from Squish's subtitle change |
 | 4 | **Promotional text** | Duo first, then "drag up" on other iPhones, then no ads/IAP/data (159/170) | If the Duo screenshot slot is missing, this and the description are the only Duo signals; it's editable any time |
-| 5 | **Description** | Opens "Your iPhone Duo is the jug.", then the hook, then "works on every iPhone"; 2,763/4,000; en-US differs in 4 spellings | The brief's order; scannable headings; claims taken from the bible with a check table (`metadata.md` §10) because the build didn't exist yet |
+| 5 | **Description** | Opens "Your iPhone Duo is the jug.", then the hook, then "works on every iPhone"; 2,740/4,000 (recounted 26 Oct); en-US differs in 4 spellings | The brief's order; scannable headings; claims taken from the bible with a check table (`metadata.md` §10) because the build didn't exist yet |
 | 6 | **Keywords** | `bartender,drink,juice,soda,lemonade,milkshake,potion,physics,tilt,hinge,foldable,jug,splash,fizz,cup` (100/100 bytes) | No repeats of name/subtitle words, no competitor or Apple marks; "water" dropped (water trackers and sort puzzles own it) |
 | 7 | **Categories** | Games → **Casual** + **Arcade**; secondary **Entertainment** | Casual is where paid one-verb hits chart (Toastie); Arcade fits the score chasing and separates Brim from hinge toys; Entertainment catches novelty browsers. Puzzle rejected: wrong intent |
-| 8 | **Age rating** | **4+**: every content item None, every capability No, not Made for Kids | All drinks are non-alcoholic, nothing is harmed, nothing is random or bought |
+| 8 | **Age rating** | **4+** on the 4+/9+/13+/16+/18+ scheme: every content item None except **Contests: Infrequent**, every capability No, not Made for Kids (26 Oct) | All drinks are non-alcoholic, nothing is harmed, nothing is random or bought. Apple now defines Contests as competing "for rankings", which the optional leaderboards are; Infrequent is honest and still 4+ |
 | 9 | **Alcohol guard** | No beer/cocktail/shot/pint words in visible copy; keep root beer and foamy amber in pint-style glasses off every store frame; rename the `pint`/`shot` glass styles neutrally in-game | A 4+ rating rests on nothing *looking* like alcohol; root beer reads as beer to UK eyes and to reviewers |
 | 10 | **Price** | Base **UK £1.99**, Apple equalises the rest ($1.99). No launch discount | The brief's price; at £1.99 Brim is the cheapest premium hinge game (rivals $2.99–4.99), good for impulse buys |
-| 11 | **Territories** | All **except China mainland** | Paid games there need an ISBN licence we don't have; account-level EU trader status is already handled for Squish |
+| 11 | **Territories** | All **except China mainland and Vietnam** (26 Oct); Mac and Vision Pro availability off | China needs an NPPA approval number and Vietnam a game licence, neither of which we have; Mac/Vision untested. EU trader status is asked again per app (App Information) |
 | 12 | **Pre-order** | **No** | A pre-order needs an approved final build ~3 weeks out, and the real-Duo feel tuning is the biggest quality lever left |
-| 13 | **Duo screenshots** | Upload D1–D6 by hand **if** App Store Connect shows an iPhone Duo slot; otherwise ship 1.0 with the iPhone sets and add the Duo set in 1.0.1 | The API has no Duo type (Squish research, Oct 2026); screenshots lock at approval |
+| 13 | **Duo screenshots** | Upload D1, D2, D4, D5, D3 by hand **if** App Store Connect shows an iPhone Duo slot; otherwise ship 1.0 with the iPhone sets and add the Duo set in 1.0.1 | Still no Duo slot in the UI or API on 26 Oct (Apple: "later this year"); Duo screenshots earn the "optimized for iPhone Duo" badge and become mandatory for every submission from April 2027 |
 | 14 | **Screenshot sets** | 6 Duo inner + 5 at 6.9" + 5 at 6.1", order and captions in `screenshots.md`; frame 1 is the stream crossing the fold | The first 3 frames show in search; the crossing stream is the one image no other phone can make |
 | 15 | **App Preview** | Optional; ships in 1.0 only if recorded and checked by code freeze (Mon 9 Nov) | Previews lock with the version; Brim has no preview recorder yet, and a late one costs a version |
 | 16 | **Daily Pour day boundary** | Recommend **00:00 UTC** for everyone (engineering change from the local-date design) | Game Center's recurring leaderboard resets at one UTC moment; local dates would mix two days' glasses on one board |
@@ -33,8 +33,8 @@
 | 25 | **Fallback date** | **Tue 1 Dec** if the release build isn't ready by Thu 12 Nov; never 24 Nov | Keeps the one-launch-per-week rule |
 | 26 | **Featuring** | App Launch nomination, publish date 17 Nov, **submitted by Tue 27 Oct**; "Optimized for iPhone Duo" in Helpful Details | Apple asks for 3 weeks' notice and asks Duo apps to say that phrase |
 | 27 | **Localisation** | en-GB primary, en-US added; English only | The founder is UK-based; US spelling is the only difference that matters for 1.0 |
-| 28 | **Website hosting** | Recommend **Option A**: make the repo public and serve `docs/` with GitHub Pages (`docs/.nojekyll` is in place); pages at `…/brim/site/` | No code or workflow change needed, and it also makes GitHub's Mac build minutes free, as for Squish. Founder's call (private-repo alternatives in runbook §0) |
-| 29 | **Support contact** | A **dedicated support email**, shown on the support and privacy pages | Guideline 1.5 needs an easy contact; a private repo can't take public GitHub issues as Squish does |
+| 28 | **Website hosting** | **Done 26 Oct: Option A**, live at `https://pravegm.github.io/brim/site/`. Was: recommend **Option A**: make the repo public and serve `docs/` with GitHub Pages (`docs/.nojekyll` is in place); pages at `…/brim/site/` | No code or workflow change needed, and it also makes GitHub's Mac build minutes free, as for Squish. Founder's call (private-repo alternatives in runbook §0) |
+| 29 | **Support contact** | **GitHub issues** (`https://github.com/pravegm/brim/issues`), no email published (26 Oct) | The repo is public now, so issues work as for Squish; Guideline 1.5 needs an easy contact, and no personal address goes on the web |
 | 30 | **Build and upload** | GitHub Actions → TestFlight with the **same App Store Connect API key** as Squish | A Team key with Admin works across apps; the founder's Intel Mac can't run Xcode 27 |
 | 31 | **Family Sharing** | **On** | Standard for a one-off paid game; costs nothing |
 | 32 | **What's New** | None for 1.0 (App Store Connect has no field); the 1.0 line goes into TestFlight's "What to Test" | Apple's rule |
@@ -45,13 +45,13 @@
 
 | # | Priority | Owner | Request |
 |---|---|---|---|
-| 1 | **High** | App | **Daily Pour on the UTC date** (`LevelCatalog.dayNumber(for:)` currently uses the user's calendar), so it matches the recurring leaderboard (#16). If kept local, tell the launch lead so the support page and achievements note change |
+| 1 | ~~High~~ **Done** | App | **Daily Pour on the UTC date** (done: `dayNumber` uses UTC, checked 26 Oct) (`LevelCatalog.dayNumber(for:)` currently uses the user's calendar), so it matches the recurring leaderboard (#16). If kept local, tell the launch lead so the support page and achievements note change |
 | 2 | **High** | App + CI | **Achievement images**: ten 1024 × 1024 PNGs, no alpha (`achievements.md` "Images"). App Store Connect won't save an achievement without one |
 | 3 | **High** | CI | **6.9" capture**: a run of `ci/screenshots.sh` with `DEVICE="iPhone 18 Pro Max"` and a size check (1320 × 2868; 1206 × 2622; Duo 2007 × 2853, no alpha). `ci.yml` only captures on the iPhone 18 Pro |
 | 4 | Medium | CI | **Caption renderer** for store frames (port Squish's `ci/store-frame.swift`); fallback is uncaptioned frames |
 | 5 | Medium | App | **Litres scale** for the lifetime stat and `brim.litres.10` (suggested: a tumbler at its line = 250 mL, so 10 L ≈ 40 glasses) |
 | 6 | Medium | Scene/App | **Alcohol guard (#9):** neutral names for the `pint`/`shot` glass styles; no root beer in pint glasses; no foamy amber in the store scenarios |
-| 7 | Medium | App | **"Pour by dragging" setting on Duo**: helps players who can't or won't fold, and reviewers; add the review-notes line if it ships |
+| 7 | ~~Medium~~ **Done** | App | **"Pour by dragging" setting on Duo** (shipped as "Touch controls on iPhone Duo"): helps players who can't or won't fold, and reviewers; add the review-notes line if it ships |
 | 8 | Low | App | Achievement banners queued until a glass is served; never mid-pour |
 | 9 | Low | CI | **App Preview recorder** (Squish's `preview.yml` approach), only if the preview is wanted for 1.0 |
 | 10 | Low | Design | Consider numbering the Daily from launch day (Daily #1 on 17 Nov) rather than days since 1 Jan 2026 (#320 on launch day) |

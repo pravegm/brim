@@ -25,6 +25,8 @@ Common tasks for Brim:
 
 **Publish for iPhone: Reduced Motion, Sufficient Contrast, Differentiate Without Color Alone**, each only if its check below passes on the release build. Leave every other box unticked. If a check fails, leave that box unticked: an honest "not indicated" beats a false claim.
 
+*Re-checked 26 Oct 2026:* the labels are still **voluntary** (Apple: "over time, you'll be required to share accessibility support details to submit new apps and app updates"; no date yet). Apple's common tasks include the first launch and Settings, so the checks cover the Duo's upside-down default and its Settings rows too. Answers are per device: answer **iPhone** only. If App Store Connect also lists iPad, leave it unpublished (Brim runs there as an iPhone app and wasn't checked). Labels publish only once a version is live, so this stays a launch-day step.
+
 ## Checks (on the release build, on a Duo and on a non-Duo iPhone)
 
 ### A. Differentiate Without Color Alone
@@ -57,6 +59,7 @@ Apple's bar: about 4.5:1 for text, 3:1 for large text, controls and state indica
 - [ ] With **Settings > Accessibility > Motion > Reduce Motion** on: no screen shake on spills, fewer particles (splash, sparkle ring, confetti), no parallax.
 - [ ] Menu and glass transitions become fades or short moves, not springs and slides.
 - [ ] The liquid, stream and jug still move: that motion is the game's content, which Apple's criteria allow.
+- [ ] With Reduce Motion off, Settings › Controls › "Calmer motion" gives the same result (no screen shake, camera bumps or score pops); with it on, the row reads "On".
 
 ## What we can say in copy today
 
@@ -66,7 +69,7 @@ The description says only: "Reduce Motion turns off screen shake and thins out t
 
 | Fix | Size | Earns |
 |---|---|---|
-| "Pour by dragging" on Duo (a setting), plus VoiceOver announcements of the level ("40 percent, line at 75") and an adjustable "pour a little" action | M | VoiceOver (maybe), and helps motor access on Duo |
+| VoiceOver announcements of the level ("40 percent, line at 75") and an adjustable "pour a little" action (the "Touch controls on iPhone Duo" setting already gives Duo players a drag alternative to the hinge) | M | VoiceOver (maybe) |
 | Named custom actions "Pour" / "Stop" on the play area, input labels | S | Voice Control (with the above) |
 | HUD, result stamps and results card scale to AX3 with reflow | M | Larger Text |
 

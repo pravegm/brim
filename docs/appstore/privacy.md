@@ -8,7 +8,7 @@ The live policy page is `docs/site/privacy.html` (the text in §4 is the same; k
 
 ## 1. What to click (App Store Connect → the app → App Privacy)
 
-1. **Privacy Policy URL:** `<SITE>privacy.html` (for hosting option A: `https://pravegm.github.io/brim/site/privacy.html`). The page must load before you save.
+1. **Privacy Policy URL:** `https://pravegm.github.io/brim/site/privacy.html` (live on GitHub Pages since 26 Oct). The page must load before you save.
 2. Click **Get Started**. "Do you or your third-party partners collect data from this app?" → **No, we do not collect data from this app.**
 3. **Save**, then **Publish**. The product page shows **"Data Not Collected"**.
 
@@ -22,7 +22,8 @@ There's no tracking question once you choose "No". For the record, Brim doesn't 
 | **Daily Pour share** (emoji result text) | No | Made on the phone and handed to the iOS share sheet only when the player taps Share. Where it goes is the player's choice; nothing comes to us |
 | **Crash reports** via iOS "Share With App Developers" | No | Apple-collected and opt-in. We add no crash SDK. *If one is ever added, the label must declare Crash Data first* |
 | **Rating prompt** (if added) | No | Apple's `requestReview` |
-| **Support email** | No | Happens outside the app; covered by the policy |
+| **Support (GitHub issues)** | No | Happens outside the app, on GitHub, under GitHub's privacy statement; covered by the policy. Issues are public, so the support page warns people not to post personal details |
+| **"Glasses on the sharp half" / orientation** | No | An on-device setting; iOS's own orientation answer is read locally and never leaves the phone |
 | **Progress, stars, stats, settings** | No | Stored only on the device (`ProgressStore`, UserDefaults). Never transmitted |
 
 **The limit to watch:** if a future version ever sends anything to our own server (Game Center IDs, analytics, a remote daily seed), this answer and the privacy manifest change **before** that build ships.
@@ -31,16 +32,16 @@ There's no tracking question once you choose "No". For the record, Brim doesn't 
 
 | Look for, in `Brim/` | Expect | Result |
 |---|---|---|
-| Networking: `URLSession`, `URLRequest`, `NWConnection`, `import Network`, sockets | none | [ ] |
-| Web/links: `WKWebView`, `SFSafariViewController`, `openURL`, SwiftUI `Link(` | none, or only a link to the support/privacy page (opening Safari is not collection) | [ ] |
+| Networking: `URLSession`, `URLRequest`, `NWConnection`, `import Network`, sockets | none | [x] 26 Oct grep: none |
+| Web/links: `WKWebView`, `SFSafariViewController`, `openURL`, SwiftUI `Link(` | none, or only a link to the support/privacy page (opening Safari is not collection) | [x] 26 Oct: none (`ShareLink` only, for the Daily text) |
 | SDKs: Firebase, Crashlytics, Sentry, Mixpanel, Amplitude, AdSupport, `ASIdentifierManager` | none | [ ] |
 | Tracking: `AppTrackingTransparency`, `ATTrackingManager` | none | [ ] |
 | Cloud: `CloudKit`, `NSUbiquitousKeyValueStore` | none | [ ] |
-| Notifications: `UNUserNotificationCenter` | none | [ ] |
+| Notifications: `UNUserNotificationCenter` | none | [x] 26 Oct: none |
 | Packages in `project.yml` | none (true on 25 Oct) | [ ] |
 | `NS*UsageDescription` keys in `project.yml` | none (true on 25 Oct) | [ ] |
 | `Brim/PrivacyInfo.xcprivacy` in the built app | present (the TestFlight workflow already checks this) | [ ] |
-| Required-reason APIs | UserDefaults `CA92.1`, system boot time `35F9.1` (declared). If the code uses file timestamps or disk space, add those reasons | [ ] |
+| Required-reason APIs | UserDefaults `CA92.1`, system boot time `35F9.1` (declared; covers `CACurrentMediaTime`, which reads `mach_absolute_time`). If the code uses file timestamps or disk space, add those reasons | [x] 26 Oct: manifest declares both; no file-timestamp, disk-space or keyboard APIs found |
 
 One-line grep: `URLSession|URLRequest|NWConnection|WKWebView|SFSafari|openURL|Link\(|ATTrackingManager|ASIdentifier|CloudKit|NSUbiquitous|Firebase|Sentry|UNUserNotification`
 
@@ -48,7 +49,7 @@ One-line grep: `URLSession|URLRequest|NWConnection|WKWebView|SFSafari|openURL|Li
 
 ## 4. Privacy policy (public text)
 
-*Effective: 17 November 2026. Live at `<SITE>privacy.html`. Replace `SUPPORT_EMAIL_HERE` with the dedicated support address before publishing (runbook §0).*
+*Effective: 17 November 2026. Live at `https://pravegm.github.io/brim/site/privacy.html`. Support and privacy questions go to GitHub issues (no email address is published).*
 
 > # Brim Privacy Policy
 >
@@ -64,7 +65,7 @@ One-line grep: `URLSession|URLRequest|NWConnection|WKWebView|SFSafari|openURL|Li
 > When you tap Share, Brim makes a short text result (a row of emoji and your score) and hands it to the iOS share sheet. Where it goes next is up to you. Nothing is sent to us.
 >
 > ## Game Center (optional)
-> If you're signed in to Game Center, your scores and achievements are handled by Apple under Apple's Privacy Policy (apple.com/legal/privacy). We don't receive your Game Center profile.
+> If you're signed in to Game Center, Brim sends your Rush and Daily Pour scores and your achievement progress to Game Center, which Apple runs under Apple's Privacy Policy (apple.com/legal/privacy). If you're offline, the scores wait on your iPhone until they can be sent. Other players may see your Game Center nickname and scores on the leaderboards, as your Game Center settings allow. We don't receive your Game Center name, ID or profile, and Brim never shows player IDs. If you're not signed in, nothing is sent.
 >
 > ## Crash reports
 > If you've chosen in iOS Settings to share analytics with app developers, Apple may pass us anonymous crash reports. We use them only to fix bugs. You can turn this off at any time in Settings > Privacy & Security > Analytics & Improvements.
@@ -76,18 +77,18 @@ One-line grep: `URLSession|URLRequest|NWConnection|WKWebView|SFSafari|openURL|Li
 > Brim is rated 4+ and collects no personal information from anyone, including children.
 >
 > ## This website
-> These pages have no cookies, analytics, trackers, embedded media, external fonts or scripts. Our web host may keep standard server logs (such as IP addresses) for security, under its own privacy policy.
+> These pages have no cookies, analytics, trackers, embedded media, external fonts or scripts. They're hosted by GitHub Pages, which may keep standard server logs (such as IP addresses) for security, under the GitHub Privacy Statement.
 >
-> ## If you email us
-> If you write to SUPPORT_EMAIL_HERE, we use your email address and message only to reply and to fix the problem. We never add you to a mailing list or share your message. Ask us to delete the thread at any time and we will.
+> ## If you contact us
+> Support is through GitHub issues (github.com/pravegm/brim/issues). Issues are public, so please don't include personal details. We use what you write only to reply and to fix the problem, and we never add you to a mailing list. GitHub handles your GitHub account under the GitHub Privacy Statement. Ask in the issue and we'll delete it.
 >
 > ## Changes
 > If this policy ever changes, we'll update this page and its date before the change reaches the app.
 >
 > ## Contact
-> Brim, an independent game. Privacy questions: SUPPORT_EMAIL_HERE.
+> Brim, an independent game. Privacy questions: open an issue at github.com/pravegm/brim/issues.
 
-*(Founder to decide: if a legal or trading name or a postal address is ever required, for example for EU trader status, add it to the Contact section and the live page. It is deliberately left off.)*
+*(Founder to decide: EU trader details (name, address, phone, email) are entered in App Store Connect and shown on EU product pages by Apple; they are deliberately not copied into this policy or the repo.)*
 
 ## Sources
 - Apple, *App privacy details on the App Store* ("collect" means transmitting off the device beyond real-time servicing; "You are not responsible for disclosing data collected by Apple"): https://developer.apple.com/app-store/app-privacy-details/

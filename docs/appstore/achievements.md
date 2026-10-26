@@ -15,6 +15,7 @@
 | Type | **Classic** (all-time) | **Recurring** |
 | Reference name | `Rush best` | `Daily Pour` |
 | Display name (en-GB and en-US) | `Rush` | `Daily Pour` |
+| Description (if asked) | see below the table | see below the table |
 | Score format | Integer | Integer |
 | Format suffix (singular / plural) | ` point` / ` points` | ` point` / ` points` |
 | Sort order | High to Low | High to Low |
@@ -25,7 +26,9 @@
 
 **Why the Daily start is 1 Nov, not launch day:** TestFlight testers (Game Center sandbox) can then see the board before launch. It costs nothing.
 
-**One engineering point (must be settled before 1.0):** a recurring leaderboard resets at the same UTC moment for everyone, but the design keys the Daily seed to the player's **local** date (`LevelCatalog.dayNumber(for:)` "in the user's calendar"). That would mix different days' glasses on one board around midnight. Recommendation: key the Daily Pour to the **UTC date**, so it changes at 00:00 UTC (midnight in the UK in winter, 4 pm Pacific). See `DECISIONS.md` #16.
+**Day boundary: settled.** `LevelCatalog.dayNumber(for:)` now uses the **UTC** calendar (checked 26 Oct), so the Daily Pour and its recurring board both turn over at 00:00 UTC (midnight in the UK in winter, 4 pm Pacific). See `DECISIONS.md` #16.
+
+**Leaderboard description** (App Store Connect now has a per-language *Leaderboard Description* field; fill it if the form asks): Rush: `Your best Rush score. Perfects refill the jug and grow the multiplier.` Daily Pour: `Today's ten glasses, the same for everyone. One scored try a day.`
 
 ## Achievements (10, 700 points)
 
@@ -73,6 +76,8 @@ Ten 1024 × 1024 PNGs, one per achievement, opaque (no alpha channel), in the ap
 - [ ] Banners never appear mid-pour: queue them until the glass is served or the run ends.
 - [ ] Daily: submit only the first scored run of the (UTC) day.
 - [ ] Drag control can earn every achievement.
+
+Re-checked 26 Oct 2026 against App Store Connect Help: still 100 points each, 1,000 per app, 1024 × 1024 RGB image (≥ 72 ppi, no transparency) per localisation, IDs permanent; the Game Center entitlement must be in the build and Game Center set up in App Store Connect (in place: `Brim.entitlements`).
 
 ## Sources
 - App Store Connect Help, *Achievements* (limits, hidden, images): https://developer.apple.com/help/app-store-connect/reference/game-center/achievements

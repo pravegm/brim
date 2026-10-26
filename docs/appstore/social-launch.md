@@ -2,7 +2,7 @@
 
 *For the founder to post by hand from their own accounts. Tone: warm, a little smug, precise ("right on the line"). Never alcohol jokes ("pour one out", "bottoms up", "last orders", beer, shots). Never suggest closing the phone fast, flapping it, or putting anything real on it.*
 
-**Links to fill in:** `https://apps.apple.com/app/id6826940959` = `https://apps.apple.com/app/id6826940959` (App Store Connect → App Information → Apple ID; exists once the record is created, live on launch day). `[site]` = `<SITE>` from runbook §4.0. `[clip]` = the 15 s teaser (§3A).
+**Links:** the App Store link `https://apps.apple.com/app/id6826940959` is filled in (live on launch morning). `[site]` = `https://pravegm.github.io/brim/site/`. `[clip]` = the 15 s teaser (§3A).
 
 ---
 
@@ -79,7 +79,7 @@ The row is whatever the app's Share button produces; never type one by hand. **E
 >
 > Lift the top half. It pours across the fold. Stop on the line.
 >
-> Brim, out 17 Nov. [site]
+> Brim, out 17 Nov. https://pravegm.github.io/brim/site/
 
 ---
 

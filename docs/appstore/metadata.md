@@ -1,6 +1,6 @@
 # Brim: App Store metadata (v1.0)
 
-*Written 25 Oct 2026 by the launch lead. Paste from the code blocks exactly. Counts are Unicode characters, except keywords, which Apple counts in bytes (all ASCII here, so the same). Every choice has a one-line reason in `DECISIONS.md`. Every feature claim is from `design/GAME-DESIGN.md`; the build didn't exist yet when this was written, so the claims marked in §10 must be checked against the release-candidate build before submission.*
+*Written 25 Oct 2026 by the launch lead; §8 (age rating), §9 and §10 updated 26 Oct against Apple's current rules (`COMPLIANCE.md`). Paste from the code blocks exactly. Counts are Unicode characters, except keywords, which Apple counts in bytes (all ASCII here, so the same). Every choice has a one-line reason in `DECISIONS.md`. Every feature claim is from `design/GAME-DESIGN.md`; the build didn't exist yet when this was written, so the claims marked in §10 must be checked against the release-candidate build before submission.*
 
 Localisations: **English (U.K.)** is the primary language, plus **English (U.S.)**. Every other storefront shows en-GB. Only the description differs between the two (§4); everything else is identical.
 
@@ -43,7 +43,7 @@ Rotation ideas for later (count before pasting):
 
 ## 4. Description (limit 4,000)
 
-**en-GB 2,736 / 4,000; en-US 2,735 / 4,000.**
+**en-GB 2,740 / 4,000; en-US 2,739 / 4,000** (characters, recounted by script 26 Oct; 2,759 / 2,758 bytes because of the bullets and ×).
 
 ### en-GB (English U.K.)
 
@@ -187,69 +187,77 @@ Smoother pours on iPhone Duo, [one real change], and small fixes. Thanks for eve
 
 ## 8. Age rating: 4+
 
-Answer the questionnaire exactly like this (App Store Connect → the app → App Information → Age Rating → Edit):
+Apple's current scheme (since the July 2025 overhaul; answers were due by 31 Jan 2026) has five global ratings, **4+, 9+, 13+, 16+, 18+**, plus regional ones (Australia, Brazil, Korea) that App Store Connect works out from the same answers. Re-checked 26 Oct 2026 against Apple's *Age ratings values and definitions*.
+
+App Store Connect → the app → **App Information** → Age Ratings → **Set Up Age Ratings** (later: **Edit**). Step 1 is a tick-list of in-app controls and capabilities: **tick nothing**. Then answer each section. Yes/No items are marked (Y/N); the rest are a frequency: **None / Infrequent / Frequent**.
 
 | Section | Item | Answer |
 |---|---|---|
-| In-app controls | Parental Controls | **No** |
-| | Age Assurance | **No** |
+| In-app controls | Parental Controls | **No** (not ticked) |
+| | Age Assurance | **No** (not ticked) |
 | Capabilities | Unrestricted Web Access | **No** |
 | | User-Generated Content | **No** |
+| | Social Media | **No** |
+| | Social Media Disabled for Users Under 13 | **No** |
 | | Messaging and Chat | **No** |
 | | Advertising | **No** |
 | Mature themes | Profanity or Crude Humor | **None** |
 | | Horror/Fear Themes | **None** |
 | | Alcohol, Tobacco, or Drug Use or References | **None** |
-| | Mature or Suggestive Themes | **None** |
 | Medical or wellness | Medical or Treatment Information | **None** |
-| | Health or Wellness Topics | **No** |
-| Sexuality or nudity | Sexual Content or Nudity | **None** |
+| | Health or Wellness Topics | **None** |
+| Sexuality or nudity | Mature or Suggestive Themes | **None** |
+| | Sexual Content or Nudity | **None** |
 | | Graphic Sexual Content and Nudity | **None** |
 | Violence | Cartoon or Fantasy Violence | **None** |
 | | Realistic Violence | **None** |
 | | Prolonged Graphic or Sadistic Realistic Violence | **None** |
 | | Guns or Other Weapons | **None** |
 | Chance-based activities | Simulated Gambling | **None** |
-| | Contests | **None** |
-| | Gambling | **No** |
-| | Loot Boxes | **No** |
-| Kids | Made for Kids | **No** |
+| | Contests | **Infrequent** (see below) |
+| | Gambling (Y/N) | **No** |
+| | Loot Boxes (Y/N) | **No** |
+| Age Categories and Override | Made for Kids / Override to Higher Age Rating | **Not Applicable** |
+| | Age Suitability URL (optional) | leave empty |
 
-**Expected result: 4+.** If the form you see has extra or renamed items, the honest answer to each is None or No.
+**Expected result: 4+** everywhere (Apple's table puts "Infrequent Contests" at 4+; **Frequent** would make it 13+, so don't pick that). If the form shows an item not listed here, the honest answer is None or No; tell Claude so this table can be updated.
 
-Why each risky item is None:
+Why each risky item is answered this way:
+- **Contests: Infrequent, not None.** Apple now defines Contests as "events that allow users to compete with one another for rankings", which covers Brim's two optional Game Center leaderboards. They are a side feature (no prizes, no entry, the game is complete without them), so Infrequent is the honest level and keeps 4+.
 - **Alcohol:** every drink is non-alcoholic (bible §1). Root beer and cream soda are soft drinks; potions are fictional coloured drinks with no effects. *Watch-out:* the glass catalog includes `pint` and `shot` styles. Keep their in-game names neutral (for example "tall glass", "tiny cup"), never show foamy amber in a pint glass on any store frame, and keep root beer out of the screenshots and preview, so nothing reads as beer (`DECISIONS.md` #9).
 - **Violence:** spills make a puddle. Nothing is harmed.
 - **Simulated gambling / loot boxes:** no chance-based rewards, nothing to buy. The Daily Pour is seeded, not random prizes.
-- **Contests:** Game Center leaderboards are not prize contests.
-- **Made for Kids: No.** The Kids category adds parental-gate rules and moves the app out of Games; Brim is for everyone, not built for under-11s specifically.
+- **Social media / messaging / UGC:** the only sharing is the Daily Pour text handed to the iOS share sheet; Brim has no feed, chat or uploads. Game Center's own friend features are Apple's, not Brim's.
+- **Made for Kids: No.** The Kids category adds parental-gate rules and moves the app out of Games; Brim is for everyone, not built for under-11s specifically. Once approved, Made for Kids can't be changed.
+- **Korea (GRAC):** no Rating Classification Number needed (it only applies to 17+/19 games or frequent gambling, sex, drugs or realistic violence).
+
+Sources: [Age ratings values and definitions](https://developer.apple.com/help/app-store-connect/reference/app-information/age-ratings-values-and-definitions) · [Set an app age rating](https://developer.apple.com/help/app-store-connect/manage-app-information/set-an-app-age-rating) · [Upcoming requirements](https://developer.apple.com/news/upcoming-requirements/) (31 Jan 2026 deadline) · [App information: Korea](https://developer.apple.com/help/app-store-connect/reference/app-information/app-information)
 
 ## 9. Other App Store Connect fields
 
 | Field | Value |
 |---|---|
 | Price | Base country **United Kingdom, £1.99**; Apple equalises every other storefront (check the US shows **$1.99**). No launch discount |
-| Availability | Every country or region **except China mainland** (paid games there need a government ISBN licence) |
+| Availability | Every country or region **except China mainland and Vietnam**: paid games in China mainland need an NPPA (ISBN) approval number, and Vietnam requires games to hold a Vietnamese game licence to stay on its store. Brim has neither (App Information → App Store Regulations and Permits) |
+| Apple silicon Mac / Apple Vision Pro | **Untick both** (Pricing and Availability → "iPhone and iPad Apps on Apple Silicon Macs" and "Apple Vision Pro"). They default to on for iPhone apps, and Brim is untested there: no hinge, mouse-drag pouring never checked. iPad keeps running the iPhone app (Guideline 2.4.1) |
+| EU Digital Services Act | Account status is already set for Squish, but each new app is asked again: App Information → App Store Regulations and Permits → Digital Services Act. A paid app is normally **trader**; the trader address, phone and email you entered are **shown publicly on EU product pages** (founder's call; never in the repo) |
 | Pre-order | **No** |
 | Release | **Scheduled: Tue 17 Nov 2026, 08:00 UTC** ("automatically release after approval, no earlier than") |
 | Family Sharing | **On** (permanent once on) |
 | Small Business Program | Account-level; already enrolled for Squish (just confirm it shows Active) |
 | Copyright | `2026 <founder legal name>` (founder-only) |
-| Support URL | `<SITE>support.html` (see runbook §4.0 for `<SITE>`) |
-| Marketing URL | `<SITE>` |
-| Privacy Policy URL | `<SITE>privacy.html` |
+| Support URL | `https://pravegm.github.io/brim/site/support.html` (support is by GitHub issue: https://github.com/pravegm/brim/issues) |
+| Marketing URL | `https://pravegm.github.io/brim/site/` |
+| Privacy Policy URL | `https://pravegm.github.io/brim/site/privacy.html` |
 | App Privacy | **Data Not Collected** (`privacy.md`) |
-| Accessibility Nutrition Labels | **Reduced Motion**, **Sufficient Contrast**, **Differentiate Without Color Alone**, each only after its check passes, published on launch day (`accessibility.md`) |
+| Accessibility Nutrition Labels | **Reduced Motion**, **Sufficient Contrast**, **Differentiate Without Color Alone**, each only after its check passes, published on launch day (`accessibility.md`). Still voluntary (Apple: required "over time") |
 | Content Rights | "Does your app contain, show, or access third-party content?" **No** (all art is drawn in code, all sound synthesised, system fonts only) |
 | Export compliance | Nothing to answer: `ITSAppUsesNonExemptEncryption` is `false` in `project.yml` |
 | Game Center | On; 2 leaderboards and 10 achievements, 700 points (`achievements.md`) |
 | Sign-in required | No |
 | Version | 1.0 (`MARKETING_VERSION` in `project.yml`) |
 
-`<SITE>` if the founder picks hosting option A (public repo, GitHub Pages from `/docs`): `https://pravegm.github.io/brim/site/`, so:
-- Support URL: `https://pravegm.github.io/brim/site/support.html`
-- Marketing URL: `https://pravegm.github.io/brim/site/`
-- Privacy Policy URL: `https://pravegm.github.io/brim/site/privacy.html`
+The site is live on GitHub Pages (option A, enabled 26 Oct; all three pages returned HTTP 200 on 26 Oct). Support is by GitHub issue, not email: the repo is public, and the support page links straight to https://github.com/pravegm/brim/issues.
 
 ## 10. Claims to check against the release-candidate build
 
@@ -257,15 +265,16 @@ The build didn't exist when this was written. Before submission, Claude (or whoe
 
 | Claim (where) | Source today | Check |
 |---|---|---|
-| Drag up anywhere tips the jug; let go and it eases upright (description, promo, review notes) | Bible §3, `TouchTiltSource` | [ ] |
-| Five venues + a secret one unlocked by stars (round 9: `LevelCatalog.starsToUnlock(.sandBar)` stars in the five main venues, not 3★ on every shift); stars open the next venue | Bible §6, `ProgressData.isUnlocked` (`campaignStars`) | [ ] |
-| Potion Shop has millilitre marks and lines that fade | Bible §6 | [ ] |
-| Rush: Perfect tops up the jug; multiplier to ×5; ends on 3 spills or empty jug | Bible §6, `Rules.multiplier` | [ ] |
-| Daily Pour: 10 glasses, one scored try, share sheet result | Bible §6 | [ ] |
-| Judgement words Perfect / Great / Good / Short / Over / Spill shown as text (Over = too full, nothing spilled; round 5) | Bible §5, `Judgement` | [ ] |
+| Drag up anywhere tips the jug; let go and it eases upright (description, promo, review notes) | Bible §3, `TouchTiltSource` (review-notes table, round 4) | [x] |
+| Five venues + a secret one unlocked by stars; stars open the next venue | `LevelCatalog.starsToUnlock`: 0 / 8 / 18 / 30 / 44, Sand Bar 105 of 120 (40 campaign + 4 Sand Bar shifts) | [x] code, 26 Oct |
+| Potion Shop has millilitre marks and lines that fade | Bible §6; fading lines `lineFadesAfter` in `LevelCatalog` | [x] fading lines (code); [ ] mL marks on a device frame |
+| Rush: Perfect tops up the jug; multiplier to ×5; ends on 3 spills or empty jug | `Rules.multiplier` (×2 at 3, ×3 at 6, ×5 at 10), `GameSession` (Rush strikes only on spills; `rushRefill`; dry jug ends) | [x] code, 26 Oct |
+| Daily Pour: 10 glasses, one scored try, share sheet result | `LevelCatalog.dailyOrders` (10), `ResultsView` `ShareLink` | [x] code, 26 Oct |
+| Judgement words Perfect / Great / Good / Short / Over / Spill shown as text (Over = too full, nothing spilled; round 5) | `Rules.judge` | [x] code, 26 Oct |
 | Lifetime stats screen shows litres poured, Perfects, best streak | Bible §9 | [ ] |
-| Sound and haptics each have an off switch in Settings | `FeedbackDirector.soundOn/hapticsOn` | [ ] |
-| Reduce Motion: no screen shake, fewer particles | Bible §8, `GameScene.reduceMotion` | [ ] |
+| Sound and haptics each have an off switch in Settings | `UI/SettingsView.swift` ("Sound", "Haptics") | [x] code, 26 Oct |
+| Reduce Motion: no screen shake, fewer particles | `SceneFX` (particle counts halve or less), `GameScene.reduceMotion`; Settings shows "Calmer motion: On" | [x] code, 26 Oct |
 | All sound synthesised, no audio files in the bundle | Bible §7 | [ ] |
-| No network code, no SDKs (privacy) | `privacy.md` grep | [ ] |
+| No network code, no SDKs (privacy) | grep 26 Oct: no `URLSession`, `openURL`, `Link(`, `requestReview`, `UNUserNotification` in `Brim/`; sharing only via `ShareLink` | [x] |
 | 2 leaderboards + 10 achievements report from the build | `achievements.md` | [ ] |
+| *26 Oct:* nothing in the listing mentions the Duo's upside-down default or Split View; neither needs to (support page and review notes cover them). The Settings › About turn-status line is TestFlight/DEBUG-only: never mention it in store copy | — | [x] |

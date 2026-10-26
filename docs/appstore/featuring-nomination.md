@@ -23,8 +23,8 @@ If the launch moves to the fallback date (Tue 1 Dec, runbook timeline), edit the
 | Countries or Regions | leave the auto-selection (every territory the app is in) | — |
 | Localizations | leave the auto-selection (English (U.K.), English (U.S.)) | — |
 | In-App Events | none | — |
-| Supplemental Materials | 1. `<SITE>` 2. the 15 s teaser post URL (once posted, Fri 6 Nov; add it by editing the nomination) 3. the TestFlight public link (only if you open external testing) | up to 5 URLs |
-| Helpful Details | the block below | **381 / 500** |
+| Supplemental Materials | 1. `https://pravegm.github.io/brim/site/` 2. the 15 s teaser post URL (once posted, Fri 6 Nov; add it by editing the nomination) 3. the TestFlight public link (only if you open external testing) | up to 5 URLs |
+| Helpful Details | the block below | **483 / 500** (26 Oct: adds every pose, Split View and the upside-down default, as Apple's Duo page asks: "optimized for iPhone Duo, including support for all device poses") |
 
 ### Description
 ```
@@ -39,7 +39,7 @@ Every iPhone can play by dragging up. One price, no ads, no in-app purchases, no
 
 ### Helpful Details
 ```
-Optimized for iPhone Duo: built for the tabletop pose on the inner display, with a pause card in book pose and a status card on the outer display. Uses the public iOS 27.1 hinge API with slow, held angles between flat and upright; it never asks players to close the phone or fold fast. A small studio: every sound is synthesized in the app. Also from us: Squish (launching 24 Nov).
+Optimized for iPhone Duo, in every pose: hinge play in tabletop pose on the inner display, a turn card or touch play in book pose, touch play in Split View, and a status card on the outer display. It runs upside down by default so the fold blur misses the glasses. Uses the public iOS 27.1 hinge API with slow, held angles between flat and upright; it never asks players to close the phone or fold fast. Every sound is synthesized in the app. Also from us: Squish (launching 24 Nov).
 ```
 
 **Why this copy:**

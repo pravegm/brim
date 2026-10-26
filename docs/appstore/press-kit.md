@@ -21,7 +21,7 @@
 | **Name** | Brim (App Store: "Brim: Fold to Pour") |
 | **Developer** | Brim, an independent studio (GitHub `pravegm`), also making Squish |
 | **Founder** | [Founder name] (left off the live page unless the founder chooses) |
-| **Release** | **Tue 17 Nov 2026**, worldwide (except China mainland) |
+| **Release** | **Tue 17 Nov 2026**, worldwide (except China mainland and Vietnam) |
 | **Platform** | iPhone. Designed for iPhone Duo in tabletop pose (the hinge is the only control); drag-to-tip on every other iPhone. Requires iOS 18 or later; hinge play uses iOS 27.1, which the Duo ships with |
 | **Price** | £1.99 / $1.99 / €1.99 one-off. No ads, no in-app purchases. Family Sharing on |
 | **Age rating** | 4+ (every drink is non-alcoholic) |
@@ -32,8 +32,8 @@
 | **Privacy** | Data Not Collected. No accounts, no tracking, no third-party SDKs |
 | **Languages** | English |
 | **Size** | ~[XX] MB (fill in from App Store Connect after processing) |
-| **Links** | App Store: https://apps.apple.com/app/id6826940959 · Site: `<SITE>` · Support: `<SITE>support.html` |
-| **Press contact** | `SUPPORT_EMAIL_HERE` (the dedicated support address; runbook §0) |
+| **Links** | App Store: https://apps.apple.com/app/id6826940959 · Site: https://pravegm.github.io/brim/site/ · Support: https://pravegm.github.io/brim/site/support.html |
+| **Press contact** | Reply to the founder's pitch email (sent by hand from the founder's own address). Public channel: https://github.com/pravegm/brim/issues. Never post promo codes in an issue |
 
 ---
 
@@ -43,7 +43,7 @@
 - **Physically true.** The surface in the jug stays level, so how far you lift depends on how full it is. The stream takes 0.35–0.5 s to fall: stop early.
 - **Pour by ear.** The pitch rises as the glass fills, like a real glass under a tap.
 - **Every liquid has a personality.** Soda foams up then settles; milkshakes and honey lag and keep coming after you stop; potions come in tiny vials with lines that fade.
-- **Called to the drop.** Perfect, Great, Good, Short or Spill. A Perfect gets a bright *ting*, a sparkle ring and a climbing streak note.
+- **Called to the drop.** Perfect, Great, Good, Short, Over or Spill. A Perfect gets a bright *ting*, a sparkle ring and a climbing streak note.
 - **One more go.** Runs last 1–2 minutes. Rush's multiplier climbs to ×5; the Daily Pour is the same ten glasses for everyone.
 - **Kind to the hinge.** Play lives in the middle of the hinge's range with slow, held angles. It never asks you to close the phone or fold fast.
 
@@ -63,7 +63,7 @@ Put these in one public folder (a shared iCloud Drive or Google Drive folder, or
 | File | Spec | Source |
 |---|---|---|
 | `brim-icon-1024.png` | 1024 × 1024 | CI `screenshots` artifact → `AppIcon-1024.png` (scenario `14-icon`) |
-| `brim-duo-01…06.png` | 2007 × 2853, **no captions** | `duo-screens` artifact, the D1–D6 raw frames (`screenshots.md` §A) |
+| `brim-duo-01…05.png` | 2007 × 2853, **no captions** | `duo-screens` artifact, the D1–D5 raw frames (D6 dropped at sign-off) (`screenshots.md` §A) |
 | `brim-iphone-01…05.png` | 1320 × 2868, no captions | the 6.9" raw frames P1–P5 |
 | `brim-teaser-15s.mp4` | 1080 × 1920, with sound | the founder's real-hands clip (`social-launch.md` §3A) |
 | `brim-preview.mp4` | 886 × 1920, with sound | the App Preview, if made (`social-launch.md` §3B) |
@@ -97,7 +97,7 @@ Plain text, under 150 words, clip link in the first two lines, never attach vide
 > TestFlight, more clips or a promo code on request. No embargo.
 >
 > [your name], Brim
-> `<SITE>`
+> https://pravegm.github.io/brim/site/
 
 ### 2. Duo directories (FoldHunt, DuoDiscover): listing request
 
