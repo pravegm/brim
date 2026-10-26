@@ -464,17 +464,19 @@ struct TurnRoundHintLayer: View {
 
     @State private var footprint: CGRect? = nil
 
+    private var spot: (center: CGPoint, width: CGFloat) { Self.spot(footprint: footprint, info: info) }
+
     var body: some View {
         ZStack {
             Button {
                 FeedbackDirector.shared.uiTap()
                 onDismiss()
             } label: {
-                TurnRoundHint()
+                TurnRoundHint(width: spot.width)
             }
             .buttonStyle(PressScaleStyle())
-            .frame(width: TurnRoundHint.size.width)
-            .position(Self.spot(footprint: footprint, info: info))
+            .frame(width: spot.width)
+            .position(spot.center)
             .accessibilityHint("Double-tap to close")
         }
         .frame(width: info.size.width, height: info.size.height)
@@ -498,10 +500,11 @@ struct TurnRoundHintLayer: View {
         footprint = grown
     }
 
-    /// Beside the jug and the DEMO tag above it, in the raised half under the header (the chalkboard's rule); if
-    /// neither side has room, centred on the flat half just under the fold. Pure.
-    static func spot(footprint: CGRect?, info: CanvasInfo) -> CGPoint {
-        let size = TurnRoundHint.size
+    /// Beside the jug and the DEMO tag above it, in the raised half under the header (the chalkboard's rule), at the
+    /// widest of `TurnRoundHint.sizes` that fits (Duo run 40343397399: the attract jug's footprint left 240 pt, so a
+    /// fixed 244 pt card fell back onto the glasses). If none fits, the narrowest card beside the jug's right edge,
+    /// clamped into the raised half. Pure.
+    static func spot(footprint: CGRect?, info: CanvasInfo) -> (center: CGPoint, width: CGFloat) {
         let world = footprint ?? CGRect(x: WorldLayout.pivot.x - 120, y: WorldLayout.pivot.y - 130, width: 200, height: 260)
         let tagCenter = DemoTagLayer.spot(footprint: world, info: info)
         let tag = CGRect(x: tagCenter.x - DemoTagLayer.size.width / 2, y: tagCenter.y - DemoTagLayer.size.height / 2,
@@ -510,15 +513,21 @@ struct TurnRoundHintLayer: View {
         let top = info.hudTop + HUDMetrics.rowHeight + 18
         let area = CGRect(x: info.sidePad - 4, y: top, width: info.size.width - 2 * (info.sidePad - 4),
                           height: max(info.topHalfHeight - 10 - top, 0))
-        if let p = CardPlacement.beside(avoid, size: size, in: area, gap: 12) { return p }
-        return CGPoint(x: info.size.width / 2, y: info.bottomHalfTop + 12 + size.height / 2)
+        for size in TurnRoundHint.sizes {
+            if let p = CardPlacement.beside(avoid, size: size, in: area, gap: 10) { return (p, size.width) }
+        }
+        let size = TurnRoundHint.sizes.last ?? CGSize(width: 208, height: 352)
+        let x = min(max(avoid.maxX + 10 + size.width / 2, area.minX + size.width / 2), area.maxX - size.width / 2)
+        let y = min(max(avoid.midY, area.minY + size.height / 2), max(area.maxY - size.height / 2, area.minY))
+        return (CGPoint(x: x, y: y), size.width)
     }
 }
 
 /// The card itself (TurnRoundHintLayer): the venue intro cards' look, with a gold strip that reads the other way up.
 struct TurnRoundHint: View {
-    /// Width, and a generous height for placement.
-    static let size = CGSize(width: 244, height: 300)
+    /// The widths the card may take, widest first, each with a generous height for placement.
+    static let sizes = [CGSize(width: 244, height: 300), CGSize(width: 226, height: 322), CGSize(width: 208, height: 352)]
+    var width: CGFloat = 244
     static let cue = "Turn your Duo round"
     static let title = "Upside down on purpose"
     static let message = "When a fold starts, iOS blurs one half for a moment. This way round, that's the jug's half, so the glasses stay sharp."
@@ -562,7 +571,7 @@ struct TurnRoundHint: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
-        .frame(width: Self.size.width, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(
             shape.fill(BrimTheme.card)
                 .shadow(color: BrimTheme.ink.opacity(0.2), radius: 12, y: 6)

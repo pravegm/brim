@@ -36,12 +36,10 @@ struct TurnedRoundTests {
         #expect(OrientationLock.duoMask(sharpSide: true, screen: inner) == .all)
         #expect(OrientationLock.duoMask(sharpSide: true, screen: CGSize(width: 951, height: 669)).contains(.portraitUpsideDown))
         #expect(OrientationLock.duoMask(sharpSide: false, screen: inner) == .allButUpsideDown)
-        // DUO-AUDIT M3 (d): the cover display is portrait only, whatever the setting.
-        #expect(OrientationLock.duoMask(sharpSide: true, screen: cover) == .portrait)
-        #expect(OrientationLock.duoMask(sharpSide: false, screen: cover) == .portrait)
-        #expect(OrientationLock.duoMask(sharpSide: true, screen: CGSize(width: 678, height: 466)) == .portrait)
-        // A screen not known yet keeps the old answer.
-        #expect(OrientationLock.duoMask(sharpSide: true, screen: .zero) == .allButUpsideDown)
+        // Not portrait only (DUO-AUDIT M3 d, dropped): iOS keeps the cover's mask through the handover, and a phone opened
+        // in book pose then letterboxed (Duo run 40343397399, duo-15).
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: cover) == .allButUpsideDown)
+        #expect(OrientationLock.duoMask(sharpSide: false, screen: cover).contains(.landscapeLeft))
     }
 
     @Test func sharpSideIsOnByDefaultAndOffInDemo() throws {
@@ -443,7 +441,7 @@ struct PoseRuleTests {
 
     /// QA-5 P1-2: the "upside down on purpose" card, once, on a Duo tabletop that reads upside down either way.
     @MainActor
-    @Test func turnHintOnlyWhenTheDuoIsUpsideDown() {
+    @Test func turnHintOnlyWhenTheDuoIsUpsideDown() throws {
         #expect(PoseRule.showsTurnHint(hasFold: true, turnedRound: true, upsideDown: false, seen: false, hintsEnabled: true))
         #expect(PoseRule.showsTurnHint(hasFold: true, turnedRound: false, upsideDown: true, seen: false, hintsEnabled: true))
         #expect(!PoseRule.showsTurnHint(hasFold: true, turnedRound: false, upsideDown: false, seen: false, hintsEnabled: true))
@@ -455,16 +453,20 @@ struct PoseRuleTests {
         // It hangs beside the jug, clear of the DEMO tag, on the raised half.
         let duo = CanvasInfo(size: CGSize(width: 669, height: 951), insets: EdgeInsets(), hasFold: true)
         let jug = CGRect(x: 120, y: 492, width: 250, height: 228)   // the tipped attract jug (duo-ui-menu)
-        let p = TurnRoundHintLayer.spot(footprint: jug, info: duo)
-        let size = TurnRoundHint.size
-        let card = CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height)
-        let tagC = DemoTagLayer.spot(footprint: jug, info: duo)
-        let tag = CGRect(x: tagC.x - DemoTagLayer.size.width / 2, y: tagC.y - DemoTagLayer.size.height / 2,
-                         width: DemoTagLayer.size.width, height: DemoTagLayer.size.height)
-        #expect(!card.intersects(tag))
-        #expect(!card.intersects(duo.mapper.rect(jug)))
-        #expect(card.maxY <= duo.topHalfHeight)
-        #expect(card.minX >= 0 && card.maxX <= 669)
+        // The union of every attract pose (Duo run 40343397399 left ~240 pt on the right): a narrower card still fits.
+        for jug in [jug, CGRect(x: 85, y: 480, width: 320, height: 330)] {
+            let spot = TurnRoundHintLayer.spot(footprint: jug, info: duo)
+            let size = try #require(TurnRoundHint.sizes.first(where: { $0.width == spot.width }))
+            let p = spot.center
+            let card = CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height)
+            let tagC = DemoTagLayer.spot(footprint: jug, info: duo)
+            let tag = CGRect(x: tagC.x - DemoTagLayer.size.width / 2, y: tagC.y - DemoTagLayer.size.height / 2,
+                             width: DemoTagLayer.size.width, height: DemoTagLayer.size.height)
+            #expect(!card.intersects(tag))
+            #expect(!card.intersects(duo.mapper.rect(jug)))
+            #expect(card.maxY <= duo.topHalfHeight)
+            #expect(card.minX >= 0 && card.maxX <= 669)
+        }
     }
 
     @Test func orientationPolicy() {

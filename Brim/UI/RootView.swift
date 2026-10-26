@@ -52,6 +52,9 @@ struct RootView: View {
                         let read: CGRect? = frame == .zero ? nil : frame
                         if read != divisionFrame { divisionFrame = read }
                     }
+                    .onChange(of: merged(safe, windowInsets), initial: true) { _, merged in
+                        logInsets(geo: safe, window: windowInsets, merged: merged)
+                    }
                     .task(id: turned) {
                         turnedRound = turned
                         logTurned(turned)
@@ -288,6 +291,18 @@ struct RootView: View {
     private func logTurned(_ on: Bool) {
         #if DEBUG
         print("BRIM-T turned round \(on ? 1 : 0)")
+        fflush(stdout)
+        #endif
+    }
+
+    /// DEBUG: the safe areas as read (the cover display's, DUO-AUDIT M3 cover play).
+    private func logInsets(geo: EdgeInsets, window: EdgeInsets, merged: EdgeInsets) {
+        #if DEBUG
+        func f(_ e: EdgeInsets) -> String {
+            "\(Int(e.top.rounded())),\(Int(e.leading.rounded())),\(Int(e.bottom.rounded())),\(Int(e.trailing.rounded()))"
+        }
+        let screen = screenSize.map { "\(Int($0.width))x\(Int($0.height))" } ?? "nil"
+        print("BRIM-T insets geo=\(f(geo)) window=\(f(window)) merged=\(f(merged)) screen=\(screen)")
         fflush(stdout)
         #endif
     }

@@ -38,14 +38,13 @@ enum OrientationLock {
     /// iOS can turn Brim upside down (programmatically, or when the player holds the Duo that way: Safari flips on the
     /// founder's Duo). Upright stays allowed: build 10 dropped it, an upside-down request was refused once on the real
     /// Duo, and the fallback then dropped upside down too, so nothing could turn the system round.
-    /// DUO-AUDIT M3 (d): the cover display (under `PoseRule.coverMaxSide`) is portrait only, like every phone-shaped
-    /// screen Brim runs on (the outer display honours supported orientations, forum 847644); its card and cover play
-    /// are composed for 466 × 678.
+    /// The cover display (under `PoseRule.coverMaxSide`) keeps every orientation but upside down. DUO-AUDIT M3 (d)
+    /// asked for portrait only there, and Duo run 40343397399 showed why not: iOS keeps the cover's answer through the
+    /// handover, so a phone opened in book pose came up as a letterboxed 469 × 669 portrait column on the landscape
+    /// inner display (frame duo-15), and that column is cover-sized, so nothing could tell it from the cover again.
     nonisolated static func duoMask(sharpSide: Bool, screen: CGSize) -> UIInterfaceOrientationMask {
-        // A screen not known yet (a controller asked before its window is up) keeps the old answer.
-        guard screen.width > 10, screen.height > 10 else { return .allButUpsideDown }
         let inner = max(screen.width, screen.height) >= PoseRule.coverMaxSide
-        return inner ? (sharpSide ? .all : .allButUpsideDown) : .portrait
+        return sharpSide && inner ? .all : .allButUpsideDown
     }
 
     /// The tabletop orientation Brim asks for: upside down with "Glasses on the sharp half", else upright.
