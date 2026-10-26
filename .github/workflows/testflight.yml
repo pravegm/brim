@@ -106,21 +106,29 @@ jobs:
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY"
           echo "KEY_PATH=$KEY" >> "$GITHUB_ENV"
 
-      - name: Archive (Release, signed by Xcode with the API key)
+      - name: Archive (Release) without creating a development certificate
+        # Run 40266619846 failed: "Your account has reached the maximum number of certificates". Automatic signing on
+        # an ephemeral runner creates a new Apple Development certificate every run (Squish's CI does the same, same
+        # account). So the archive is not development-signed any more: first try an ad-hoc signature (keeps the
+        # entitlements in the binary for the export to carry over), else archive unsigned. The App Store signature is
+        # applied by the export step below with Apple's cloud-managed distribution certificate (Admin API key).
         run: |
           set -o pipefail
-          xcodebuild archive \
-            -project Brim.xcodeproj -scheme Brim -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/Brim.xcarchive" \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$KEY_PATH" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            2>&1 | tee archive.log | grep -E "error:|warning: .*Brim/|\*\* ARCHIVE" || true
-          grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log
+          common=(-project Brim.xcodeproj -scheme Brim -configuration Release -destination 'generic/platform=iOS'
+                  -archivePath "$RUNNER_TEMP/Brim.xcarchive" CURRENT_PROJECT_VERSION="${{ github.run_number }}"
+                  DEVELOPMENT_TEAM="$APPLE_TEAM_ID")
+          if xcodebuild archive "${common[@]}" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= \
+               2>&1 | tee archive.log | grep -E "error:|warning: .*Brim/|\*\* ARCHIVE"; \
+             grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log; then
+            echo "ARCHIVE_MODE=adhoc" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ad-hoc archive failed; archiving unsigned"
+            rm -rf "$RUNNER_TEMP/Brim.xcarchive"
+            xcodebuild archive "${common[@]}" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+              2>&1 | tee archive.log | grep -E "error:|warning: .*Brim/|\*\* ARCHIVE" || true
+            grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log
+            echo "ARCHIVE_MODE=unsigned" >> "$GITHUB_ENV"
+          fi
 
       - name: Check the archive
         run: |
@@ -130,6 +138,41 @@ jobs:
           if [ "$BUILT" != "${{ github.run_number }}" ]; then
             echo "::error::CFBundleVersion is '$BUILT', not the run number ${{ github.run_number }}."
             exit 1
+          fi
+
+      - name: Export locally and check the App Store signature
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ExportLocal.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Brim.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportLocal.plist" -exportPath "$RUNNER_TEMP/local" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee export-local.log | grep -E "error:|EXPORT" || true
+          grep -q "\*\* EXPORT SUCCEEDED \*\*" export-local.log
+          mkdir -p "$RUNNER_TEMP/ipa" && cd "$RUNNER_TEMP/ipa" && unzip -q "$RUNNER_TEMP"/local/*.ipa
+          APP=$(ls -d "$RUNNER_TEMP"/ipa/Payload/*.app)
+          codesign -dvv "$APP" 2>&1 | grep -E "Authority|TeamIdentifier" || true
+          codesign -d --entitlements :- "$APP" > ent.plist 2>/dev/null || true
+          cat ent.plist
+          echo "archive mode: $ARCHIVE_MODE"
+          if grep -q "com.apple.developer.game-center" ent.plist; then
+            echo "GC_ENT=yes" >> "$GITHUB_ENV"
+          else
+            echo "GC_ENT=no" >> "$GITHUB_ENV"
+            echo "::warning::Game Center entitlement missing from the App Store signature (archive mode $ARCHIVE_MODE): Game Center will stay signed out in this build."
           fi
 
       - name: Upload to App Store Connect
@@ -167,6 +210,7 @@ jobs:
         run: |
           {
             echo "### Uploaded Brim build ${{ github.run_number }} to App Store Connect"
+            echo "Archive: $ARCHIVE_MODE (no development certificate created). Game Center entitlement in the App Store signature: $GC_ENT."
             echo "It shows up in TestFlight after Apple's processing (usually 10–30 min)."
             if [ -n "$NOTES" ]; then
               echo ""
