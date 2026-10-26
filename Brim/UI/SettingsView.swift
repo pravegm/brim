@@ -38,7 +38,7 @@ struct SettingsView: View {
                                       footnote: "Drag up to pour instead of lifting the top half.")
                             divider
                             toggleRow("Glasses on the sharp half", icon: "drop.fill", isOn: $settings.sharpSide,
-                                      footnote: "iPhone Duo blurs one half of its screen for a moment as you start to fold. This keeps the glasses on the other half: lay your Duo so the screen reads the right way up. If the glasses still blur, switch this off.")
+                                      footnote: "iPhone Duo blurs one half of its screen for a moment as you start to fold. This keeps the glasses on the other half. Hold your Duo up for a second the way the game reads, so iOS turns round too, then lay it flat. If the glasses still blur, switch this off.")
                             divider
                         }
                         if reduceMotion {
@@ -84,6 +84,11 @@ struct SettingsView: View {
                             Text("Brim \(version) · made by a tiny studio")
                                 .font(BrimTheme.text(13, .bold))
                                 .foregroundStyle(BrimTheme.inkFaint)
+                            if controller.hingeSeen {
+                                Text(OrientationLock.turnStatus())
+                                    .font(BrimTheme.text(12))
+                                    .foregroundStyle(BrimTheme.inkFaint)
+                            }
                         }
                         .fixedSize(horizontal: false, vertical: true)
                     }

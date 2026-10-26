@@ -86,8 +86,7 @@ struct RootView: View {
             case .play:
                 screenLayer(info)
                     .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
-            case .standUp:
+                    .position(x: rect.midX, y: rect.midY)            case .standUp:
                 StandUpCard(insets: safe,
                             onTurnScreen: { OrientationLock.requestPortrait() },
                             onPlayWithTouch: { controller.chooseTouchInBookPose() })

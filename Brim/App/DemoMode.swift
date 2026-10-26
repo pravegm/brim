@@ -318,10 +318,9 @@ enum DemoOrientation {
                 let w = window?.bounds.size ?? .zero
                 let s = scene.screen.bounds.size
                 // Run 40203342285 logged "ok" for a 469 × 669 letterboxed column: the window must fill the screen.
-                // With `flip` the tabletop is upside down (OrientationLock.sharpSide).
-                let wanted: UIInterfaceOrientation = OrientationLock.tabletop == .portraitUpsideDown
-                    ? .portraitUpsideDown : .portrait
-                let portrait = scene.effectiveGeometry.interfaceOrientation == wanted
+                // With `flip` either portrait will do: upside down is asked for once (OrientationLock.setSharpSide);
+                // the Duo simulator refuses it, and RootView then draws the turn.
+                let portrait = scene.effectiveGeometry.interfaceOrientation.isPortrait
                     && w.height > w.width && s.height > s.width
                     && w.width >= s.width - 2 && w.height >= s.height - 2
                 let shape = "window=\(Int(w.width))x\(Int(w.height)) screen=\(Int(s.width))x\(Int(s.height))"
@@ -352,7 +351,7 @@ enum DemoOrientation {
                                 #if DEBUG
                                 OrientationLock.logMasks(scene)
                                 #endif
-                                OrientationLock.requestFailed(asked)
+                                OrientationLock.requestFailed(asked, error)
                             }
                         }
                     }

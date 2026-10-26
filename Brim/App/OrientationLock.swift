@@ -25,53 +25,55 @@ enum OrientationLock {
     /// half that stays sharp, and iOS's own banners, notifications and Game Center turn round with the game. If iOS
     /// ever keeps the interface upright, RootView draws the game turned round itself (`RootView.turnsRound`).
     private(set) static var sharpSide = false
-    /// iOS turned an upside-down request down this run: back to upright (plus RootView's drawn turn) so the inner
-    /// display is never left with only the landscapes (Duo run 40300904773 sat in the book card that way).
-    private(set) static var upsideDownRefused = false
+    /// What iOS last said to Brim's upside-down request, shown under Settings › About so a real Duo can report it.
+    private(set) static var lastTurn = "not asked"
 
     static func mask(screen: CGSize) -> UIInterfaceOrientationMask {
         let stored = trustsStoredHinge(UserDefaults.standard.bool(forKey: hingeKey), screen: screen)
         guard allowsLandscape(hasHinge: stored || hingeSeen, screen: screen) else { return .portrait }
-        return duoMask(sharpSide: wantsUpsideDown, screen: screen)
+        return duoMask(sharpSide: sharpSide, screen: screen)
     }
 
-    private static var wantsUpsideDown: Bool { sharpSide && !upsideDownRefused }
-
-    /// Pure rule (tested): a Duo's mask. Upright portrait gives way to upside down on the inner display only (the
-    /// cover display, under `PoseRule.coverMaxSide`, keeps its usual orientations).
+    /// Pure rule (tested): a Duo's mask. With "Glasses on the sharp half" the inner display allows all four ways, so
+    /// iOS can turn Brim upside down (programmatically, or when the player holds the Duo that way: Safari flips on the
+    /// founder's Duo). Upright stays allowed: build 10 dropped it, an upside-down request was refused once on the real
+    /// Duo, and the fallback then dropped upside down too, so nothing could turn the system round. The cover display
+    /// (under `PoseRule.coverMaxSide`) keeps its usual orientations.
     nonisolated static func duoMask(sharpSide: Bool, screen: CGSize) -> UIInterfaceOrientationMask {
         let inner = max(screen.width, screen.height) >= PoseRule.coverMaxSide
-        return sharpSide && inner ? [.portraitUpsideDown, .landscapeLeft, .landscapeRight] : .allButUpsideDown
+        return sharpSide && inner ? .all : .allButUpsideDown
     }
 
     /// The tabletop orientation Brim asks for: upside down with "Glasses on the sharp half", else upright.
-    static var tabletop: UIInterfaceOrientationMask { wantsUpsideDown ? .portraitUpsideDown : .portrait }
+    static var tabletop: UIInterfaceOrientationMask { sharpSide ? .portraitUpsideDown : .portrait }
 
     static func setSharpSide(_ on: Bool) {
         guard on != sharpSide else { return }
         sharpSide = on
-        upsideDownRefused = false
         refreshSupportedOrientations()
         requestTabletopIfSupported()
     }
 
     /// On the inner display in portrait, the interface isn't yet the way "Glasses on the sharp half" wants it (e.g.
-    /// just reopened from the cover display, or launched lying flat, where iOS never rotates on its own): ask once.
+    /// just reopened from the cover display, or launched lying flat, where iOS never rotates on its own): ask.
     static func settleTabletop() {
-        guard wantsUpsideDown, !interfaceIsUpsideDown() else { return }
+        guard sharpSide, !interfaceIsUpsideDown() else { return }
         requestTabletopIfSupported()
     }
 
-    /// A geometry request failed. If it was for upside down, give up on it for this run and ask for upright instead.
-    static func requestFailed(_ asked: UIInterfaceOrientationMask) {
-        guard asked == .portraitUpsideDown, sharpSide, !upsideDownRefused else { return }
-        upsideDownRefused = true
+    /// A geometry request failed. Upright stays allowed and RootView draws the turn, so only report it, and if the
+    /// interface is still sideways (the book card's "Turn the screen"), settle for upright portrait.
+    static func requestFailed(_ asked: UIInterfaceOrientationMask, _ error: Error) {
+        guard asked == .portraitUpsideDown else { return }
+        lastTurn = "refused: \(error.localizedDescription)"
         #if DEBUG
-        print("BRIM-T upside down refused: back to upright, drawn turned round")
+        print("BRIM-T upside down refused: drawn turned round")
         fflush(stdout)
         #endif
-        refreshSupportedOrientations()
-        requestTabletopIfSupported()
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+        where scene.effectiveGeometry.interfaceOrientation.isLandscape {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { _ in }
+        }
     }
 
     /// Only where the mask allows it (never on a phone without a hinge, nor on the cover display).
@@ -116,6 +118,7 @@ enum OrientationLock {
     /// "Glasses on the sharp half", else upright.
     static func requestPortrait() {
         let asked = tabletop
+        if asked == .portraitUpsideDown { lastTurn = "asked" }
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
             if let root = window?.rootViewController { adoptMask(root) }
@@ -125,7 +128,7 @@ enum OrientationLock {
                 print("BRIM-T orient request error: \(error.localizedDescription)")
                 Task { @MainActor in logMasks(scene) }
                 #endif
-                Task { @MainActor in requestFailed(asked) }
+                Task { @MainActor in requestFailed(asked, error) }
             }
         }
     }
@@ -170,6 +173,20 @@ enum OrientationLock {
         #if DEBUG
         print("BRIM-T root mask adopted \(NSStringFromClass(cls).prefix(48))")
         #endif
+    }
+
+    /// For Settings › About: which way iOS is running the inner display, and what it said to Brim's last request.
+    static func turnStatus() -> String {
+        guard sharpSide else { return "Screen: upright (Glasses on the sharp half is off)" }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let way: String
+        switch scenes.first?.effectiveGeometry.interfaceOrientation {
+        case .portraitUpsideDown: way = "upside down"
+        case .portrait: way = "upright, game drawn turned round"
+        case .landscapeLeft, .landscapeRight: way = "sideways"
+        default: way = "unknown"
+        }
+        return "Screen: \(way) · iOS turn: \(lastTurn)"
     }
 
     /// The key window's scene is in portrait upside down.

@@ -29,10 +29,11 @@ struct TurnedRoundTests {
         #expect(RootView.deferredEdges(paused: true, turnedRound: true) == [])
     }
 
-    @Test func duoMaskSwapsUprightForUpsideDownOnTheInnerDisplay() {
+    @Test func duoMaskAllowsAllFourWaysOnTheInnerDisplay() {
         let inner = CGSize(width: 669, height: 951)
         let cover = CGSize(width: 466, height: 678)
-        #expect(OrientationLock.duoMask(sharpSide: true, screen: inner) == [.portraitUpsideDown, .landscapeLeft, .landscapeRight])
+        // Build 10 dropped upright and then, after one refusal, upside down: iOS could never turn round. Never again.
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: inner) == .all)
         #expect(OrientationLock.duoMask(sharpSide: true, screen: CGSize(width: 951, height: 669)).contains(.portraitUpsideDown))
         #expect(OrientationLock.duoMask(sharpSide: false, screen: inner) == .allButUpsideDown)
         #expect(OrientationLock.duoMask(sharpSide: true, screen: cover) == .allButUpsideDown)
