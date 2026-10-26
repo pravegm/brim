@@ -19,6 +19,9 @@ enum HintKind: String, Equatable {
     /// Round 6 (decision 1, REVIEW-5 §1): the one-time venue intro cards, on the first shift played in each venue that
     /// has a new idea. Cleared by the first pour (lift on a Duo, drag on a phone) or a tap.
     case foam, thick, belt, fade, sand
+    /// QA-5 P1-2: Home on a Duo whose game is upside down for a phone held the usual way ("Glasses on the sharp half"):
+    /// a one-time card says it is on purpose and why (TurnRoundHintLayer). Never an in-run hint (`activeHint`).
+    case turnRound
 
     /// The venue intro card for `venue` (nil for the Lemonade Stand: the lift/stop hints teach it).
     static func venueIntro(for venue: VenueID?) -> HintKind? {
@@ -42,7 +45,7 @@ enum HintKind: String, Equatable {
         case .belt: return .conveyor
         case .fade: return .potionShop
         case .sand: return .sandBar
-        case .lift, .stop, .anticipate: return nil
+        case .lift, .stop, .anticipate, .turnRound: return nil
         }
     }
 }
@@ -471,6 +474,9 @@ final class GameController: ObservableObject, SceneDriver {
             case .results:
                 presentDemoResults()
             }
+            // DUO-AUDIT M2 / M3: start in book-pose touch, or pouring by touch on the cover display.
+            if demo.bookTouch { chooseTouchInBookPose() }
+            if demo.coverPlay { playOnCover() }
         } else {
             startAttract()
         }
@@ -498,6 +504,8 @@ final class GameController: ObservableObject, SceneDriver {
                 hinge.reset()
                 flatSince = nil
                 if hud.gateAfterPause != session.snapshot.needsFlat { hud.gateAfterPause = session.snapshot.needsFlat }
+                // DUO-AUDIT M3 (c): ci/duo.sh cover-handover greps this after "cover touch 0".
+                trace("BRIM-T gate needsFlat=\(session.snapshot.needsFlat ? 1 : 0) back on the fold")
             }
             scene?.reset(for: session.snapshot)
             publishHUD(session.snapshot, now: CACurrentMediaTime(), force: true)
@@ -526,7 +534,8 @@ final class GameController: ObservableObject, SceneDriver {
     /// The display's pose changed. Book pose: the game holds still; a real run shows the pause card when it comes
     /// back, demo runs just hold (so CI's orientation request doesn't leave them paused). Cover / shut on a Duo: the
     /// run pauses as "closed" (the same as closing past 70°), and opening the phone resumes it behind the flat gate.
-    /// Every resume re-arms the flat gate (`resumeHook`).
+    /// Every resume re-arms the flat gate (`resumeHook`). DUO-AUDIT M1: `.cramped` (a window too small to pour in) holds
+    /// exactly like the book pose, never as a closing pause.
     func setPose(_ pose: DevicePose) {
         let paused = pose != .play
         if pose == .cover && closingGuardActive && isLiveRun {
@@ -581,9 +590,10 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     /// The closing guard applies wherever the hinge is real input: every real run on a Duo, and demo runs with `duo`
-    /// (ci/duo.sh's close-mid-pour scenario); autopilot store frames never pause themselves.
+    /// (ci/duo.sh's close-mid-pour scenario); autopilot store frames never pause themselves. DUO-AUDIT M3: never while
+    /// the player pours on the cover display (the shut hinge, ≈ 0°, would re-pause at once).
     private var closingGuardActive: Bool {
-        guard hingeSeen else { return false }
+        guard hingeSeen, !coverTouchOverride else { return false }
         if let demo { return demo.duo && demo.autopilot == nil }
         return true
     }
@@ -630,13 +640,63 @@ final class GameController: ObservableObject, SceneDriver {
         refreshInputMode()
     }
 
-    /// Chooses the play input: the hinge on a Duo, touch elsewhere (or when the player asked for touch, or in a
-    /// multitasking window).
+    /// DUO-AUDIT M3: the player chose "Pour here with touch" on the cover display. Cleared when the screen is the inner
+    /// display again (`clearCoverTouch`, RootView.handleCanvas), so a reopened Duo is back on the hinge.
+    @Published private(set) var coverTouchOverride = false
+
+    /// DUO-AUDIT M3 (b): "Pour here with touch" on the cover display. A run that was closed-paused stays paused, but on
+    /// the pause card (the player resumes on purpose); demo runs (`coverPlay`) carry straight on, like every pose hold.
+    func playOnCover() {
+        guard !coverTouchOverride else { return }
+        coverTouchOverride = true
+        releaseClosingPause()
+        if isLiveRun && demo == nil { setUserPaused(true) }
+        refreshInputMode()
+        trace("BRIM-T cover touch 1")
+    }
+
+    /// DUO-AUDIT M3 (c): the inner display is back. Called before the session adopts the fold canvas, so its
+    /// `hasFold && !hadFold && !usesTouch` branch closes the flat gate ("Lay it flat to carry on").
+    func clearCoverTouch() {
+        guard coverTouchOverride else { return }
+        coverTouchOverride = false
+        touch.cancelled()
+        refreshInputMode()
+        trace("BRIM-T cover touch 0")
+    }
+
+    /// A run that is live but paused (closing, the cover, a pose hold, the pause card): the cover and cramped cards
+    /// say so (DUO-AUDIT M3 a).
+    var hasPausedRun: Bool { isLiveRun && isPaused }
+
+    /// DUO-AUDIT M3 (a): the cover card's paused-run line, "Paused · Lemonade Stand · Shift 2 · glass 3 of 5"
+    /// ("Paused · Rush · glass 7" without a total). Pure.
+    static func coverPausedLine(mode: GameMode, ordersDone: Int, ordersTotal: Int?) -> String {
+        let next = max(ordersDone, 0) + 1
+        let glass: String
+        if let total = ordersTotal, total > 0 {
+            glass = "glass \(min(next, total)) of \(total)"
+        } else {
+            glass = "glass \(next)"
+        }
+        return "Paused · \(title(for: mode)) · \(glass)"
+    }
+
+    /// A demo play source (autopilot, the `duo` hinge, touch) drives the run, unless the player chose touch: "Use touch
+    /// instead", or the cover display (DUO-AUDIT M3: the shut hinge would tip the jug all the way).
+    private var demoSourceWins: Bool {
+        guard let demoSource, !runTouchOverride else { return false }
+        return !(coverTouchOverride && demoSource === hinge)
+    }
+
+    /// Chooses the play input: the hinge on a Duo, touch elsewhere (or when the player asked for touch, in a
+    /// multitasking window, or on the cover display).
     func refreshInputMode() {
         let hasHinge = hingeSeen || hinge.hasHinge
         let touchWanted = !hasHinge || settings.touchOnDuo || bookTouchOverride || runTouchOverride || isWindowed
+            || coverTouchOverride
         let wantsTouch: Bool
-        if demo != nil, let demoSource, !runTouchOverride {
+        if demo != nil, demoSourceWins, let demoSource {
             wantsTouch = demoSource === touch
         } else {
             wantsTouch = touchWanted
@@ -909,7 +969,7 @@ final class GameController: ObservableObject, SceneDriver {
 
     private var activeSource: TiltSource {
         if isAttract, let autopilot { return autopilot }
-        if !isAttract, !runTouchOverride, let demoSource { return demoSource }
+        if !isAttract, demoSourceWins, let demoSource { return demoSource }
         if usesTouch { return touch }
         return hinge
     }

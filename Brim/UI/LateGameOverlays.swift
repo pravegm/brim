@@ -21,7 +21,7 @@ enum VenueIntroCard {
         case .belt: return "Glasses ride past. Start pouring before they reach the spout."
         case .fade: return "The line vanishes. Remember where it was."
         case .sand: return "Sand sticks, then slides all at once. Tip slowly, stop early."
-        case .lift, .stop, .anticipate: return ""
+        case .lift, .stop, .anticipate, .turnRound: return ""
         }
     }
 
@@ -363,7 +363,7 @@ struct VenueIntroArt: View {
                 inner.clip(to: outline)
                 inner.fill(heap, with: .color(sand))
             }
-        case .lift, .stop, .anticipate:
+        case .lift, .stop, .anticipate, .turnRound:
             break
         }
     }

@@ -36,7 +36,12 @@ struct TurnedRoundTests {
         #expect(OrientationLock.duoMask(sharpSide: true, screen: inner) == .all)
         #expect(OrientationLock.duoMask(sharpSide: true, screen: CGSize(width: 951, height: 669)).contains(.portraitUpsideDown))
         #expect(OrientationLock.duoMask(sharpSide: false, screen: inner) == .allButUpsideDown)
-        #expect(OrientationLock.duoMask(sharpSide: true, screen: cover) == .allButUpsideDown)
+        // DUO-AUDIT M3 (d): the cover display is portrait only, whatever the setting.
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: cover) == .portrait)
+        #expect(OrientationLock.duoMask(sharpSide: false, screen: cover) == .portrait)
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: CGSize(width: 678, height: 466)) == .portrait)
+        // A screen not known yet keeps the old answer.
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: .zero) == .allButUpsideDown)
     }
 
     @Test func sharpSideIsOnByDefaultAndOffInDemo() throws {
@@ -370,6 +375,98 @@ struct PoseRuleTests {
         #expect(PoseRule.playRect(in: duoCover) == CGRect(origin: .zero, size: duoCover))
     }
 
+    /// DUO-AUDIT M1: a window under 360 × 520 shows the "Make Brim full screen" card, never the cover or a broken layout.
+    @Test func crampedWindowsShowAStatusCard() {
+        let inner = CGSize(width: 669, height: 951)
+        let innerBook = CGSize(width: 951, height: 669)
+        #expect(PoseRule.pose(canvas: CGSize(width: 475, height: 669), hingeSeen: true, isShut: false,
+                              bookTouchOverride: false, screen: innerBook) == .play)
+        #expect(PoseRule.pose(canvas: CGSize(width: 334, height: 951), hingeSeen: true, isShut: false,
+                              bookTouchOverride: false, screen: inner) == .cramped)
+        #expect(PoseRule.pose(canvas: CGSize(width: 669, height: 475), hingeSeen: true, isShut: false,
+                              bookTouchOverride: false, screen: inner) == .cramped)
+        #expect(PoseRule.pose(canvas: CGSize(width: 317, height: 669), hingeSeen: false, isShut: false,
+                              bookTouchOverride: false, screen: innerBook) == .cramped)
+        #expect(PoseRule.pose(canvas: duoCover, hingeSeen: true, isShut: false, bookTouchOverride: false,
+                              screen: duoCover) == .cover)
+        // Full screen is never cramped, however small the phone.
+        #expect(PoseRule.pose(canvas: iPhoneSE, hingeSeen: false, isShut: false, bookTouchOverride: false,
+                              screen: iPhoneSE) == .play)
+        #expect(PoseRule.isCramped(CGSize(width: 359, height: 900)))
+        #expect(PoseRule.isCramped(CGSize(width: 600, height: 519)))
+        #expect(!PoseRule.isCramped(CGSize(width: 360, height: 520)))
+    }
+
+    /// DUO-AUDIT M3: "Pour here with touch" plays on the cover display, shut or not, and only there.
+    @Test func coverTouchPlaysOnTheCoverScreenOnly() {
+        #expect(PoseRule.pose(canvas: duoCover, hingeSeen: true, isShut: true, bookTouchOverride: false,
+                              screen: duoCover, coverTouch: true) == .play)
+        #expect(PoseRule.pose(canvas: duoCover, hingeSeen: true, isShut: true, bookTouchOverride: false,
+                              screen: duoCover, coverTouch: false) == .cover)
+        #expect(!PoseRule.hasFold(canvas: duoCover, hingeSeen: true, screen: duoCover))
+        // On the inner display the override means nothing (and RootView clears it).
+        #expect(PoseRule.pose(canvas: duoPortrait, hingeSeen: true, isShut: true, bookTouchOverride: false,
+                              screen: duoPortrait, coverTouch: true) == .cover)
+        #expect(PoseRule.pose(canvas: duoPortrait, hingeSeen: true, isShut: false, bookTouchOverride: false,
+                              screen: duoPortrait, coverTouch: true) == .play)
+        #expect(PoseRule.playRect(in: duoCover) == CGRect(origin: .zero, size: duoCover))
+    }
+
+    /// DUO-AUDIT M2: book-pose touch plays on the right-hand page, clear of the 456…496 fold.
+    @MainActor
+    @Test func bookTouchPlaysOnThePagePastTheFold() {
+        let page = CGRect(x: 496, y: 0, width: 455, height: 669)
+        #expect(PoseRule.bookPage(canvas: duoLandscape, hingeSeen: true) == page)
+        #expect(PoseRule.bookPage(canvas: duoLandscape, hingeSeen: true, screen: duoLandscape,
+                                  fold: CGRect(x: 456, y: 0, width: 40, height: 669)) == page)
+        // An inactive region on the centre line never pulls the page onto the fold; a wider one pushes it right.
+        #expect(PoseRule.bookPage(canvas: duoLandscape, hingeSeen: true,
+                                  fold: CGRect(x: 475.5, y: 0, width: 0, height: 669))?.minX == 496)
+        #expect(PoseRule.bookPage(canvas: duoLandscape, hingeSeen: true,
+                                  fold: CGRect(x: 450, y: 0, width: 54, height: 669))?.minX == 504)
+        // A horizontal (tabletop) region is ignored.
+        #expect(PoseRule.bookPage(canvas: duoLandscape, hingeSeen: true,
+                                  fold: CGRect(x: 0, y: 456, width: 669, height: 40))?.minX == 496)
+        #expect(PoseRule.bookPage(canvas: duoLandscape, hingeSeen: false)?.minX == 496)
+        // Never in a window (DUO-AUDIT M1 item 2), never in portrait, never on a phone, never on the cover.
+        #expect(PoseRule.bookPage(canvas: CGSize(width: 475, height: 669), hingeSeen: true, screen: duoLandscape) == nil)
+        #expect(PoseRule.bookPage(canvas: duoPortrait, hingeSeen: true) == nil)
+        #expect(PoseRule.bookPage(canvas: CGSize(width: 874, height: 402), hingeSeen: false) == nil)
+        #expect(PoseRule.bookPage(canvas: CGSize(width: 678, height: 466), hingeSeen: true) == nil)
+        // The page keeps the trailing corner and only loses the leading (fold) edge.
+        let safe = EdgeInsets(top: 10, leading: 20, bottom: 30, trailing: 40)
+        #expect(RootView.playInsets(safe, column: true, page: true) == EdgeInsets(top: 10, leading: 0, bottom: 30, trailing: 40))
+        #expect(RootView.playInsets(safe, column: true, page: false) == EdgeInsets(top: 10, leading: 0, bottom: 30, trailing: 0))
+        #expect(RootView.playInsets(safe, column: false, page: false) == safe)
+        #expect(BookTouchPanel.columnWidth(pageMinX: 496, leading: 0) == 368)
+    }
+
+    /// QA-5 P1-2: the "upside down on purpose" card, once, on a Duo tabletop that reads upside down either way.
+    @MainActor
+    @Test func turnHintOnlyWhenTheDuoIsUpsideDown() {
+        #expect(PoseRule.showsTurnHint(hasFold: true, turnedRound: true, upsideDown: false, seen: false, hintsEnabled: true))
+        #expect(PoseRule.showsTurnHint(hasFold: true, turnedRound: false, upsideDown: true, seen: false, hintsEnabled: true))
+        #expect(!PoseRule.showsTurnHint(hasFold: true, turnedRound: false, upsideDown: false, seen: false, hintsEnabled: true))
+        #expect(!PoseRule.showsTurnHint(hasFold: false, turnedRound: true, upsideDown: true, seen: false, hintsEnabled: true))
+        #expect(!PoseRule.showsTurnHint(hasFold: true, turnedRound: true, upsideDown: false, seen: true, hintsEnabled: true))
+        #expect(!PoseRule.showsTurnHint(hasFold: true, turnedRound: true, upsideDown: false, seen: false, hintsEnabled: false))
+        #expect(HintKind.turnRound.rawValue == "turnRound")
+        #expect(!HintKind.turnRound.isVenueIntro)
+        // It hangs beside the jug, clear of the DEMO tag, on the raised half.
+        let duo = CanvasInfo(size: CGSize(width: 669, height: 951), insets: EdgeInsets(), hasFold: true)
+        let jug = CGRect(x: 120, y: 492, width: 250, height: 228)   // the tipped attract jug (duo-ui-menu)
+        let p = TurnRoundHintLayer.spot(footprint: jug, info: duo)
+        let size = TurnRoundHint.size
+        let card = CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height)
+        let tagC = DemoTagLayer.spot(footprint: jug, info: duo)
+        let tag = CGRect(x: tagC.x - DemoTagLayer.size.width / 2, y: tagC.y - DemoTagLayer.size.height / 2,
+                         width: DemoTagLayer.size.width, height: DemoTagLayer.size.height)
+        #expect(!card.intersects(tag))
+        #expect(!card.intersects(duo.mapper.rect(jug)))
+        #expect(card.maxY <= duo.topHalfHeight)
+        #expect(card.minX >= 0 && card.maxX <= 669)
+    }
+
     @Test func orientationPolicy() {
         #expect(OrientationLock.allowsLandscape(hasHinge: true, screen: CGSize(width: 402, height: 874)))
         #expect(OrientationLock.allowsLandscape(hasHinge: false, screen: CGSize(width: 669, height: 951)))
@@ -520,6 +617,51 @@ struct ClosingGuardTests {
         c.start(mode: .shift("1-1"))
         c.hingeSample(angle: 40, time: 5)
         #expect(!c.isClosedPaused)
+    }
+
+    /// DUO-AUDIT M3: "Pour here with touch" on the cover display, then reopening: touch on the cover (the shut hinge
+    /// never re-pauses), the hinge again on the inner display, behind the flat gate.
+    @Test func coverTouchPlaysThenReopeningClosesTheFlatGate() {
+        let c = makeController("mode=shift:1-2;duo")
+        c.start(mode: .shift("1-2"))
+        c.hingeSample(angle: 150, time: 10)
+        c.hingeSample(angle: 0, time: 10.4)
+        #expect(c.isClosedPaused)
+        c.setPose(.cover)
+        #expect(c.hasPausedRun)
+        c.playOnCover()
+        #expect(c.coverTouchOverride)
+        #expect(!c.isClosedPaused)
+        #expect(c.usesTouch)
+        c.setPose(.play)
+        c.updateCanvas(CGSize(width: 466, height: 678), hasFold: false)
+        #expect(!c.isPaused)                  // a demo run carries on (a real run waits on the pause card)
+        #expect(!c.hud.gateClosed)
+        c.hingeSample(angle: 0, time: 11)
+        c.hingeSample(angle: 2, time: 11.2)
+        #expect(!c.isClosedPaused)
+        c.clearCoverTouch()
+        #expect(!c.coverTouchOverride)
+        #expect(!c.usesTouch)
+        c.updateCanvas(CGSize(width: 669, height: 951), hasFold: true)
+        #expect(c.hud.gateClosed)             // "Lay it flat to carry on"
+    }
+
+    @Test func coverCardCopy() {
+        #expect(CoverView.title(kind: .cover, paused: false) == "Open me to pour")
+        #expect(CoverView.title(kind: .cover, paused: true) == "Open me to carry on")
+        #expect(CoverView.title(kind: .cramped, paused: true) == "Make Brim full screen to pour")
+        #expect(!CoverView.subtitle(kind: .cramped).contains("drag"))
+        #expect(CoverView.offersCoverTouch(kind: .cover, hingeSeen: true))
+        #expect(!CoverView.offersCoverTouch(kind: .cramped, hingeSeen: true))
+        #expect(!CoverView.offersCoverTouch(kind: .cover, hingeSeen: false))
+        #expect(GameController.coverPausedLine(mode: .shift("1-2"), ordersDone: 2, ordersTotal: 5)
+                == "Paused · \(GameController.title(for: .shift("1-2"))) · glass 3 of 5")
+        #expect(GameController.coverPausedLine(mode: .rush, ordersDone: 6, ordersTotal: nil) == "Paused · Rush · glass 7")
+        #expect(GameController.coverPausedLine(mode: .shift("1-2"), ordersDone: 5, ordersTotal: 5).hasSuffix("glass 5 of 5"))
+        let keys = DemoConfig.parse("mode=shift:1-1;duo;bookTouch;coverPlay", today: 1)
+        #expect(keys.bookTouch && keys.coverPlay)
+        #expect(!DemoConfig.parse("duo", today: 1).bookTouch)
     }
 
     @Test func theAttractLoopNeverPauses() {

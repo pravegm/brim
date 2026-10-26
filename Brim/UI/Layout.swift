@@ -56,8 +56,12 @@ enum DevicePose: String, Equatable {
     case play
     /// Duo with a landscape canvas (book pose): "Turn me so the fold runs side to side, then lay me flat".
     case standUp = "book"
-    /// Duo shut (hinge ≤ 15°, released at ≥ 20°) or the small cover display: "Open me to pour".
+    /// Duo shut (hinge ≤ 15°, released at ≥ 20°) or the small cover display: "Open me to pour". DUO-AUDIT M3: the
+    /// cover display plays by touch once the player taps "Pour here with touch" (`coverTouch`), and is `.play` then.
     case cover
+    /// DUO-AUDIT M1: a multitasking window too small for the counter (under `PoseRule.minWindow`: a 1/3 split, a
+    /// portrait side-by-side pane, a pane stacked over a pinned PiP). A status card: "Make Brim full screen to pour".
+    case cramped
 }
 
 /// The pose rules (ROUND-2 App P0 b). Pure; tested.
@@ -65,6 +69,10 @@ enum PoseRule {
     /// The Duo cover display is 466 × 678 pt; its inner canvas 669 × 951 / 951 × 669. Anything whose long side is
     /// under this, on a device with a hinge, is the cover.
     static let coverMaxSide: CGFloat = 760
+
+    /// DUO-AUDIT M1: the smallest multitasking window Brim plays in. Under 360 pt wide the Home row leaves Play ~55 pt
+    /// and the world crops the waiting glass; under 520 pt tall a world-shaped column is narrower than any phone.
+    static let minWindow = CGSize(width: 360, height: 520)
 
     /// Both Duo displays are ~0.7 wide-to-tall; other iPhones ~0.46. The inner display is ≥ 600 pt on its short side.
     static func looksLikeDuoInner(_ size: CGSize) -> Bool {
@@ -88,18 +96,28 @@ enum PoseRule {
     /// inner display (≈475 × 669) is nearly the cover display's 466 × 678, so the canvas alone can't tell them apart.
     /// A window on the inner display plays like any iPhone (touch, no fold: hinge play makes no sense in a shared
     /// window).
+    /// DUO-AUDIT M3 (`coverTouch`): the player chose "Pour here with touch" on the cover display. While the *screen* is
+    /// cover-sized that is `.play`, shut or not (the phone is shut whenever the cover is lit). DUO-AUDIT M1: a window
+    /// under `minWindow` is `.cramped`, never the cover card.
     static func pose(canvas: CGSize, hingeSeen: Bool, isShut: Bool, bookTouchOverride: Bool,
-                     screen: CGSize? = nil) -> DevicePose {
-        if hingeSeen && isShut { return .cover }
+                     screen: CGSize? = nil, coverTouch: Bool = false) -> DevicePose {
         let display = screen ?? canvas
-        if hingeSeen && display.width > 10 && display.height > 10 && max(display.width, display.height) < coverMaxSide {
-            return .cover
+        let coverScreen = display.width > 10 && display.height > 10 && max(display.width, display.height) < coverMaxSide
+        if coverTouch && coverScreen { return .play }
+        if hingeSeen && isShut { return .cover }
+        if hingeSeen && coverScreen { return .cover }
+        if isWindowed(canvas: canvas, screen: screen) {
+            return isCramped(canvas) ? .cramped : .play
         }
-        if isWindowed(canvas: canvas, screen: screen) { return .play }
         if canvas.width > canvas.height && !bookTouchOverride && (hingeSeen || looksLikeDuoInner(canvas)) {
             return .standUp
         }
         return .play
+    }
+
+    /// DUO-AUDIT M1: a window smaller than `minWindow` on either side. Pure.
+    static func isCramped(_ canvas: CGSize) -> Bool {
+        canvas.width < minWindow.width || canvas.height < minWindow.height
     }
 
     /// A horizontal fold runs across the middle of a portrait Duo inner display (never in a multitasking window).
@@ -118,6 +136,36 @@ enum PoseRule {
         guard canvas.width > worldWide else { return CGRect(origin: .zero, size: canvas) }
         let width = min(canvas.width, (canvas.height * 0.70).rounded())
         return CGRect(x: ((canvas.width - width) / 2).rounded(), y: 0, width: width, height: canvas.height)
+    }
+
+    /// DUO-AUDIT M2: book pose with "Use touch" plays on the right-hand page, never across the vertical fold (the
+    /// centred column put the jug pivot at x ≈ 488 and the glass at ≈ 498, on the 456…496 fold). nil unless the canvas
+    /// is a Duo inner display in landscape, full screen (DUO-AUDIT M1 item 2: never in a multitasking window).
+    /// - `fold`: the `.division` region (`includeInactive`). The page starts at its trailing edge, but never left of
+    ///   the 40 pt band round the middle (an inactive region may report zero width on the centre line).
+    /// On the Duo the page is 455 × 669: aspect 0.68 against the world's 0.704, so ~8 pt is cropped each side. Pure.
+    static func bookPage(canvas: CGSize, hingeSeen: Bool, screen: CGSize? = nil, fold: CGRect? = nil) -> CGRect? {
+        guard canvas.width > canvas.height, canvas.height > 10 else { return nil }
+        guard !isWindowed(canvas: canvas, screen: screen) else { return nil }
+        if hingeSeen {
+            guard canvas.width >= coverMaxSide else { return nil }
+        } else {
+            guard looksLikeDuoInner(canvas) else { return nil }
+        }
+        var x = (canvas.width / 2 + 20).rounded(.up)
+        if let fold, fold.height >= fold.width, fold.maxX > canvas.width * 0.3, fold.maxX < canvas.width * 0.7 {
+            x = max(x, fold.maxX.rounded(.up))
+        }
+        guard canvas.width - x >= 300 else { return nil }
+        return CGRect(x: x, y: 0, width: canvas.width - x, height: canvas.height)
+    }
+
+    /// QA-5 P1-2: the one-time "upside down on purpose" card on Home. Only on a Duo tabletop (`hasFold`) whose game is
+    /// upside down for a phone held the usual way: drawn turned round (`RootView.turnsRound`), or the interface itself
+    /// upside down (iOS honoured "Glasses on the sharp half"). Pure.
+    static func showsTurnHint(hasFold: Bool, turnedRound: Bool, upsideDown: Bool, seen: Bool,
+                              hintsEnabled: Bool) -> Bool {
+        hasFold && (turnedRound || upsideDown) && !seen && hintsEnabled
     }
 }
 

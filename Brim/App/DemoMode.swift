@@ -75,7 +75,12 @@ import UIKit
 // - `flip`       draw the game turned round (RootView.turnsRound), as the real app does on a Duo by default. Without
 //                it demo runs (store frames) keep the upright layout. Logs `BRIM-T turned round <0|1>`.
 // - `window=WxH` lay the app out in a W × H window centred in the full screen, as Split View / Slide Over does on
-//                the Duo's inner display (QA-5 P1-1). Logs `BRIM-T windowed 1`.
+//                the Duo's inner display (QA-5 P1-1). Logs `BRIM-T windowed 1`. Under 360 × 520 (DUO-AUDIT M1) the
+//                pose is `cramped`: the "Make Brim full screen to pour" card (`BRIM-T canvas … pose=cramped`).
+// - `bookTouch`  DUO-AUDIT M2: start as if "Use touch" was tapped on the book-pose card: the game plays on the right-hand
+//                page, a panel on the left. Logs `BRIM-T book page x=<x> w=<w>`.
+// - `coverPlay`  DUO-AUDIT M3: start as if "Pour here with touch" was tapped on the cover display (`BRIM-T cover touch 1`;
+//                `… 0` once the inner display is back, then `BRIM-T gate needsFlat=1 back on the fold` on a live run).
 // - `seed=N`     GameSession seed (default: day number for daily, 7 otherwise, so CI frames are stable).
 // - Round 9:
 //   `crowns=N`   on top of `progress=`: Flawless crowns on the first campaign shifts in play order (never the Sand Bar)
@@ -117,6 +122,10 @@ import UIKit
 //   `BRIM-T start hold <0|1>`      the run is held under a venue intro card (1) / released (0) (QA-3 P1-3).
 //   `BRIM-T intro card skipped <hint>`   a player with stars in the venue already knows it (QA-3 P2-12).
 //   `BRIM-T touch override ends: the hinge poured`   "Use touch instead" ends at the next run (QA-3 P2-11).
+// - DUO-AUDIT M1–M3, QA-5 P1-2 (every DEBUG build): `BRIM-T cover card kind=<cover|cramped> paused=<0|1>
+//   touchOffer=<0|1>` when the cover / cramped card shows or its paused line changes; `BRIM-T cover touch <1|0>`;
+//   `BRIM-T gate needsFlat=<0|1> back on the fold` (a live run adopts a fold canvas); `BRIM-T book page x=<x> w=<w>`;
+//   `BRIM-T hint turnRound shown` (the one-time "Upside down on purpose" card on Home).
 // - Demo runs keep the scene rendering on every screen (the real app pauses it under Venues, Settings, results and the
 //   pose cards), so `BRIM-T frame 120` always arrives.
 
@@ -145,6 +154,9 @@ struct DemoConfig: Equatable {
     var flip = false
     /// `window=WxH`: RootView lays the app out in a window of that size inside the full screen (Split View frames).
     var window: CGSize?
+    /// DUO-AUDIT M2 `bookTouch`, M3 `coverPlay`.
+    var bookTouch = false
+    var coverPlay = false
     var seed: UInt64?
     var badges = false
     /// Round 9: `crowns=N`, `vessel=<venue>|house`, `jugFill=x`.
@@ -183,6 +195,8 @@ struct DemoConfig: Equatable {
             case "window":
                 let wh = value.split(separator: "x").compactMap { Double($0) }
                 if wh.count == 2, wh[0] > 10, wh[1] > 10 { config.window = CGSize(width: wh[0], height: wh[1]) }
+            case "bookTouch": config.bookTouch = value.isEmpty || value == "on" || value == "1" || value == "true"
+            case "coverPlay": config.coverPlay = value.isEmpty || value == "on" || value == "1" || value == "true"
             case "seed": config.seed = UInt64(value)
             case "crowns": config.crowns = Int(value).map { max($0, 0) }
             case "vessel": config.vessel = VenueID(rawValue: value)

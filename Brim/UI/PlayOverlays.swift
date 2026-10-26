@@ -229,6 +229,7 @@ struct HintsOverlay: View {
                          : "Lay it flat just before the line: the stream keeps falling."
         case .anticipate: return "A little earlier next time: the stream keeps falling."
         case .foam, .thick, .belt, .fade, .sand: return VenueIntroCard.line(for: hint)
+        case .turnRound: return TurnRoundHint.message
         }
     }
 
@@ -236,7 +237,7 @@ struct HintsOverlay: View {
         switch hint {
         case .lift: return touch ? "hand.point.up.left.fill" : "arrow.up"
         case .stop: return touch ? "hand.raised.fill" : "arrow.down"
-        case .anticipate, .foam, .thick, .belt, .fade, .sand: return nil
+        case .anticipate, .foam, .thick, .belt, .fade, .sand, .turnRound: return nil
         }
     }
 

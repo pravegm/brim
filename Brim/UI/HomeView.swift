@@ -11,6 +11,8 @@ struct HomeView: View {
     @ObservedObject var controller: GameController
     @ObservedObject var store: ProgressStore
     let info: CanvasInfo
+    /// QA-5 P1-2: show the one-time "upside down on purpose" card (RootView, PoseRule.showsTurnHint).
+    var turnHint: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
@@ -54,8 +56,16 @@ struct HomeView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             header
-            ChalkboardLayer(hud: controller.hud, store: store, info: info, today: today)
-                .opacity(appeared ? 1 : 0)
+            // QA-5 P1-2: the turn-round card hangs where the chalkboard does (beside the jug, clear of the DEMO tag), and
+            // the board comes back once it is dismissed.
+            if turnHint {
+                TurnRoundHintLayer(hud: controller.hud, info: info, onDismiss: { store.markHintSeen(HintKind.turnRound.rawValue) })
+                    .opacity(appeared ? 1 : 0)
+                    .transition(.opacity)
+            } else {
+                ChalkboardLayer(hud: controller.hud, store: store, info: info, today: today)
+                    .opacity(appeared ? 1 : 0)
+            }
             DemoTagLayer(hud: controller.hud, info: info)
                 .opacity(appeared ? 1 : 0)
             bottomRow
@@ -68,6 +78,9 @@ struct HomeView: View {
         }
         .frame(width: info.size.width, height: info.size.height, alignment: .topLeading)
         .animation(BrimTheme.settle(reduceMotion), value: showCabinet)
+        .animation(BrimTheme.settle(reduceMotion), value: turnHint)
+        // "Show once": leaving Home while the card is up counts as seen.
+        .onDisappear { if turnHint { store.markHintSeen(HintKind.turnRound.rawValue) } }
         .onAppear {
             withAnimation(BrimTheme.pop(reduceMotion).delay(0.05)) { appeared = true }
             // Round 9 (REVIEW-7 P1-2): demo `screen=cabinet` opens on the Glass Cabinet.
@@ -296,11 +309,20 @@ struct DemoTagLayer: View {
 
     private var spot: CGPoint? {
         guard let footprint else { return nil }
+        return Self.spot(footprint: footprint, info: info)
+    }
+
+    /// Where the tag sits for a jug footprint (world): just above it, inside the side pads. Pure; shared with the
+    /// turn-round card (QA-5 P1-2), which keeps clear of it.
+    static func spot(footprint: CGRect, info: CanvasInfo) -> CGPoint {
         let jug = info.mapper.rect(footprint)
         let minY = info.hudTop + HUDMetrics.rowHeight + 18
         let x = min(max(jug.midX, info.sidePad + 90), info.size.width - info.sidePad - 90)
         return CGPoint(x: x, y: max(jug.minY - 20, minY))
     }
+
+    /// The tag's size, generously (it is `fixedSize`): what the turn-round card keeps clear of.
+    static let size = CGSize(width: 236, height: 32)
 }
 
 /// "DEMO · press Play to pour": the attract loop's label (DemoTagLayer).
@@ -422,5 +444,131 @@ struct Chalkboard: View {
                 .shadow(color: BrimTheme.ink.opacity(0.2), radius: 8, y: 4)
         )
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - "Upside down on purpose" (QA-5 P1-2)
+
+/// QA-5 P1-2: on a Duo, "Glasses on the sharp half" (on by default) runs every screen upside down for a phone held the
+/// usual way, and before this only a Settings footnote said why. The first time Home shows like that, this card hangs
+/// where the chalkboard does (beside the jug on the raised half, clear of the DEMO tag above the jug) and says it's on
+/// purpose. A tap dismisses it for good (`HintKind.turnRound` in `hintsSeen`); leaving Home while it is up counts too.
+/// It reads correctly on both paths: iOS itself upside down, or Brim drawing the game turned round (`RootView.turnsRound`).
+/// The card is drawn with the rest of the content, so once the phone is turned round it reads upright, and its
+/// "Turn your Duo round" strip is counter-rotated (180° against the content), so it reads upright for the player who
+/// hasn't turned it yet.
+struct TurnRoundHintLayer: View {
+    @ObservedObject var hud: HUDState
+    let info: CanvasInfo
+    let onDismiss: () -> Void
+
+    @State private var footprint: CGRect? = nil
+
+    var body: some View {
+        ZStack {
+            Button {
+                FeedbackDirector.shared.uiTap()
+                onDismiss()
+            } label: {
+                TurnRoundHint()
+            }
+            .buttonStyle(PressScaleStyle())
+            .frame(width: TurnRoundHint.size.width)
+            .position(Self.spot(footprint: footprint, info: info))
+            .accessibilityHint("Double-tap to close")
+        }
+        .frame(width: info.size.width, height: info.size.height)
+        .animation(.easeInOut(duration: 0.3), value: footprint)
+        .onAppear {
+            absorb(hud.anchors)
+            #if DEBUG
+            print("BRIM-T hint turnRound shown")
+            fflush(stdout)
+            #endif
+        }
+        .onChange(of: hud.anchors) { _, anchors in absorb(anchors) }
+    }
+
+    /// The attract jug's footprint, the union of every pose seen (as the chalkboard keeps it), so the card settles.
+    private func absorb(_ anchors: PlayAnchors?) {
+        guard let jug = anchors?.jug else { return }
+        let grown = footprint.map { $0.union(jug) } ?? jug
+        if let old = footprint, abs(old.minX - grown.minX) < 6, abs(old.maxX - grown.maxX) < 6,
+           abs(old.minY - grown.minY) < 6, abs(old.maxY - grown.maxY) < 6 { return }
+        footprint = grown
+    }
+
+    /// Beside the jug and the DEMO tag above it, in the raised half under the header (the chalkboard's rule); if
+    /// neither side has room, centred on the flat half just under the fold. Pure.
+    static func spot(footprint: CGRect?, info: CanvasInfo) -> CGPoint {
+        let size = TurnRoundHint.size
+        let world = footprint ?? CGRect(x: WorldLayout.pivot.x - 120, y: WorldLayout.pivot.y - 130, width: 200, height: 260)
+        let tagCenter = DemoTagLayer.spot(footprint: world, info: info)
+        let tag = CGRect(x: tagCenter.x - DemoTagLayer.size.width / 2, y: tagCenter.y - DemoTagLayer.size.height / 2,
+                         width: DemoTagLayer.size.width, height: DemoTagLayer.size.height)
+        let avoid = info.mapper.rect(world).union(tag)
+        let top = info.hudTop + HUDMetrics.rowHeight + 18
+        let area = CGRect(x: info.sidePad - 4, y: top, width: info.size.width - 2 * (info.sidePad - 4),
+                          height: max(info.topHalfHeight - 10 - top, 0))
+        if let p = CardPlacement.beside(avoid, size: size, in: area, gap: 12) { return p }
+        return CGPoint(x: info.size.width / 2, y: info.bottomHalfTop + 12 + size.height / 2)
+    }
+}
+
+/// The card itself (TurnRoundHintLayer): the venue intro cards' look, with a gold strip that reads the other way up.
+struct TurnRoundHint: View {
+    /// Width, and a generous height for placement.
+    static let size = CGSize(width: 244, height: 300)
+    static let cue = "Turn your Duo round"
+    static let title = "Upside down on purpose"
+    static let message = "When a fold starts, iOS blurs one half for a moment. This way round, that's the jug's half, so the glasses stay sharp."
+    static let footnote = "Settings › Glasses on the sharp half"
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(Self.title)
+                .font(BrimTheme.title(20))
+                .foregroundStyle(BrimTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(Self.message)
+                .font(BrimTheme.text(14, .bold))
+                .foregroundStyle(BrimTheme.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(Self.footnote)
+                .font(BrimTheme.text(11, .heavy))
+                .foregroundStyle(BrimTheme.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer(minLength: 0)
+                Text("Got it")
+                    .font(BrimTheme.text(15, .heavy))
+                    .foregroundStyle(BrimTheme.ink)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(BrimTheme.gold))
+            }
+            // Counter-rotated: upright for a phone held the usual way, where the rest of the app reads upside down.
+            Label(Self.cue, systemImage: "arrow.triangle.2.circlepath")
+                .font(BrimTheme.text(15, .heavy))
+                .foregroundStyle(BrimTheme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(BrimTheme.gold.opacity(0.35)))
+                .rotationEffect(.degrees(180))
+                .padding(.top, 2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(width: Self.size.width, alignment: .leading)
+        .background(
+            shape.fill(BrimTheme.card)
+                .shadow(color: BrimTheme.ink.opacity(0.2), radius: 12, y: 6)
+        )
+        .overlay(shape.stroke(BrimTheme.goldDeep, lineWidth: 3))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Self.title). \(Self.message) You can change it in Settings, Glasses on the sharp half.")
     }
 }

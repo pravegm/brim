@@ -21,6 +21,9 @@ struct RootView: View {
     @State private var upsideDown = false
     /// The game is drawn turned round (mirrors `turnsRound` for the play layer's system-gesture edges).
     @State private var turnedRound = false
+    /// DUO-AUDIT M2: the fold (`.division`, active or not), so book-pose touch play starts on the page past it.
+    @State private var divisionFrame: CGRect?
+    @State private var lastPageLog = ""
 
     private var demo: DemoConfig? { controller.demo }
 
@@ -35,6 +38,7 @@ struct RootView: View {
                 // (on by default) draws the game turned round on a Duo: the player turns the phone round, the glasses
                 // sit on the half that stays sharp, and the half they lift (the jug) takes the blur.
                 let fold = Self.activeDivision(in: geo)
+                let division = Self.division(in: geo)
                 // Demo `window=WxH`: CI frames a multitasking window (Split View) inside the full screen.
                 let canvas = demo?.window ?? geo.size
                 let turned = turnsRound(canvas)
@@ -44,6 +48,10 @@ struct RootView: View {
                     .rotationEffect(turned ? .degrees(180) : .zero)
                     .animation(nil, value: turned)
                     .onChange(of: fold ?? .zero) { _, frame in logFold(frame) }
+                    .onChange(of: division ?? .zero, initial: true) { _, frame in
+                        let read: CGRect? = frame == .zero ? nil : frame
+                        if read != divisionFrame { divisionFrame = read }
+                    }
                     .task(id: turned) {
                         turnedRound = turned
                         logTurned(turned)
@@ -78,16 +86,23 @@ struct RootView: View {
     @ViewBuilder
     private func content(canvas: CGSize, safe: EdgeInsets) -> some View {
         let pose = self.pose(for: canvas)
-        let rect = PoseRule.playRect(in: canvas)
+        let page = bookPage(canvas, pose: pose)
+        let rect = page ?? PoseRule.playRect(in: canvas)
         let column = rect.width < canvas.width - 1
-        let info = CanvasInfo(size: rect.size,
-                              insets: column ? EdgeInsets(top: safe.top, leading: 0, bottom: safe.bottom, trailing: 0) : safe,
+        let info = CanvasInfo(size: rect.size, insets: Self.playInsets(safe, column: column, page: page != nil),
                               hasFold: hasFold(canvas))
         ZStack {
             BrimTheme.cream
             gameLayer(rect, hidden: pose != .play)
             switch pose {
             case .play:
+                if let page {
+                    // DUO-AUDIT M2: the left page explains; only the right page (the game) takes drags.
+                    BookTouchPanel(pageMinX: page.minX, insets: safe, onTurnScreen: { OrientationLock.requestPortrait() })
+                        .frame(width: page.minX, height: canvas.height)
+                        .position(x: page.minX / 2, y: canvas.height / 2)
+                        .transition(.opacity)
+                }
                 screenLayer(info)
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
@@ -97,7 +112,10 @@ struct RootView: View {
                             onPlayWithTouch: { controller.chooseTouchInBookPose() })
                     .transition(.opacity)
             case .cover:
-                CoverView(store: store)
+                CoverView(store: store, controller: controller, hud: controller.hud, kind: .cover, insets: safe)
+                    .transition(.opacity)
+            case .cramped:
+                CoverView(store: store, controller: controller, hud: controller.hud, kind: .cramped, insets: safe)
                     .transition(.opacity)
             }
             if demo?.screen == .icon {
@@ -120,6 +138,8 @@ struct RootView: View {
         .onChange(of: controller.hingeSeen) { _, _ in handleCanvas(canvas) }
         .onChange(of: controller.isShut) { _, _ in handleCanvas(canvas) }
         .onChange(of: controller.bookTouchOverride) { _, _ in handleCanvas(canvas) }
+        .onChange(of: controller.coverTouchOverride) { _, _ in handleCanvas(canvas) }
+        .onChange(of: divisionFrame) { _, _ in handleCanvas(canvas) }
     }
 
     // MARK: - Pose and canvas
@@ -130,7 +150,29 @@ struct RootView: View {
             if screen == .cover { return .cover }
         }
         return PoseRule.pose(canvas: canvas, hingeSeen: controller.hingeSeen, isShut: controller.isShut,
-                             bookTouchOverride: controller.bookTouchOverride, screen: screenSize)
+                             bookTouchOverride: controller.bookTouchOverride, screen: screenSize,
+                             coverTouch: controller.coverTouchOverride)
+    }
+
+    /// DUO-AUDIT M2: book-pose touch plays on the right-hand page (nil elsewhere).
+    private func bookPage(_ canvas: CGSize, pose: DevicePose) -> CGRect? {
+        guard pose == .play else { return nil }
+        return PoseRule.bookPage(canvas: canvas, hingeSeen: controller.hingeSeen, screen: screenSize, fold: divisionFrame)
+    }
+
+    /// The insets the play screens get: a centred column has no side edges; the book page (DUO-AUDIT M2) only loses
+    /// its leading one (the fold), keeping the trailing rounded corner. Pure.
+    static func playInsets(_ safe: EdgeInsets, column: Bool, page: Bool) -> EdgeInsets {
+        if page { return EdgeInsets(top: safe.top, leading: 0, bottom: safe.bottom, trailing: safe.trailing) }
+        if column { return EdgeInsets(top: safe.top, leading: 0, bottom: safe.bottom, trailing: 0) }
+        return safe
+    }
+
+    /// QA-5 P1-2: the one-time "upside down on purpose" card on Home (PoseRule.showsTurnHint).
+    private func showsTurnHint(_ info: CanvasInfo) -> Bool {
+        PoseRule.showsTurnHint(hasFold: info.hasFold, turnedRound: turnedRound, upsideDown: upsideDown,
+                               seen: store.hasSeenHint(HintKind.turnRound.rawValue),
+                               hintsEnabled: controller.hintsEnabled)
     }
 
     private func hasFold(_ canvas: CGSize) -> Bool {
@@ -192,6 +234,10 @@ struct RootView: View {
     private func handleCanvas(_ canvas: CGSize) {
         // Before setPose / updateCanvas, so the input is already right when the session adopts the canvas.
         controller.setWindowed(PoseRule.isWindowed(canvas: canvas, screen: screenSize))
+        // DUO-AUDIT M3 (c): back on the inner display, the hinge pours again (before the session adopts the fold).
+        if let screen = screenSize, max(screen.width, screen.height) >= PoseRule.coverMaxSide {
+            controller.clearCoverTouch()
+        }
         let pose = self.pose(for: canvas)
         let fold = hasFold(canvas)
         logCanvas(canvas, hasFold: fold, pose: pose)
@@ -199,7 +245,18 @@ struct RootView: View {
         guard pose == .play else { return }
         if fold { OrientationLock.settleTabletop() }
         if canvas.height >= canvas.width { controller.clearBookTouchOverride() }
-        controller.updateCanvas(PoseRule.playRect(in: canvas).size, hasFold: fold)
+        let page = bookPage(canvas, pose: pose)
+        logPage(page)
+        controller.updateCanvas((page ?? PoseRule.playRect(in: canvas)).size, hasFold: fold)
+    }
+
+    /// The fold (`.division`, iOS 27.1) whether or not it is active: a flat Duo still has its line, so a layout that
+    /// leaves room for it never jumps (DUO-AUDIT M2).
+    private static func division(in proxy: GeometryProxy) -> CGRect? {
+        if #available(iOS 27.1, *) {
+            return proxy.reservedRegions(kind: .division, options: .includeInactive).first?.frame
+        }
+        return nil
     }
 
     /// The active fold (`.division` reserved region, iOS 27.1): present only while the Duo is partly folded.
@@ -232,6 +289,15 @@ struct RootView: View {
         #if DEBUG
         print("BRIM-T turned round \(on ? 1 : 0)")
         fflush(stdout)
+        #endif
+    }
+
+    private func logPage(_ page: CGRect?) {
+        #if DEBUG
+        let line = page.map { "BRIM-T book page x=\(Int($0.minX.rounded())) w=\(Int($0.width.rounded()))" } ?? ""
+        guard line != lastPageLog else { return }
+        lastPageLog = line
+        if !line.isEmpty { print(line); fflush(stdout) }
         #endif
     }
 
@@ -284,7 +350,7 @@ struct RootView: View {
         ZStack {
             switch controller.route {
             case .home:
-                HomeView(controller: controller, store: store, info: info)
+                HomeView(controller: controller, store: store, info: info, turnHint: showsTurnHint(info))
                     .transition(.opacity)
             case .venues:
                 VenuesView(controller: controller, store: store, info: info)

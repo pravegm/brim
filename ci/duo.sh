@@ -142,6 +142,41 @@ if [[ " $PASSES " == *" hinge "* ]]; then
   else
     log "CLOSE-GUARD FAIL: autopause=${ap:-none} resume=${rs:-none}"
   fi
+  # DUO-AUDIT M3 (a): the cover card in duo-08 says the shift is paused ("Open me to carry on", run and glass).
+  if grep -q "BRIM-T cover card kind=cover paused=1" "$CL"; then
+    log "COVER-PAUSED PASS"
+  else
+    log "COVER-PAUSED FAIL: $(grep -c 'BRIM-T cover card' "$CL") cover card lines, none with paused=1"
+  fi
+
+  # DUO-AUDIT M3 (b): "Pour here with touch" plays on the cover display (466 x 678), the autopilot pouring, shut.
+  hinge_set 0; sleep 2
+  launch cover-play "mode=shift:1-1;duo;coverPlay;orient=portrait;autopilot=perfect;freezeOn=midpour"
+  store_wait cover-play "freezeOn=midpour" 10; shoot duo-13-cover-play cover
+  CP="$OUT_ABS/logs/cover-play.txt"
+  grep -nE "BRIM-T (cover|canvas|freeze|orient portrait)" "$CP" | head -12 >>"$RUNLOG"
+  if grep -q "BRIM-T cover touch 1" "$CP" && grep -qE "BRIM-T canvas [0-9]{3}x[0-9]{3} hasFold=false pose=play" "$CP" \
+     && grep -q "BRIM-T freeze midpour" "$CP"; then
+    log "COVER-PLAY PASS"
+  else
+    log "COVER-PLAY FAIL: touch=$(grep -c 'BRIM-T cover touch 1' "$CP") play=$(grep -cE 'canvas [0-9]{3}x[0-9]{3} hasFold=false pose=play' "$CP") freeze=$(grep -c 'BRIM-T freeze midpour' "$CP")"
+  fi
+
+  # DUO-AUDIT M3 (c): a live run by touch on the cover, then open the phone: the hinge pours again, behind the flat
+  # gate ("cover touch 0", then needsFlat=1 from the resume or the fold coming back).
+  hinge_set 0; sleep 2
+  launch cover-handover "mode=shift:1-2;duo;coverPlay;orient=portrait"
+  shoot duo-14-cover-touch cover
+  hinge_sweep 150 2.5; sleep 4; shoot duo-15-cover-reopened inner
+  CH="$OUT_ABS/logs/cover-handover.txt"
+  grep -nE "BRIM-T (cover|canvas|resume|gate|autopause)" "$CH" | head -16 >>"$RUNLOG"
+  off=$(grep -n "BRIM-T cover touch 0" "$CH" | head -1 | cut -d: -f1)
+  if grep -q "BRIM-T cover touch 1" "$CH" && [[ -n "$off" ]] \
+     && sed -n "${off},\$p" "$CH" | grep -qE "BRIM-T (resume|gate) needsFlat=1"; then
+    log "COVER-HANDOVER PASS (cover touch 0 @${off}, then the flat gate)"
+  else
+    log "COVER-HANDOVER FAIL: touch1=$(grep -c 'BRIM-T cover touch 1' "$CH") touch0=${off:-none} needsFlat=$(grep -cE 'BRIM-T (resume|gate) needsFlat=1' "$CH")"
+  fi
 fi
 
 # ---- pass: autopilot frames on the Duo canvas (store set) --------------------------------------------------
@@ -204,16 +239,50 @@ if [[ " $PASSES " == *" ui "* ]]; then
   store_wait ui-cabinet-mid "freezeOn=midpour" 6; shoot duo-ui-cabinet-mid inner
   # Book pose: no orient request, the sim's own landscape inner canvas → the "stand me up" card.
   launch ui-book "mode=shift:1-1;duo"; shoot duo-ui-book inner
-  # QA-5 P1-1: Split View halves (landscape inner display) play by touch in a column, never the cover card.
-  launch ui-split-half "mode=shift:1-1;autopilot=perfect;window=475x669;freezeOn=midpour"
+  # DUO-AUDIT M2: book pose with "Use touch": the game on the right-hand page (x >= 496 pt = 1488 px), never across
+  # the vertical fold (456...496); the left page explains.
+  launch ui-book-touch "mode=shift:1-1;duo;bookTouch;autopilot=perfect;freezeOn=midpour"
+  store_wait ui-book-touch "freezeOn=midpour" 8; shoot duo-ui-book-touch inner
+  BT="$OUT_ABS/logs/ui-book-touch.txt"
+  grep -hE "BRIM-T (book page|canvas|fold)" "$BT" | head -6 >>"$RUNLOG" || true
+  px=$(grep -o "BRIM-T book page x=[0-9]*" "$BT" | head -1 | sed 's/.*x=//')
+  if [[ -n "$px" ]] && (( px >= 496 )) && grep -q "pose=play" "$BT" && grep -q "BRIM-T freeze midpour" "$BT"; then
+    log "BOOK-TOUCH PASS (page x=$px)"
+  else
+    log "BOOK-TOUCH FAIL: page x=${px:-none} play=$(grep -c 'pose=play' "$BT") freeze=$(grep -c 'BRIM-T freeze midpour' "$BT")"
+  fi
+  # QA-5 P1-1 + DUO-AUDIT M1: Split View halves play by touch (a column when wide), never the cover card; windows
+  # under 360 x 520 (portrait side by side, stacked over a PiP) show the "Make Brim full screen to pour" card.
+  launch ui-split-half "mode=shift:1-1;duo;autopilot=perfect;window=475x669;freezeOn=midpour"
   store_wait ui-split-half "freezeOn=midpour" 6; shoot duo-ui-split-half inner
   launch ui-split-wide "screen=menu;window=634x669;freezeOn=midpour"
   store_wait ui-split-wide "freezeOn=midpour" 6; shoot duo-ui-split-wide inner
-  grep -hE "BRIM-T (windowed|canvas)" "$OUT_ABS/logs/ui-split-half.txt" "$OUT_ABS/logs/ui-split-wide.txt" >>"$RUNLOG" || true
-  if grep -q "pose=cover" "$OUT_ABS/logs/ui-split-half.txt" "$OUT_ABS/logs/ui-split-wide.txt"; then
-    log "SPLIT-VIEW FAIL: a window was read as the cover display"
+  launch ui-split-narrow "mode=shift:1-1;duo;window=334x951;orient=portrait"; shoot duo-ui-split-narrow inner
+  launch ui-split-stack "screen=menu;duo;window=669x475;orient=portrait"; shoot duo-ui-split-stack inner
+  SPLIT_OK=1
+  for n in ui-split-half ui-split-wide ui-split-narrow ui-split-stack; do
+    f="$OUT_ABS/logs/$n.txt"
+    grep -hE "BRIM-T (windowed|canvas|cover card)" "$f" | sed "s/^/$n: /" >>"$RUNLOG" || true
+    if grep -q "pose=cover" "$f"; then SPLIT_OK=0; log "SPLIT-VIEW FAIL: $n was read as the cover display"; fi
+    if ! grep -q "BRIM-T windowed 1" "$f"; then SPLIT_OK=0; log "SPLIT-VIEW FAIL: $n never logged windowed 1"; fi
+  done
+  for n in ui-split-half ui-split-wide; do
+    grep -q "pose=play" "$OUT_ABS/logs/$n.txt" || { SPLIT_OK=0; log "SPLIT-VIEW FAIL: $n never played"; }
+  done
+  for n in ui-split-narrow ui-split-stack; do
+    grep -q "pose=cramped" "$OUT_ABS/logs/$n.txt" && grep -q "BRIM-T cover card kind=cramped" "$OUT_ABS/logs/$n.txt" \
+      || { SPLIT_OK=0; log "SPLIT-VIEW FAIL: $n did not show the cramped card"; }
+  done
+  (( SPLIT_OK )) && log "SPLIT-VIEW PASS (half/wide play, narrow/stack cramped)"
+  # QA-5 P1-2: the one-time "Upside down on purpose" card on Home, game drawn turned round (the Duo sim refuses
+  # upside down; on a real Duo iOS turns round itself and the card is drawn the same way relative to the content).
+  launch ui-turn-hint "screen=menu;orient=portrait;duo;flip;hints=fresh;freezeOn=midpour"
+  store_wait ui-turn-hint "freezeOn=midpour" 6; sleep 1; shoot duo-ui-turn-hint inner
+  TH="$OUT_ABS/logs/ui-turn-hint.txt"
+  if grep -q "BRIM-T hint turnRound shown" "$TH" && grep -qE "BRIM-T turned round 1|upsideDown=1" "$TH"; then
+    log "TURN-HINT PASS"
   else
-    log "SPLIT-VIEW PASS"
+    log "TURN-HINT FAIL: shown=$(grep -c 'hint turnRound shown' "$TH") turned=$(grep -c 'BRIM-T turned round 1' "$TH") upside=$(grep -c 'upsideDown=1' "$TH")"
   fi
   hinge_set 160 || true
   launch ui-book2 "mode=shift:1-1;duo"

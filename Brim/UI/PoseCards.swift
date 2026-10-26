@@ -239,13 +239,95 @@ struct JugGlyph: Shape {
     }
 }
 
-// MARK: - Cover display / shut
+// MARK: - Book pose with touch (DUO-AUDIT M2)
+
+/// The left-hand page while the game plays by touch on the right-hand page in book pose (`PoseRule.bookPage`): a quiet
+/// panel that says how to get the hinge back, never within 24 pt of the vertical fold, and no drag layer.
+struct BookTouchPanel: View {
+    /// The right page's left edge (the fold's trailing edge, 496 pt on the Duo).
+    let pageMinX: CGFloat
+    var insets: EdgeInsets = EdgeInsets()
+    let onTurnScreen: () -> Void
+
+    /// Width of the panel's column: the page left of the fold (40 pt band, 24 pt clear), less a page margin each side
+    /// and the leading inset. 368 pt on the Duo. Pure.
+    static func columnWidth(pageMinX: CGFloat, leading: CGFloat) -> CGFloat {
+        max(pageMinX - 2 * StandUpCard.creaseHalf - StandUpCard.creaseClear - 2 * StandUpCard.pageMargin - leading, 0)
+    }
+
+    var body: some View {
+        let column = Self.columnWidth(pageMinX: pageMinX, leading: insets.leading)
+        ZStack(alignment: .topLeading) {
+            LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.7)], startPoint: .top, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 14) {
+                TurnPhoneDrawing()
+                    .frame(width: 200, height: 200)
+                    .scaleEffect(0.66)
+                    .frame(width: 132, height: 132)
+                Text("Turn me and lay me flat to pour with the hinge.")
+                    .font(BrimTheme.title(24))
+                    .foregroundStyle(BrimTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Label("Touch play is on: drag up on the right page to pour.", systemImage: "hand.draw.fill")
+                    .font(BrimTheme.text(15, .bold))
+                    .foregroundStyle(BrimTheme.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+                TapButton(kind: .primary, height: 52, action: onTurnScreen) {
+                    Label("Turn the screen", systemImage: "rotate.right.fill")
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .fixedSize()
+                .padding(.top, 4)
+            }
+            .frame(width: column, alignment: .leading)
+            .frame(maxHeight: .infinity)
+            .padding(.leading, StandUpCard.pageMargin + insets.leading)
+            .padding(.top, insets.top)
+            .padding(.bottom, insets.bottom)
+        }
+        .frame(width: pageMinX)
+    }
+}
+
+// MARK: - Cover display / shut, and windows too small to pour in
 
 /// The calm card on the cover display (or while the Duo is shut): today's Daily status, best Rush, "Open me to pour".
+/// DUO-AUDIT M3: it says when a run is paused underneath ("Open me to carry on", with the run and the glass), and
+/// "Pour here with touch" plays on the cover display itself. DUO-AUDIT M1: the same card, titled "Make Brim full screen
+/// to pour", stands in for a multitasking window too small for the counter (`DevicePose.cramped`).
 struct CoverView: View {
+    enum Kind: String, Equatable { case cover, cramped }
+
     @ObservedObject var store: ProgressStore
+    @ObservedObject var controller: GameController
+    @ObservedObject var hud: HUDState
+    var kind: Kind = .cover
+    var insets: EdgeInsets = EdgeInsets()
 
     private var today: Int { LevelCatalog.dayNumber(for: Date()) }
+    private var paused: Bool { controller.hasPausedRun }
+
+    /// Pure (tested).
+    static func title(kind: Kind, paused: Bool) -> String {
+        switch kind {
+        case .cramped: return "Make Brim full screen to pour"
+        case .cover: return paused ? "Open me to carry on" : "Open me to pour"
+        }
+    }
+
+    /// Pure (tested). The Duo's split can't be resized (forum 847644), so never "drag to widen".
+    static func subtitle(kind: Kind) -> String {
+        switch kind {
+        case .cramped: return "This window is too small for the counter."
+        case .cover: return "Lay it flat, then lift the top half."
+        }
+    }
+
+    /// "Pour here with touch": the cover display of a Duo, never a cramped window. Pure.
+    static func offersCoverTouch(kind: Kind, hingeSeen: Bool) -> Bool {
+        kind == .cover && hingeSeen
+    }
 
     var body: some View {
         ZStack {
@@ -255,28 +337,76 @@ struct CoverView: View {
                 .ignoresSafeArea()
             LinearGradient(colors: [BrimTheme.cream, BrimTheme.peach.opacity(0.75)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
-            VStack(spacing: 18) {
-                BrimWordmark(size: 52)
-                Text("Open me to pour")
+            GeometryReader { geo in
+                ScrollView(showsIndicators: false) {
+                    card
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                        .frame(width: geo.size.width)
+                        .frame(minHeight: geo.size.height)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .padding(.top, insets.top)
+            .padding(.bottom, insets.bottom)
+            .padding(.leading, insets.leading)
+            .padding(.trailing, insets.trailing)
+        }
+        .onAppear { logCard() }
+        .onChange(of: paused) { _, _ in logCard() }
+    }
+
+    private var card: some View {
+        VStack(spacing: 16) {
+            BrimWordmark(size: kind == .cramped ? 44 : 52)
+            VStack(spacing: 6) {
+                Text(Self.title(kind: kind, paused: paused))
                     .font(BrimTheme.title(26))
                     .foregroundStyle(BrimTheme.ink)
-                Text("Lay it flat, then lift the top half.")
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Self.subtitle(kind: kind))
                     .font(BrimTheme.text(15, .bold))
                     .foregroundStyle(BrimTheme.inkSoft)
-                VStack(spacing: 12) {
-                    row(icon: "bolt.fill", title: "Rush best",
-                        value: store.rushBest > 0 ? ShareText.grouped(store.rushBest) : "—")
-                    Rectangle().fill(BrimTheme.ink.opacity(0.07)).frame(height: 1)
-                    row(icon: "calendar", title: "Daily Pour #\(today)", value: dailyValue)
-                    if store.dailyStreak(today: today) > 1 {
-                        Rectangle().fill(BrimTheme.ink.opacity(0.07)).frame(height: 1)
-                        row(icon: "flame.fill", title: "Daily streak", value: "\(store.dailyStreak(today: today)) days")
-                    }
-                }
-                .brimCard(padding: 18, radius: 22)
-                .frame(maxWidth: 340)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(24)
+            VStack(spacing: 12) {
+                if paused {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: "pause.circle.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(BrimTheme.goldDeep)
+                            .frame(width: 22)
+                        Text(GameController.coverPausedLine(mode: controller.mode, ordersDone: hud.ordersDone,
+                                                            ordersTotal: hud.ordersTotal))
+                            .font(BrimTheme.text(16, .heavy))
+                            .foregroundStyle(BrimTheme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    Rectangle().fill(BrimTheme.ink.opacity(0.07)).frame(height: 1)
+                }
+                row(icon: "bolt.fill", title: "Rush best",
+                    value: store.rushBest > 0 ? ShareText.grouped(store.rushBest) : "—")
+                Rectangle().fill(BrimTheme.ink.opacity(0.07)).frame(height: 1)
+                row(icon: "calendar", title: "Daily Pour #\(today)", value: dailyValue)
+                if store.dailyStreak(today: today) > 1 {
+                    Rectangle().fill(BrimTheme.ink.opacity(0.07)).frame(height: 1)
+                    row(icon: "flame.fill", title: "Daily streak", value: "\(store.dailyStreak(today: today)) days")
+                }
+            }
+            .brimCard(padding: 18, radius: 22)
+            .frame(maxWidth: 340)
+            if Self.offersCoverTouch(kind: kind, hingeSeen: controller.hingeSeen) {
+                TapButton(kind: .secondary, height: 52, action: { controller.playOnCover() }) {
+                    Label("Pour here with touch", systemImage: "hand.draw.fill")
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .frame(maxWidth: 340)
+                .accessibilityHint("Plays on this screen by dragging up. Open the phone to pour with the hinge again.")
+            }
         }
     }
 
@@ -299,5 +429,12 @@ struct CoverView: View {
                 .font(BrimTheme.number(17))
                 .foregroundStyle(BrimTheme.ink)
         }
+    }
+
+    private func logCard() {
+        #if DEBUG
+        print("BRIM-T cover card kind=\(kind.rawValue) paused=\(paused ? 1 : 0) touchOffer=\(Self.offersCoverTouch(kind: kind, hingeSeen: controller.hingeSeen) ? 1 : 0)")
+        fflush(stdout)
+        #endif
     }
 }
