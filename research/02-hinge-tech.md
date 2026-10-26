@@ -217,6 +217,9 @@
 - The simulator sometimes stops following the hinge; reboot it.
 - `hinge` sometimes drops a move; retry up to three times.
 - There is no CLI rotate. Squish rotates in-app (DEBUG `requestGeometryUpdate`), which needs `UIRequiresFullScreen`.
+- Brim (26 Oct, real Duo): with `UIRequiresFullScreen` iOS strips upside down on the inner display ("supported:
+  portrait, landscapeLeft, landscapeRight", whatever the app's mask), while Safari turns all four ways. Brim's Release
+  build drops the key (Debug keeps it for CI rotation).
 - Taps on the inner display are unreliable through XCUI. `XCUIScreen.main` is the cover display.
 - In the simulator, `.closed` can stick to ~150° on reopen, unlike the real device.
 - Nothing in the simulator gives haptics, latency, display-off angles, thermals or ergonomics.

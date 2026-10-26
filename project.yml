@@ -38,6 +38,10 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         UIStatusBarHidden: true
+        # Debug only (the Release build deletes it, see postBuildScripts): CI's Duo simulator runs need it for
+        # requestGeometryUpdate. On a real Duo it kept Brim a "normal iPhone" app on the inner display, which iOS never
+        # runs upside down (founder's Duo, build 11: "supported: portrait, landscapeLeft, landscapeRight"), while
+        # multitasking apps like Safari turn all four ways. Apple: remove UIRequiresFullScreen as soon as possible.
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Light
         UIViewControllerBasedStatusBarAppearance: false
@@ -55,6 +59,16 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_PREVIEWS: YES
+        # The script below edits the built Info.plist.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Release drops UIRequiresFullScreen
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "$CONFIGURATION" = "Release" ]; then
+            /usr/libexec/PlistBuddy -c "Delete :UIRequiresFullScreen" "$TARGET_BUILD_DIR/$INFOPLIST_PATH" 2>/dev/null || true
+            echo "Brim Release: UIRequiresFullScreen removed"
+          fi
   BrimTests:
     type: bundle.unit-test
     platform: iOS

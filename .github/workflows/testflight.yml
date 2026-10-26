@@ -145,6 +145,13 @@ jobs:
             echo "::error::CFBundleVersion is '$BUILT', not the run number ${{ github.run_number }}."
             exit 1
           fi
+          # Build 12: Release must not carry UIRequiresFullScreen, or the Duo never runs Brim upside down.
+          if /usr/libexec/PlistBuddy -c "Print :UIRequiresFullScreen" "$APP/Info.plist" >/dev/null 2>&1; then
+            echo "::error::UIRequiresFullScreen is still in the Release Info.plist (project.yml postBuildScripts)."
+            exit 1
+          fi
+          echo "UIRequiresFullScreen: absent (good)"
+          /usr/libexec/PlistBuddy -c "Print :UISupportedInterfaceOrientations" "$APP/Info.plist"
 
       - name: Export locally and check the App Store signature
         run: |
