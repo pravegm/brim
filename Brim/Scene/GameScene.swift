@@ -1235,6 +1235,11 @@ final class GameScene: SKScene {
     }
 
     private func buildBackdrop(scale: CGFloat) {
+        #if DEBUG
+        let t0 = CACurrentMediaTime()
+        defer { print(String(format: "BRIM-T backdrop scale=%.0f venue=%@ ms=%.0f", scale, effectiveVenue.rawValue,
+                             (CACurrentMediaTime() - t0) * 1000)); fflush(stdout) }
+        #endif
         let tex = backdropTexture(venue: effectiveVenue, palette: palette, scale: scale)
         backdropScale = scale
         backdrop.texture = tex

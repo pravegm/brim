@@ -103,6 +103,19 @@ if [[ " $PASSES " == *" hinge "* ]]; then
   grep -E "BRIM-H" "$OUT_ABS/logs/hinge-1-1.txt" | head -3 >>"$RUNLOG"
   log "hinge lines in app log: $(grep -c 'BRIM-H' "$OUT_ABS/logs/hinge-1-1.txt")"
 
+  # Founder report (26 Oct, real Duo): "when it's laying flat and I start folding the top half, the bottom half blurs
+  # out for the first few seconds then comes back". Burst: flat and still, then lift, shooting every ~0.4 s.
+  hinge_set 180
+  launch fold-burst "mode=shift:1-2;duo;orient=portrait"
+  sleep 3; shoot burst-0-flat inner
+  ( hinge_sweep 150 1.2 ) &
+  sweeper=$!
+  for i in 1 2 3 4 5 6 7 8; do sleep 0.25; shoot "burst-$i" inner; done
+  wait "$sweeper" 2>/dev/null || true
+  CUR=150
+  for i in 9 10 11; do sleep 0.6; shoot "burst-$i" inner; done
+  grep -nE "BRIM-T (canvas|pose|screen|swap|flat|intro|hint)|BRIM-H" "$OUT_ABS/logs/fold-burst.txt" | head -60 >>"$RUNLOG"
+
   # ROUND-3 decision 1 proof: close the phone FAST in the middle of a pour, reopen, and check that no glass was
   # judged between the autopause and the resume, and that the resume re-armed the flat gate.
   hinge_set 179

@@ -1021,6 +1021,8 @@ final class GameController: ObservableObject, SceneDriver {
     }
 
     private func makeScene(_ layout: WorldLayout) {
+        trace(String(format: "BRIM-T scene built fold=%d visible=%.0fx%.0f", layout.hasFold ? 1 : 0,
+                     layout.visibleRect.width, layout.visibleRect.height))
         let newScene = GameScene(layout: layout)
         newScene.scaleMode = .aspectFill
         newScene.driver = self
