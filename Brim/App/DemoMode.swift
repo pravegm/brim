@@ -72,6 +72,8 @@ import UIKit
 //                       rotates back later). Without it a Duo follows the way it is held (App/OrientationLock.swift).
 // - `duo`        treat the canvas as a Duo (crease band) from the first frame and use the real hinge tilt source
 //                (HingeTiltSource) even in demo. Without `autopilot`/`duo` a demo game uses TouchTiltSource.
+// - `flip`       draw the game turned round (RootView.turnsRound), as the real app does on a Duo by default. Without
+//                it demo runs (store frames) keep the upright layout. Logs `BRIM-T turned round <0|1>`.
 // - `seed=N`     GameSession seed (default: day number for daily, 7 otherwise, so CI frames are stable).
 // - Round 9:
 //   `crowns=N`   on top of `progress=`: Flawless crowns on the first campaign shifts in play order (never the Sand Bar)
@@ -137,6 +139,8 @@ struct DemoConfig: Equatable {
     var hints: HintsPreset?
     var orientPortrait = false
     var duo = false
+    /// `flip`: draw the game turned round, as the "Glasses on the sharp half" setting does on a real Duo.
+    var flip = false
     var seed: UInt64?
     var badges = false
     /// Round 9: `crowns=N`, `vessel=<venue>|house`, `jugFill=x`.
@@ -171,6 +175,7 @@ struct DemoConfig: Equatable {
             case "hints": config.hints = HintsPreset(rawValue: value)
             case "orient": config.orientPortrait = value == "portrait"
             case "duo": config.duo = value.isEmpty || value == "on" || value == "1" || value == "true"
+            case "flip": config.flip = value.isEmpty || value == "on" || value == "1" || value == "true"
             case "seed": config.seed = UInt64(value)
             case "crowns": config.crowns = Int(value).map { max($0, 0) }
             case "vessel": config.vessel = VenueID(rawValue: value)

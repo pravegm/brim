@@ -103,18 +103,21 @@ if [[ " $PASSES " == *" hinge "* ]]; then
   grep -E "BRIM-H" "$OUT_ABS/logs/hinge-1-1.txt" | head -3 >>"$RUNLOG"
   log "hinge lines in app log: $(grep -c 'BRIM-H' "$OUT_ABS/logs/hinge-1-1.txt")"
 
-  # Founder report (26 Oct, real Duo): "when it's laying flat and I start folding the top half, the bottom half blurs
-  # out for the first few seconds then comes back". Burst: flat and still, then lift, shooting every ~0.4 s.
-  hinge_set 180
-  launch fold-burst "mode=shift:1-2;duo;orient=portrait"
-  sleep 3; shoot burst-0-flat inner
-  ( hinge_sweep 150 1.2 ) &
-  sweeper=$!
-  for i in 1 2 3 4 5 6 7 8; do sleep 0.25; shoot "burst-$i" inner; done
-  wait "$sweeper" 2>/dev/null || true
-  CUR=150
-  for i in 9 10 11; do sleep 0.6; shoot "burst-$i" inner; done
-  grep -nE "BRIM-T (canvas|pose|screen|swap|flat|intro|hint)|BRIM-H" "$OUT_ABS/logs/fold-burst.txt" | head -60 >>"$RUNLOG"
+  # Founder report (26 Oct, real Duo): iOS's fold transition blurs one physical half for ~2 s as a fold starts, in
+  # every app. "Glasses on the sharp half" draws the game turned round (`flip`, on by default in real runs). Proof:
+  # the layout is upside down in the frames, the hinge still pours, and a glass is served.
+  hinge_set 179
+  launch turned "mode=shift:1-1;duo;orient=portrait;flip"
+  shoot duo-10-turned-ready inner
+  hinge_sweep 140 1.2; sleep 0.7; shoot duo-11-turned-pouring inner
+  hinge_sweep 178 0.8; sleep 2.0; shoot duo-12-turned-served inner
+  TL="$OUT_ABS/logs/turned.txt"
+  grep -nE "BRIM-T (turned|canvas|flat|served)" "$TL" | head -20 >>"$RUNLOG"
+  if grep -q "BRIM-T turned round 1" "$TL" && grep -q "BRIM-T served" "$TL"; then
+    log "TURNED-ROUND PASS"
+  else
+    log "TURNED-ROUND FAIL: turned=$(grep -c 'BRIM-T turned round 1' "$TL") served=$(grep -c 'BRIM-T served' "$TL")"
+  fi
 
   # ROUND-3 decision 1 proof: close the phone FAST in the middle of a pour, reopen, and check that no glass was
   # judged between the autopause and the resume, and that the resume re-armed the flat gate.

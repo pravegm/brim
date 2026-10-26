@@ -37,6 +37,9 @@ struct SettingsView: View {
                             toggleRow("Touch controls on iPhone Duo", icon: "hand.draw.fill", isOn: $settings.touchOnDuo,
                                       footnote: "Drag up to pour instead of lifting the top half.")
                             divider
+                            toggleRow("Glasses on the sharp half", icon: "drop.fill", isOn: $settings.sharpSide,
+                                      footnote: "iPhone Duo blurs one half of its screen for a moment as you start to fold. This keeps the glasses on the other half: lay your Duo so the screen reads the right way up. If the glasses still blur, switch this off.")
+                            divider
                         }
                         if reduceMotion {
                             infoRow("Calmer motion", icon: "figure.walk.motion", value: "On",

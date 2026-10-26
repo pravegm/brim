@@ -9,6 +9,7 @@ import Foundation
 final class SettingsStore: ObservableObject {
     static let touchOnDuoKey = "brim.settings.touchOnDuo"
     static let calmMotionKey = "brim.settings.calmMotion"
+    static let sharpSideKey = "brim.settings.sharpSide"
 
     @Published var soundOn: Bool { didSet { if FeedbackDirector.shared.soundOn != soundOn { FeedbackDirector.shared.soundOn = soundOn } } }
     @Published var hapticsOn: Bool { didSet { if FeedbackDirector.shared.hapticsOn != hapticsOn { FeedbackDirector.shared.hapticsOn = hapticsOn } } }
@@ -24,6 +25,9 @@ final class SettingsStore: ObservableObject {
     @Published var touchOnDuo: Bool { didSet { defaults?.set(touchOnDuo, forKey: Self.touchOnDuoKey) } }
     /// No screen shake, camera bumps or HUD pops (REVIEW-1 P2-6). Always in effect when iOS Reduce Motion is on.
     @Published var calmMotion: Bool { didSet { defaults?.set(calmMotion, forKey: Self.calmMotionKey) } }
+    /// iPhone Duo: draw the game turned round so the glasses sit on the half iOS doesn't blur when a fold starts
+    /// (RootView.turnsRound). On by default; demo runs (no defaults) use `flip` instead.
+    @Published var sharpSide: Bool { didSet { defaults?.set(sharpSide, forKey: Self.sharpSideKey) } }
 
     private let defaults: UserDefaults?
 
@@ -36,6 +40,7 @@ final class SettingsStore: ObservableObject {
         respectSilentSwitch = feedback.respectSilentSwitch
         touchOnDuo = defaults?.bool(forKey: Self.touchOnDuoKey) ?? false
         calmMotion = defaults?.bool(forKey: Self.calmMotionKey) ?? false
+        sharpSide = defaults.map { $0.object(forKey: Self.sharpSideKey) as? Bool ?? true } ?? false
     }
 
     /// Re-reads the feedback engine's values (e.g. at launch).

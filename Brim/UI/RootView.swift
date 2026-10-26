@@ -17,6 +17,10 @@ struct RootView: View {
     @State private var dragging = false
     @State private var windowInsets = EdgeInsets()
     @State private var lastCanvasLog = ""
+    /// The interface is upside down (the system already put the counter on the phone's natural top half).
+    @State private var upsideDown = false
+    /// The game is drawn turned round (mirrors `turnsRound` for the play layer's system-gesture edges).
+    @State private var turnedRound = false
 
     private var demo: DemoConfig? { controller.demo }
 
@@ -24,15 +28,22 @@ struct RootView: View {
         GeometryReader { safeGeo in
             let safe = safeGeo.safeAreaInsets
             GeometryReader { geo in
-                // Founder's real-Duo recording (26 Oct): lifting the top half from flat blurred the flat half for
-                // ~2 s. That is the moment iOS switches the fold's `.division` reserved region on. Apple's guidance
-                // is to read reserved regions in the GeometryReader body so the view updates when they arrive; Brim
-                // never read them, so nothing in our layout answered the change. The body now depends on the active
-                // division (and commits a change when it flips), and the flip is logged for CI.
+                // Founder's real Duo (26 Oct, builds 6–7): as a fold starts from flat, iOS's own fold transition
+                // blurs one physical half of the inner display for ~2 s. It does this in every app (Photos too), it
+                // stays on the same half when the phone is turned round, and apps can't opt out. In Brim's upright
+                // layout that half is the counter, so the glasses blurred on every pour. "Glasses on the sharp half"
+                // (on by default) draws the game turned round on a Duo: the player turns the phone round, the glasses
+                // sit on the half that stays sharp, and the half they lift (the jug) takes the blur.
                 let fold = Self.activeDivision(in: geo)
-                content(canvas: geo.size, safe: merged(safe, windowInsets))
-                    .background(Color.clear.frame(width: 1, height: fold == nil ? 1 : 2))
+                let turned = turnsRound(geo.size)
+                content(canvas: geo.size, safe: Self.insets(merged(safe, windowInsets), turnedRound: turned))
+                    .rotationEffect(turned ? .degrees(180) : .zero)
+                    .animation(nil, value: turned)
                     .onChange(of: fold ?? .zero) { _, frame in logFold(frame) }
+                    .task(id: turned) {
+                        turnedRound = turned
+                        logTurned(turned)
+                    }
             }
             .ignoresSafeArea()
         }
@@ -45,6 +56,9 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             controller.setAppActive(phase == .active)
             if phase == .active { refreshWindowInsets() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            refreshWindowInsets()
         }
         .onChange(of: reduceMotion) { _, on in controller.setReduceMotion(on) }
         .onChange(of: settings.calmMotion) { _, _ in controller.refreshMotion() }
@@ -124,12 +138,35 @@ struct RootView: View {
     private func refreshWindowInsets() {
         let read = OrientationLock.windowSafeArea()
         if read != windowInsets { windowInsets = read }
+        let flipped = OrientationLock.interfaceIsUpsideDown()
+        if flipped != upsideDown { upsideDown = flipped }
         // The window settles its insets a beat after a rotation or a display handover.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 350_000_000)
             let later = OrientationLock.windowSafeArea()
             if later != windowInsets { windowInsets = later }
+            let laterFlipped = OrientationLock.interfaceIsUpsideDown()
+            if laterFlipped != upsideDown { upsideDown = laterFlipped }
         }
+    }
+
+    /// Whether to draw the game turned round right now (see the GeometryReader note in `body`).
+    private func turnsRound(_ canvas: CGSize) -> Bool {
+        let wanted = demo.map { $0.flip } ?? settings.sharpSide
+        return Self.turnsRound(wanted: wanted, pose: pose(for: canvas), hasFold: hasFold(canvas),
+                               upsideDown: upsideDown)
+    }
+
+    /// Pure rule (tested): only the Duo's tabletop canvas turns round, and never when the interface is already upside
+    /// down: either way the counter lands on the phone's natural top half, which iOS's fold blur leaves sharp.
+    static func turnsRound(wanted: Bool, pose: DevicePose, hasFold: Bool, upsideDown: Bool) -> Bool {
+        wanted && pose == .play && hasFold && !upsideDown
+    }
+
+    /// The safe-area insets in the drawn layout's terms: turned round, the top inset is at the bottom and so on. Pure.
+    static func insets(_ safe: EdgeInsets, turnedRound: Bool) -> EdgeInsets {
+        guard turnedRound else { return safe }
+        return EdgeInsets(top: safe.bottom, leading: safe.trailing, bottom: safe.top, trailing: safe.leading)
     }
 
     private func handleCanvas(_ canvas: CGSize) {
@@ -157,6 +194,13 @@ struct RootView: View {
         } else {
             print(String(format: "BRIM-T fold active %.0f,%.0f %.0fx%.0f", frame.minX, frame.minY, frame.width, frame.height))
         }
+        fflush(stdout)
+        #endif
+    }
+
+    private func logTurned(_ on: Bool) {
+        #if DEBUG
+        print("BRIM-T turned round \(on ? 1 : 0)")
         fflush(stdout)
         #endif
     }
@@ -275,7 +319,8 @@ struct RootView: View {
         .animation(BrimTheme.settle(reduceMotion), value: controller.isClosedPaused)
         // QA-2 P2-9: a drag that starts in the bottom ~20 pt must pour, not go Home mid-run. iOS then needs a second
         // swipe for Home while a run is live; the pause cards give the edge back.
-        .defersSystemGestures(on: RootView.deferredEdges(paused: controller.isUserPaused || controller.isClosedPaused))
+        .defersSystemGestures(on: RootView.deferredEdges(paused: controller.isUserPaused || controller.isClosedPaused,
+                                                         turnedRound: turnedRound))
         .onChange(of: controller.isUserPaused) { _, paused in
             if paused && dragging {
                 dragging = false
@@ -291,9 +336,10 @@ struct RootView: View {
     }
 
     /// The screen edges whose system gestures wait for a second swipe during play: the bottom (Home) while a run is
-    /// live, none while it's paused. Pure.
-    static func deferredEdges(paused: Bool) -> Edge.Set {
-        paused ? [] : .bottom
+    /// live, none while it's paused. Turned round, the Home edge is at the drawn top, so both ends wait. Pure.
+    static func deferredEdges(paused: Bool, turnedRound: Bool = false) -> Edge.Set {
+        if paused { return [] }
+        return turnedRound ? [.top, .bottom] : .bottom
     }
 
     private func iconLayer(_ canvas: CGSize) -> some View {

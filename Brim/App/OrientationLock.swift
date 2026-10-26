@@ -65,6 +65,14 @@ enum OrientationLock {
         }
     }
 
+    /// The key window's scene is in portrait upside down (Brim doesn't ask for it, but the Duo's inner display may
+    /// rotate there anyway: research/02-hinge-tech.md says it ignores orientation locks).
+    static func interfaceIsUpsideDown() -> Bool {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first(where: { $0.windows.contains(where: \.isKeyWindow) }) ?? scenes.first
+        return scene?.effectiveGeometry.interfaceOrientation == .portraitUpsideDown
+    }
+
     /// The key window's real safe-area insets (Dynamic Island, rounded corners, the Duo's inner camera cut-out).
     static func windowSafeArea() -> EdgeInsets {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }

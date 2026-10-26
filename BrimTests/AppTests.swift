@@ -7,6 +7,39 @@ import Testing
 // App engineer tests: ProgressStore round-trip and unlocks, DemoMode parsing, share-text formatting, and (round 2)
 // the Duo pose rules, the world → screen mapping, card placement, the results headline and the daily streak.
 
+/// "Glasses on the sharp half": the Duo's fold blur always lands on one physical half (founder, 26 Oct).
+@MainActor
+struct TurnedRoundTests {
+    @Test func turnsRoundOnlyOnTheDuoTabletop() {
+        #expect(RootView.turnsRound(wanted: true, pose: .play, hasFold: true, upsideDown: false))
+        #expect(!RootView.turnsRound(wanted: false, pose: .play, hasFold: true, upsideDown: false))
+        #expect(!RootView.turnsRound(wanted: true, pose: .play, hasFold: false, upsideDown: false))
+        #expect(!RootView.turnsRound(wanted: true, pose: .cover, hasFold: true, upsideDown: false))
+        #expect(!RootView.turnsRound(wanted: true, pose: .standUp, hasFold: true, upsideDown: false))
+        #expect(!RootView.turnsRound(wanted: true, pose: .play, hasFold: true, upsideDown: true))
+    }
+
+    @Test func swapsInsetsAndGestureEdges() {
+        let safe = EdgeInsets(top: 30, leading: 1, bottom: 20, trailing: 2)
+        let turned = RootView.insets(safe, turnedRound: true)
+        #expect(turned == EdgeInsets(top: 20, leading: 2, bottom: 30, trailing: 1))
+        #expect(RootView.insets(safe, turnedRound: false) == safe)
+        #expect(RootView.deferredEdges(paused: false, turnedRound: true) == [.top, .bottom])
+        #expect(RootView.deferredEdges(paused: false) == .bottom)
+        #expect(RootView.deferredEdges(paused: true, turnedRound: true) == [])
+    }
+
+    @Test func sharpSideIsOnByDefaultAndOffInDemo() throws {
+        let name = "brim.test.sharp.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        #expect(SettingsStore(defaults: defaults).sharpSide)
+        defaults.set(false, forKey: SettingsStore.sharpSideKey)
+        #expect(!SettingsStore(defaults: defaults).sharpSide)
+        #expect(!SettingsStore(defaults: nil).sharpSide)
+    }
+}
+
 @MainActor
 struct ProgressStoreTests {
     private func makeDefaults() throws -> (UserDefaults, String) {
@@ -234,6 +267,11 @@ struct DemoModeTests {
         #expect(DemoConfig.parse("mode=practice", today: 1).mode == GameMode.practice)
         #expect(DemoConfig.parse("mode=nonsense", today: 1).mode == nil)
         #expect(DemoConfig.parse("mode=shift:", today: 1).mode == nil)
+    }
+
+    @Test func parsesFlip() {
+        #expect(DemoConfig.parse("duo;flip", today: 1).flip)
+        #expect(!DemoConfig.parse("duo", today: 1).flip)
     }
 
     @Test func ignoresUnknownKeysAndBadValues() {
