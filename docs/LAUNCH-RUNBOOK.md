@@ -6,12 +6,36 @@
 
 ---
 
+## Where things stand (Mon 26 Oct, evening): read this first
+
+Claude pushed the listing into App Store Connect with `tools/appstore/asc.swift` (runs 40343054685, 40345636077, and the screenshots run named in HANDOVER). **Most of §0–§4 below is already done** and stays only as reference.
+
+**Done, nothing for you to do:**
+- **Listing:** name, subtitle, description, keywords, promo text, URLs (en-GB and en-US), categories (Games › Casual + Simulation, then Entertainment) and Content Rights.
+- **Age rating:** the 2026 questionnaire, answered 4+. Contests is "Infrequent" because of the leaderboards.
+- **Release:** version 1.0 is **Scheduled** for 17 Nov 08:00 UTC, with copyright and the App Review contact copied from Squish's record.
+- **App Review notes:** 3,946 bytes.
+- **Price:** £1.99 with the UK as base, available everywhere except China mainland and Vietnam.
+- **Game Center:** on, with 10 achievements (badges in both languages) and both leaderboards (`brim.rush.best`; `brim.daily.score`, recurring daily from 1 Nov).
+- **Featuring nomination:** submitted (App Launch, 17 Nov).
+- **Website:** support, privacy and home pages are live at https://pravegm.github.io/brim/site/. Support runs through GitHub issues, so you don't need a support email.
+
+**Your remaining steps (about 15 minutes, all in App Store Connect → Brim):**
+1. **App Privacy** → Get Started → "No, we do not collect data from this app" → Save → **Publish**.
+2. **Pricing and Availability:** under "iPhone and iPad Apps on Apple Silicon Macs", untick *Make this app available*. Under "Apple Vision Pro", untick it too. Save.
+3. **App Information:** turn **Family Sharing** on. Then **App Store Regulations and Permits → EU Digital Services Act**: confirm your trader status for Brim. Apple asks again for each app; use the same answer as Squish.
+4. **Play the release candidate on your Duo** (§3, including the new "Duo specifics" block), and send Claude your notes.
+5. **Release build: 1.0 (13)** (founder-tested 26 Oct). On the 1.0 page, in the Build section, click **+** and pick **13**. Screenshots (6.9", 6.1" and iPhone Duo, en-GB and en-US) are uploaded, and the 12 Game Center items are attached to the draft submission (asc run 40372736601). Then **Add for Review → Submit to App Review**, any day up to Fri 13 Nov.
+6. **Launch day:** publish the accessibility labels (§6).
+
+---
+
 ## Timeline
 
 | When | Who | What | Section |
 |---|---|---|---|
 | **Sun 25 – Mon 26 Oct** | You | Decide the 4 things in §0. Register Brim with Apple and create the app record (about 20 minutes) | §0, §1 |
-| **By Tue 27 Oct** | You | Submit the featuring nomination (Apple wants 3 weeks' notice) | §1e |
+| ~~By Tue 27 Oct~~ | ✅ Claude, 26 Oct | Featuring nomination submitted through the API | §1e |
 | Mon 26 – Wed 28 Oct | You | Add the 4 GitHub secrets (10 minutes) | §2 |
 | ~Wed 28 Oct (when Claude says the build is ready) | You | Run the TestFlight build (2 clicks) | §2 |
 | **Thu 29 Oct – Sun 1 Nov** | You | First play on your Duo: the 10-minute feel check, then send Claude your notes | §3 |
@@ -36,7 +60,7 @@
 |---|---|---|
 | 1 | **Your legal name** (or company name) for the line `2026 <your legal name>` | It's your legal identity |
 | 2 | **Review contact:** first name, last name, phone number, email | Apple's reviewers call or email a real person. Typed straight into App Store Connect, never into the repo |
-| 3 | **A support email address just for Brim** (for example a new free mailbox). Not your personal or work address. Send it to Claude, who puts it on the website pages (they say `SUPPORT_EMAIL_HERE` until then) | Apple requires real contact details on the support page. Squish uses GitHub issues, but Brim's repo is private, so the public can't reach issues there |
+| 3 | ~~A support email~~ **Not needed (26 Oct):** the repo is public, so support runs through GitHub issues, as Squish's does | — |
 | 4 | **Where the website lives** (support and privacy pages), see the box below | It's your account and your repo |
 | 5 | **Apple-login steps:** §1 (register, create the record, nomination), §2 (secrets), §4 (paste the listing), §5 (submit), §6 (accessibility labels on launch day) | They need your Apple Account |
 

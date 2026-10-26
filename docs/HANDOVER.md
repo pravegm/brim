@@ -3,6 +3,33 @@
 *Sun 25 Oct 2026. Built unsupervised in one long day by Claude running an agent studio: research, design, four
 engineers, a design critic, QA, store and launch leads.*
 
+## Status, Mon 26 Oct (evening): ready to submit
+
+**Release build: TestFlight 1.0 (13)**, tested by the founder on a real Duo ("all good").
+
+**Since build 7:**
+- **Glasses on the sharp half.** On the Duo, iOS blurs one fixed half for about 2 s as a fold starts. Brim runs upside down so the glasses stay sharp, and iOS's own banners turn with it.
+- **Every Duo pose plays:**
+  - book-pose touch play on one page;
+  - touch play on the outer display, with a paused-run card;
+  - Split View plays by touch, and small windows say "make me full screen".
+- **Clearer Home:** a DEMO tag on the attract pour, and a one-time "upside down on purpose" card.
+- **Reviews:** QA-5 and DUO-AUDIT are both clear.
+
+**App Store Connect is filled in through the API** (`tools/appstore/`):
+- listing, categories, the 4+ age rating, £1.99 and availability;
+- scheduled release on 17 Nov 08:00 UTC;
+- review notes and contact, copyright;
+- Game Center, with 10 achievements and 2 leaderboards attached;
+- screenshots for 6.9", 6.1" and iPhone Duo;
+- the featuring nomination, **submitted**.
+
+The founder has done App Privacy, Mac/Vision Pro availability, Family Sharing and EU DSA status.
+
+**Left:**
+- **Founder:** pick build 13 on the 1.0 page, then Add for Review → Submit (`docs/LAUNCH-RUNBOOK.md`, "Where things stand", step 5).
+- **In progress, optional:** the new iOS 27 product-page header and search-results images (`docs/appstore/header-search.md`).
+
 ## What it is
 
 **Brim: Fold to Pour.** £1.99 once, no ads, no in-app purchases, no data collected, rated 4+.
