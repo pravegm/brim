@@ -20,8 +20,8 @@
 //    templates; Apple publishes no numbers) as far as the art allows. --guides writes a review copy with those
 //    rectangles and the iPhone-portrait side crop (8 % per side) drawn on.
 //  • Output: exactly 3840 x 2560 (search) or 3840 x 1646 (header), opaque sRGB PNG, no alpha channel.
-// Prints one line: `store-banner: <out> <W>x<H> kind=… layout=… fold=<y> device=<rect> text=<rect> text-safe=<yes|no>
-// rounded=<yes|no>` (rects in top-left pixel coordinates).
+// Prints one line: `store-banner: <out> <W>x<H> kind=… layout=… fold=<y> device=<rect> text=<rect> text-iphone=<yes|no>
+// overlap=<yes|no> text-in-template-safe=… fold-in-template-safe=… rounded=<yes|no>` (rects in top-left pixels).
 import AppKit
 import CoreGraphics
 import CoreImage
@@ -118,18 +118,31 @@ if kind == "search" {
                     textBox: CGRect(x: W * 0.085, y: 0, width: W * 0.30, height: H), align: .left,
                     glow: CGPoint(x: W * 0.58, y: H * 0.45))
     } else {
-        plan = Plan(foldY: H * 0.545, hingeX: W * 0.655, deviceHeight: H * 0.80,
-                    textBox: CGRect(x: W * 0.115, y: 0, width: W * 0.335, height: H), align: .left,
+        plan = Plan(foldY: H * 0.55, hingeX: W * 0.672, deviceHeight: H * 0.76,
+                    textBox: CGRect(x: W * 0.105, y: 0, width: W * 0.30, height: H), align: .left,
                     glow: CGPoint(x: W * 0.64, y: H * 0.45))
     }
 } else {
-    plan = Plan(foldY: H * 0.585, hingeX: W * 0.635, deviceHeight: H * 0.86,
+    plan = Plan(foldY: H * 0.58, hingeX: W * 0.635, deviceHeight: H * 0.82,
                 textBox: CGRect(x: W * 0.155, y: 0, width: W * 0.30, height: H), align: .left,
                 glow: CGPoint(x: W * 0.60, y: H * 0.45))
 }
 plan.foldY = num("fold", plan.foldY / H) * H
 plan.hingeX = num("hinge", plan.hingeX / W) * W
 plan.deviceHeight = num("device", plan.deviceHeight / H) * H
+
+/// Debug (--snaps <dir>): the canvas after each stage, to find which stage changed what.
+var snapCount = 0
+func snap(_ name: String) {
+    guard let dir = options["snaps"], !dir.isEmpty, let image = ctx.makeImage() else { return }
+    snapCount += 1
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let url = URL(fileURLWithPath: dir).appendingPathComponent(String(format: "%02d-%@.png", snapCount, name))
+    if let d = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+        CGImageDestinationAddImage(d, image, nil)
+        _ = CGImageDestinationFinalize(d)
+    }
+}
 
 // MARK: Background: the brand sweep, a gold glow behind the hero, a soft cream bloom
 
@@ -150,6 +163,8 @@ if let bloom = CGGradient(colorsSpace: space, colors: [srgb(0xFFFFFF, 0.55), srg
     ctx.drawRadialGradient(bloom, startCenter: centre, startRadius: 0, endCenter: centre,
                            endRadius: plan.deviceHeight * 0.75, options: [])
 }
+
+snap("background")
 
 // MARK: 3D: the Duo in tabletop pose
 
@@ -182,8 +197,8 @@ struct Camera {
 
 let degrees = CGFloat.pi / 180
 let tilt = num("tilt", kind == "header" ? 16 : 17) * degrees      // the raised half leans back this far from vertical
-let elevation = num("elev", kind == "header" ? 24 : 27) * degrees
-let yaw = num("yaw", kind == "header" ? 11 : 9) * degrees          // + = camera to the device's right
+let elevation = num("elev", kind == "header" ? 26 : 30) * degrees
+let yaw = num("yaw", kind == "header" ? 10 : 7) * degrees          // + = camera to the device's right
 let camera = Camera(target: V3(x: 0, y: 150, z: 120), distance: num("distance", 2900),
                     elevation: elevation, yaw: yaw)
 
@@ -254,10 +269,20 @@ for q in baseBody { for off in [0, -thick] { deviceRectCG = deviceRectCG.union(C
 
 // MARK: Perspective warp of a capture half (Core Image: Lanczos down to about the drawn size, then the quad)
 
-let ciContext = CIContext(options: [.workingColorSpace: space, .outputColorSpace: space, .useSoftwareRenderer: true])
+// No colour management inside Core Image: the capture is first drawn into an sRGB bitmap by Core Graphics (as
+// ci/store-frame.swift draws it), then resampled number for number, so the screen keeps the capture's colours.
+let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .useSoftwareRenderer: true])
+
+func srgbCopy(_ image: CGImage) -> CGImage {
+    guard let c = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { fail("no context") }
+    c.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    guard let out = c.makeImage() else { fail("cannot copy the capture") }
+    return out
+}
 
 func warp(_ image: CGImage, quad: (tl: CGPoint, tr: CGPoint, br: CGPoint, bl: CGPoint)) -> (CGImage, CGRect)? {
-    var ci = CIImage(cgImage: image)
+    var ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
     let drawnW = max(hypot(quad.tr.x - quad.tl.x, quad.tr.y - quad.tl.y), hypot(quad.br.x - quad.bl.x, quad.br.y - quad.bl.y))
     let drawnH = max(hypot(quad.bl.x - quad.tl.x, quad.bl.y - quad.tl.y), hypot(quad.br.x - quad.tr.x, quad.br.y - quad.tr.y))
     let kx = min(1, drawnW * 1.15 / CGFloat(image.width))
@@ -278,11 +303,13 @@ func warp(_ image: CGImage, quad: (tl: CGPoint, tr: CGPoint, br: CGPoint, bl: CG
     let rect = o.extent.integral
     guard rect.width.isFinite, rect.height.isFinite, rect.width > 0, rect.height > 0,
           let out = ciContext.createCGImage(o, from: rect, format: .RGBA8, colorSpace: space) else { return nil }
+    // (createCGImage tags the untouched numbers as sRGB, which is what they are.)
     return (out, rect)
 }
 
-guard let lidHalf = hero.cropping(to: CGRect(x: 0, y: 0, width: hero.width, height: foldRow)),
-      let baseHalf = hero.cropping(to: CGRect(x: 0, y: foldRow, width: hero.width, height: hero.height - foldRow)) else {
+let heroRGB = srgbCopy(hero)
+guard let lidHalf = heroRGB.cropping(to: CGRect(x: 0, y: 0, width: hero.width, height: foldRow)),
+      let baseHalf = heroRGB.cropping(to: CGRect(x: 0, y: foldRow, width: hero.width, height: hero.height - foldRow)) else {
     fail("cannot split the capture at the fold")
 }
 
@@ -392,6 +419,8 @@ if layout == "trio", extras.count >= 1 {
     if extras.count >= 2 { drawCard(extras[1], centre: CGPoint(x: x + W * 0.012, y: H * 0.725), height: ch, angle: 3.5 * degrees) }
 }
 
+snap("cards")
+
 // MARK: Draw the Duo: contact shadow, raised half, flat half
 
 let footprint = path(baseBody) { basePoint($0.x, $0.y, -thick) }
@@ -411,8 +440,12 @@ ctx.setFillColor(shade(frameHex, 0.62))
 ctx.fillPath()
 ctx.restoreGState()
 
+snap("shadow")
 drawHalf(body: lidBody, glass: lidGlass, screen: lidScreen, map: lidPoint, image: lidHalf, lid: true)
+snap("lid")
 drawHalf(body: baseBody, glass: baseGlass, screen: baseScreen, map: basePoint, image: baseHalf, lid: false)
+
+snap("base")
 
 // MARK: Type (the caption system of ci/store-frame.swift: tokenize `*word*`, balanced lines, gold swash)
 
@@ -531,6 +564,8 @@ func roundedFont(_ size: CGFloat, _ weight: NSFont.Weight) -> CTFont {
 }
 
 var textRect = CGRect.null   // top-left coordinates, ink extents
+var textPieces: [CGRect] = []  // each line, swash, fill line and drip (for the overlap check)
+func addText(_ r: CGRect) { textRect = textRect.union(r); textPieces.append(r) }
 
 /// Draws laid lines from `top`, left-aligned at `x` or centred on `x` (top-left coordinates).
 func drawLaid(_ laid: Laid, top: CGFloat, x: CGFloat, centred: Bool) {
@@ -554,15 +589,15 @@ func drawLaid(_ laid: Laid, top: CGFloat, x: CGFloat, centred: Bool) {
             ctx.setFillColor(srgb(gold))
             ctx.fillPath()
             ctx.restoreGState()
-            textRect = textRect.union(tl(swash))
+            addText(tl(swash))
         }
         ctx.saveGState()
         ctx.textMatrix = .identity
         ctx.textPosition = CGPoint(x: lx, y: baseCG)
         CTLineDraw(line, ctx)
         ctx.restoreGState()
-        let ink = CTLineGetImageBounds(line, ctx)
-        textRect = textRect.union(CGRect(x: lx + ink.minX, y: baseline - ink.maxY, width: ink.width, height: ink.height))
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        addText(CGRect(x: lx + ink.minX, y: baseline - ink.maxY, width: ink.width, height: ink.height))
     }
 }
 
@@ -590,7 +625,7 @@ func drawWordmark(size: CGFloat, top: CGFloat, x: CGFloat, centred: Bool) {
     ctx.setFillColor(srgb(gold))
     ctx.fillPath()
     ctx.restoreGState()
-    textRect = textRect.union(capsule)
+    addText(capsule)
     // DropShape, bottom-trailing in the stack, offset (-0.12, +0.16) x size.
     let dw = size * 0.16, dh = size * 0.24
     let drop = CGRect(x: left + stackW - size * 0.12 - dw, y: capsule.maxY + size * 0.16 - dh, width: dw, height: dh)
@@ -610,7 +645,7 @@ func drawWordmark(size: CGFloat, top: CGFloat, x: CGFloat, centred: Bool) {
         ctx.drawLinearGradient(g, start: cgp(CGPoint(x: 0, y: drop.minY)), end: cgp(CGPoint(x: 0, y: drop.maxY)), options: [])
     }
     ctx.restoreGState()
-    textRect = textRect.union(drop)
+    addText(drop)
 }
 
 let tb = plan.textBox
@@ -662,6 +697,8 @@ if kind == "search" {
     drawLaid(tagLaid, top: top + markH + gap, x: centreX, centred: true)
 }
 
+snap("text")
+
 // MARK: Output (opaque sRGB PNG, no alpha), plus the optional review copy with guides
 
 func writePNG(_ image: CGImage, _ path: String) {
@@ -674,6 +711,15 @@ func writePNG(_ image: CGImage, _ path: String) {
 guard let flat = ctx.makeImage() else { fail("cannot flatten") }
 writePNG(flat, output)
 
+// Where the art is seen. Brim is iPhone-only (TARGETED_DEVICE_FAMILY 1). On an iPhone in portrait the search art is
+// shown whole (~365 pt wide) and the header keeps its full height but loses about 8 % per side, with the back and
+// share buttons over its top corners (measured in App Store Connect's preview by others; Apple publishes no crop
+// rule). Text must sit inside that iPhone area and never touch the device; the smaller template safe area (other
+// devices, e.g. the Mac App Store listing of an iPhone app) is reported, not enforced.
+let iphoneArea: CGRect = kind == "header"
+    ? CGRect(x: W * 0.09, y: H * 0.05, width: W * 0.82, height: H * 0.90)
+    : CGRect(x: W * 0.03, y: H * 0.03, width: W * 0.94, height: H * 0.94)
+
 if let guides = options["guides"], !guides.isEmpty {
     ctx.saveGState()
     ctx.setLineWidth(6)
@@ -681,8 +727,7 @@ if let guides = options["guides"], !guides.isEmpty {
     ctx.setLineDash(phase: 0, lengths: [28, 18])
     ctx.stroke(cg(safeArea))
     ctx.setStrokeColor(srgb(0x1FA3D6, 0.9))
-    let side = W * 0.08
-    ctx.stroke(cg(CGRect(x: side, y: 0, width: W - 2 * side, height: H)).insetBy(dx: 0, dy: 3))
+    ctx.stroke(cg(iphoneArea))
     ctx.setLineDash(phase: 0, lengths: [])
     ctx.setStrokeColor(srgb(0x2B2233, 0.6))
     ctx.setLineWidth(3)
@@ -691,9 +736,27 @@ if let guides = options["guides"], !guides.isEmpty {
     if let g = ctx.makeImage() { writePNG(g, guides) }
 }
 
+// Does any piece of text come within 1.2 % of the image height of the device?
+var overlap = false
+let devicePath = CGMutablePath()
+devicePath.addPath(path(lidBody) { lidPoint($0.x, $0.y, 0) })
+devicePath.addPath(path(baseBody) { basePoint($0.x, $0.y, 0) })
+devicePath.addPath(path(baseBody) { basePoint($0.x, $0.y, -thick) })
+for piece in textPieces {
+    let probe = CGPath(rect: cg(piece.insetBy(dx: -H * 0.012, dy: -H * 0.012)), transform: nil)
+    if #available(macOS 13.0, *) {
+        if probe.intersects(devicePath) { overlap = true }
+    } else if piece.intersects(tl(deviceRectCG)) {
+        overlap = true
+    }
+}
+
 let deviceTL = tl(deviceRectCG)
 func r(_ v: CGRect) -> String { "\(Int(v.minX)),\(Int(v.minY)),\(Int(v.width))x\(Int(v.height))" }
-let textSafe = safeArea.insetBy(dx: -2, dy: -2).contains(textRect)
+let textIPhone = iphoneArea.contains(textRect)
+let textTemplate = safeArea.contains(textRect)
+let foldInTemplate = plan.foldY >= safeArea.minY && plan.foldY <= safeArea.maxY
 print("store-banner: \(output) \(width)x\(height) kind=\(kind) layout=\(layout) fold=\(Int(plan.foldY)) "
-      + "device=\(r(deviceTL)) text=\(r(textRect)) text-safe=\(textSafe ? "yes" : "no") "
-      + "rounded=\(usedRounded ? "yes" : "no")")
+      + "device=\(r(deviceTL)) text=\(r(textRect)) text-iphone=\(textIPhone ? "yes" : "no") "
+      + "overlap=\(overlap ? "yes" : "no") text-in-template-safe=\(textTemplate ? "yes" : "no") "
+      + "fold-in-template-safe=\(foldInTemplate ? "yes" : "no") rounded=\(usedRounded ? "yes" : "no")")

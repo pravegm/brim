@@ -17,7 +17,8 @@
 # Never fails the job: always exits 0. Every problem is a MANIFEST line (and a ::warning:: in the Actions log).
 # Env: STORE_BANNER_BIN (where the compiled renderer is cached; default $RUNNER_TEMP or $TMPDIR),
 #      SOURCE_RUN (the run the captures came from, for the MANIFEST), BANNER_ARGS_SEARCH / BANNER_ARGS_HEADER (extra
-#      store-banner options, e.g. "--yaw 12 --elev 25", for iterating without editing the defaults).
+#      store-banner options, e.g. "--yaw 12 --elev 25", for iterating without editing the defaults;
+#      "--snaps store-placements/review/snaps" saves the canvas after each drawing stage).
 set -uo pipefail
 
 DIR="${1:?usage: store-placements.sh <duo-screens dir> <out dir>}"
@@ -123,7 +124,8 @@ one() {
   local problems=()
   [[ "$dims" == "$want" ]] || problems+=("is $dims, not $want")
   [[ "$alpha" == no ]] || problems+=("alpha=$alpha (App Store Connect rejects alpha)")
-  grep -q "text-safe=yes" <<< "$report" || problems+=("text reaches outside the template safe area")
+  grep -q "text-iphone=yes" <<< "$report" || problems+=("text reaches outside the area an iPhone shows")
+  grep -q "overlap=no" <<< "$report" || problems+=("text touches the device")
   if (( ${#problems[@]} > 0 )); then
     local joined; joined=$(printf '%s; ' "${problems[@]}"); joined="${joined%; }"
     note "$(printf '%-26s %-10s %-6s %-7s %s' "$file" "$dims" "$alpha" FLAGGED "$joined")"
@@ -137,6 +139,7 @@ one() {
 
 # shellcheck disable=SC2086
 one header-3840x1646.png 3840x1646 --kind header --hero "$hero" --guides "$OUT/review/header-guides.png" ${BANNER_ARGS_HEADER:-}
+# shellcheck disable=SC2086
 # shellcheck disable=SC2086
 one search-3840x2560.png 3840x2560 --kind search --hero "$hero" --guides "$OUT/review/search-guides.png" ${BANNER_ARGS_SEARCH:-}
 
