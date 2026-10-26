@@ -1917,8 +1917,7 @@ final class Engine {
     func syncNomination() async throws {
         guard let n = meta.nomination else { note("no nomination block in the metadata"); return }
         let name = n.attributes["name"] as? String ?? ""
-        let (found, _) = try await api.getAll("/v1/nominations", [("filter[state]", "DRAFT,SUBMITTED"), ("filter[relatedApps]", appID),
-                                                                   ("limit", "50")])
+        let found = try await nominations(api, appID: appID)
         let mine = found.first { attrs($0)["name"] as? String == name }
             ?? found.first { attrs($0)["type"] as? String == n.attributes["type"] as? String }
         for o in found where idOf(o) != idOf(mine) {
@@ -2286,8 +2285,7 @@ final class Engine {
 
     func syncAccessibility() async throws {
         guard var desired = meta.accessibility else {
-            note("no accessibility block in the metadata; declare the labels by hand (see README)")
-            manual.append("Accessibility Nutrition Labels: App Store Connect > your app > Accessibility. Declare only what passes on the final build.")
+            note("no accessibility block in the metadata; the labels go on by hand on launch day (see README)")
             return
         }
         let family = desired.removeValue(forKey: "deviceFamily") as? String ?? "IPHONE"
@@ -2447,6 +2445,16 @@ func inheritPersonalFields(_ api: ASC, into m: inout Metadata, _ v: Validation) 
     return "\(from) (app \(idOf(app))): \(parts.joined(separator: "; ")); values hidden"
 }
 
+/// The app's draft and submitted nominations. `filter[state]` takes one state per request (HTTP 400 for a list, run
+/// 40340641267), so each is read on its own.
+func nominations(_ api: ASC, appID: String) async throws -> [JSON] {
+    var all: [JSON] = []
+    for state in ["DRAFT", "SUBMITTED"] {
+        all += try await api.getAll("/v1/nominations", [("filter[state]", state), ("filter[relatedApps]", appID), ("limit", "50")]).0
+    }
+    return all
+}
+
 /// Status of a public URL (check only): HTTP code and whether the page still shows a placeholder.
 func probeURL(_ s: String) async -> String {
     guard let u = URL(string: s) else { return "not a URL" }
@@ -2533,8 +2541,8 @@ func runCheck() async -> Int32 {
         let (subsR, _) = try await api.getAll("/v1/reviewSubmissions", [("filter[app]", appID), ("filter[platform]", "IOS"), ("limit", "20")])
         out("review submissions: \(subsR.isEmpty ? "none" : subsR.map { "\(idOf($0)) \(attrs($0)["state"] as? String ?? "?")" }.joined(separator: ", "))")
         do {
-            let (noms, _) = try await api.getAll("/v1/nominations", [("filter[state]", "DRAFT,SUBMITTED"), ("filter[relatedApps]", appID), ("limit", "50")])
-            out("nominations: \(noms.isEmpty ? "none yet" : noms.map { "\(short(attrs($0)["name"])) \(attrs($0)["state"] as? String ?? "?")" }.joined(separator: ", "))")
+            let noms = try await nominations(api, appID: appID)
+            out("nominations:\(noms.isEmpty ? "none yet" : noms.map { "\(short(attrs($0)["name"])) \(attrs($0)["state"] as? String ?? "?")" }.joined(separator: ", "))")
         } catch {
             out("nominations: can't read (\(error)); the nomination step needs the Admin, App Manager or Marketing role")
         }
