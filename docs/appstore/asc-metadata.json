@@ -325,7 +325,7 @@
       "scoreRangeEnd": 1000000,
       "recurrence": {
         "startDate": "2026-11-01T00:00:00Z",
-        "duration": "P1D",
+        "duration": "PT24H",
         "rule": "FREQ=DAILY;INTERVAL=1"
       },
       "localizations": {

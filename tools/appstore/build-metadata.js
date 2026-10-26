@@ -68,7 +68,7 @@ const meta = {
       scoreRangeStart: 0, scoreRangeEnd: 10000000, recurrence: null, localizations: { 'en-GB': lbLoc('Rush'), 'en-US': lbLoc('Rush') } },
     { vendorIdentifier: 'brim.daily.score', referenceName: 'Daily Pour', defaultFormatter: 'INTEGER', scoreSortType: 'DESC', submissionType: 'BEST_SCORE',
       scoreRangeStart: 0, scoreRangeEnd: 1000000,
-      recurrence: { startDate: '2026-11-01T00:00:00Z', duration: 'P1D', rule: 'FREQ=DAILY;INTERVAL=1' },
+      recurrence: { startDate: '2026-11-01T00:00:00Z', duration: 'PT24H', rule: 'FREQ=DAILY;INTERVAL=1' },
       localizations: { 'en-GB': lbLoc('Daily Pour'), 'en-US': lbLoc('Daily Pour') } }
   ],
   screenshots: {

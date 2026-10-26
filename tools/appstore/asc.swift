@@ -942,11 +942,12 @@ func loadMetadata(_ v: Validation) -> Metadata? {
                     if let d = parseDate(sd) { a["recurrenceStartDate"] = isoFormatter.string(from: d) }
                     else { v.error("gamecenter", "\(path).recurrence.startDate: '\(sd)' is not ISO 8601") }
                 }
-                // UNCONFIRMED formats (the API docs type them only as "duration" and "string"): an ISO 8601 duration
-                // such as P1D, and an RFC 5545 RRULE such as FREQ=DAILY;INTERVAL=1.
+                // The duration must carry time components (push run 40344348013 refused "P1D": "Expected an ISO
+                // 8601 duration with time components"), so a day is PT24H. The rule is an RFC 5545 RRULE such as
+                // FREQ=DAILY;INTERVAL=1.
                 if let du = str(r, "duration", "\(path).recurrence", "gamecenter") {
-                    if du.range(of: "^P(\\d+D|\\d+W|T\\d+H)$", options: .regularExpression) != nil { a["recurrenceDuration"] = du }
-                    else { v.error("gamecenter", "\(path).recurrence.duration: an ISO 8601 duration such as P1D") }
+                    if du.range(of: "^P(\\d+D)?T\\d+H(\\d+M)?$", options: .regularExpression) != nil { a["recurrenceDuration"] = du }
+                    else { v.error("gamecenter", "\(path).recurrence.duration: an ISO 8601 duration with time components, such as PT24H") }
                 }
                 if let ru = str(r, "rule", "\(path).recurrence", "gamecenter") {
                     if ru.hasPrefix("FREQ=") { a["recurrenceRule"] = ru } else { v.error("gamecenter", "\(path).recurrence.rule: an RRULE such as FREQ=DAILY;INTERVAL=1") }
