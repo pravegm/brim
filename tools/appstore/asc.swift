@@ -106,7 +106,7 @@ let command = argv.isEmpty ? "help" : argv.removeFirst()
 var onlySteps: Set<String>? = nil
 var skipSteps: Set<String> = []
 var metadataPathArg: String? = nil
-var inheritFrom: String? = env["ASC_INHERIT_FROM"].flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+var inheritFromArg: String? = env["ASC_INHERIT_FROM"].flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
 var positional: [String] = []
 while !argv.isEmpty {
     let a = argv.removeFirst()
@@ -123,12 +123,15 @@ while !argv.isEmpty {
     case "--inherit-from":
         guard !argv.isEmpty else { die("--inherit-from needs a bundle ID, e.g. com.pravegm.squish") }
         let b = argv.removeFirst().trimmingCharacters(in: .whitespaces)
-        inheritFrom = b.isEmpty ? nil : b
+        inheritFromArg = b.isEmpty ? nil : b
     default:
         if a.hasPrefix("-") { die("unknown option \(a)") }
         positional.append(a)
     }
 }
+
+/// Read-only after parsing (a top-level `let`, so async code may read it).
+let inheritFrom: String? = inheritFromArg
 
 let allSteps = ["appinfo", "categories", "agerating", "version", "localizations", "review", "gamecenter", "attach",
                 "screenshots", "price", "accessibility", "nomination"]
