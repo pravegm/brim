@@ -319,7 +319,8 @@ enum DemoOrientation {
                 let s = scene.screen.bounds.size
                 // Run 40203342285 logged "ok" for a 469 × 669 letterboxed column: the window must fill the screen.
                 // With `flip` the tabletop is upside down (OrientationLock.sharpSide).
-                let wanted: UIInterfaceOrientation = OrientationLock.sharpSide ? .portraitUpsideDown : .portrait
+                let wanted: UIInterfaceOrientation = OrientationLock.tabletop == .portraitUpsideDown
+                    ? .portraitUpsideDown : .portrait
                 let portrait = scene.effectiveGeometry.interfaceOrientation == wanted
                     && w.height > w.width && s.height > s.width
                     && w.width >= s.width - 2 && w.height >= s.height - 2
@@ -342,9 +343,12 @@ enum DemoOrientation {
                     }
                     if Date().timeIntervalSince(lastRequest) >= 2 {
                         lastRequest = Date()
+                        if let root = window?.rootViewController { OrientationLock.adoptMask(root) }
                         window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-                        scene.requestGeometryUpdate(.iOS(interfaceOrientations: OrientationLock.tabletop)) { error in
+                        let asked = OrientationLock.tabletop
+                        scene.requestGeometryUpdate(.iOS(interfaceOrientations: asked)) { error in
                             print("BRIM-T orient request error: \(error.localizedDescription)")
+                            Task { @MainActor in OrientationLock.requestFailed(asked) }
                         }
                     }
                     if !failedLogged && Date().timeIntervalSince(start) > 30 {
