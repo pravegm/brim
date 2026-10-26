@@ -13,7 +13,7 @@ GitHub → **Actions** → **App Store Connect tool** → **Run workflow**:
 | `asc` | Tick to contact App Store Connect. Unticked, the run only typechecks and validates |
 | `mode` | `check`: read-only status. `plan`: check plus a dry run, still read-only. `push`: check, plan, then write |
 | `only` | Optional step list, e.g. `nomination` or `gamecenter,attach` |
-| `store_run` | A green **App Store screenshots** run. Empty = `DEFAULT_STORE_RUN` in the workflow (40270623298, the final frames) |
+| `store_run` | A green **App Store screenshots** run. Empty = `DEFAULT_STORE_RUN` in the workflow (40363198536, the final frames) |
 | `placements_run` | A store.yml run whose `store-placements` artifact holds the product page header and search results art (`docs/appstore/header-search.md`). Empty = the `placements` step leaves them alone. The `validate` job always checks `DEFAULT_PLACEMENTS_RUN` offline |
 | `ci_run` | A green **CI** run whose `screenshots` artifact holds `badges/`. Empty = the latest green run on `main` |
 | `inherit_from` | Default `com.pravegm.squish`. See "Personal data" |

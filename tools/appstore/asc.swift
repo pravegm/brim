@@ -138,7 +138,7 @@ while !argv.isEmpty {
 /// Read-only after parsing (a top-level `let`, so async code may read it).
 let inheritFrom: String? = inheritFromArg
 
-let allSteps = ["appinfo", "categories", "agerating", "version", "localizations", "review", "gamecenter", "attach",
+let allSteps = ["appinfo", "categories", "agerating", "version", "build", "localizations", "review", "gamecenter", "attach",
                 "screenshots", "placements", "price", "accessibility", "nomination"]
 for s in (onlySteps ?? []).union(skipSteps) where !allSteps.contains(s) {
     die("unknown step '\(s)'. Steps: \(allSteps.joined(separator: " "))")
@@ -1637,6 +1637,26 @@ final class Engine {
         else { try await update("version \(versionAttrs["versionString"] as? String ?? "") attributes", "/v1/appStoreVersions/\(versionID)", type: "appStoreVersions", id: versionID, attributes: patch, lines: lines) }
     }
 
+    /// The release build (env ASC_BUILD, e.g. "13"; founder-tested): attached to the editable version once Apple has
+    /// processed it. Never submits.
+    func syncBuild() async throws {
+        guard let want = env["ASC_BUILD"], !want.isEmpty else { note("no ASC_BUILD given; the version's build is left as it is"); return }
+        let versionString = versionAttrs["versionString"] as? String ?? "1.0"
+        let (builds, _) = try await api.getAll("/v1/builds", [("filter[app]", appID), ("filter[version]", want),
+                                                             ("filter[preReleaseVersion.version]", versionString), ("limit", "10")])
+        guard let b = builds.first else { throw ToolError("build \(want) of \(versionString) not found for this app") }
+        let a = attrs(b)
+        let state = a["processingState"] as? String ?? "?"
+        guard state == "VALID" else { throw ToolError("build \(want) is \(state), not VALID yet; run again once Apple has processed it") }
+        if a["expired"] as? Bool == true { throw ToolError("build \(want) has expired") }
+        note("build \(want): \(state), uses non-exempt encryption: \(short(a["usesNonExemptEncryption"]))")
+        let cur = dataOne(try await api.getOptional("/v1/appStoreVersions/\(versionID)/build"))
+        if idOf(cur) == idOf(b) { same("build \(want) attached to \(versionString)"); return }
+        try await relink("\(versionString) build", "/v1/appStoreVersions/\(versionID)/relationships/build",
+                         ["data": ["type": "builds", "id": idOf(b)]],
+                         lines: ["\(cur.map { attrs($0)["version"] as? String ?? "?" } ?? "none") → \(want)"])
+    }
+
     func loadVersionLocalizations() async throws {
         let (existing, _) = try await api.getAll("/v1/appStoreVersions/\(versionID)/appStoreVersionLocalizations", [("limit", "50")])
         for e in existing { if let l = attrs(e)["locale"] as? String { versionLocIDs[l] = idOf(e) } }
@@ -2908,7 +2928,7 @@ func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?, placem
         try await e.resolveApp()
         let needsInfo = !steps.isDisjoint(with: ["appinfo", "categories", "agerating"])
         if needsInfo { try await e.resolveAppInfo() }
-        let needsVersion = !steps.isDisjoint(with: ["version", "localizations", "review", "gamecenter", "attach", "screenshots", "placements"])
+        let needsVersion = !steps.isDisjoint(with: ["version", "build", "localizations", "review", "gamecenter", "attach", "screenshots", "placements"])
         if needsVersion {
             try await e.resolveVersion(create: true)
             try await e.loadVersionLocalizations()
@@ -2921,6 +2941,7 @@ func runSync(dryRun: Bool, screenshotsOnly: Bool, screenshotDir: String?, placem
     await e.step("categories", "Categories") { try await e.syncCategories() }
     await e.step("agerating", "Age rating declaration") { try await e.syncAgeRating() }
     await e.step("version", "Version: copyright, release type and date") { try await e.syncVersionAttributes() }
+    await e.step("build", "Release build (ASC_BUILD)") { try await e.syncBuild() }
     await e.step("localizations", "Version localizations: description, keywords, promo text, URLs") { try await e.syncVersionLocalizations() }
     await e.step("review", "App Review details") { try await e.syncReview() }
     await e.step("gamecenter", "Game Center: enable, achievements, leaderboards, localizations, badges") { try await e.syncGameCenter() }

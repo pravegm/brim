@@ -46,10 +46,14 @@ on:
         description: "Bundle ID to read the copyright and App Review contact from at run time (empty = off)"
         type: string
         default: "com.pravegm.squish"
+      build:
+        description: "Release build number to attach to the version (step 'build', e.g. 13; empty = leave it)"
+        type: string
+        default: ""
 
 env:
-  # The final store frames (docs/HANDOVER.md, 26 Oct 2026; MANIFESTs 0 flagged).
-  DEFAULT_STORE_RUN: "40270623298"
+  # The final store frames: run 40363198536 (26 Oct 2026, evening; upside-down guard on; MANIFESTs 0 flagged).
+  DEFAULT_STORE_RUN: "40363198536"
   # The signed-off header and search results art (store.yml placements-only run; MANIFEST problems 0).
   DEFAULT_PLACEMENTS_RUN: "40376904797"
 
@@ -166,6 +170,7 @@ jobs:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
       ASC_INHERIT_FROM: ${{ inputs.inherit_from }}
+      ASC_BUILD: ${{ inputs.build }}
       MODE: ${{ inputs.mode }}
       ONLY: ${{ inputs.only }}
       GH_TOKEN: ${{ github.token }}

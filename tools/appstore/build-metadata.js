@@ -72,7 +72,7 @@ const meta = {
       localizations: { 'en-GB': lbLoc('Daily Pour'), 'en-US': lbLoc('Daily Pour') } }
   ],
   screenshots: {
-    _comment: 'Paths inside a downloaded App Store screenshots run (store.yml; final run 40270623298). HANDOVER upload order: phones P1-P5; Duo D1, D2, D4, D5, D3 (D6 dropped).',
+    _comment: 'Paths inside a downloaded App Store screenshots run (store.yml; final run 40363198536). HANDOVER upload order: phones P1-P5; Duo D1, D2, D4, D5, D3 (D6 dropped).',
     APP_IPHONE_67: phones.map(n => `store-69/store/${n}.png`),
     APP_IPHONE_61: phones.map(n => `store-61/store/${n}.png`),
     duoInner: ['D1-hero-pour', 'D2-perfect-streak', 'D4-soda-foam', 'D5-shake', 'D3-rush'].map(n => `store-duo/duo-screens/store/${n}.png`)
