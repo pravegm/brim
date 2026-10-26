@@ -121,6 +121,12 @@ while IFS= read -r -u 3 line || [[ -n "$line" ]]; do
       if [[ -z "$seeded" ]]; then problems+=("no 'BRIM-T streak seeded' line (asked $asked)")
       elif (( seeded < asked )); then problems+=("streak seeded $seeded, asked $asked"); fi
     fi
+    # Founder, 26 Oct: no store asset may ever be upside down. Store frames never use `flip`, and the app must never
+    # have turned round (drawn or by iOS) or shown the one-time turn-round card before the capture.
+    [[ "$args" == *flip* ]] && problems+=("demo args contain 'flip' (store frames are always upright)")
+    if grep -qE "BRIM-T (turned round 1|interface upside down 1)|upsideDown=1|BRIM-T (hint|intro card) turnRound" "$applog"; then
+      problems+=("the app turned round before the capture (upside-down frame)")
+    fi
     if [[ -n "$expect" ]] && ! grep -qE "$expect" "$applog"; then problems+=("log has no line matching '$expect'"); fi
     if [[ -n "$REQUIRE_LOG" ]] && ! grep -qE "$REQUIRE_LOG" "$applog"; then problems+=("log has no line matching '$REQUIRE_LOG'"); fi
   fi
