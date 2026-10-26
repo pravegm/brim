@@ -1,0 +1,391 @@
+{
+  "_comment": "Generated 26 Oct 2026 from docs/appstore/metadata.md, review-notes.md, achievements.md and featuring-nomination.md; asc.swift pushes it (tools/appstore/README.md). No personal data: the copyright and the App Review contact are read at run time from Squish (--inherit-from com.pravegm.squish).",
+  "bundleId": "com.pravegm.brim",
+  "primaryLocale": "en-GB",
+  "copyrightHolder": null,
+  "contentRights": "DOES_NOT_USE_THIRD_PARTY_CONTENT",
+  "categories": {
+    "primary": "GAMES",
+    "primarySubcategories": [
+      "GAMES_CASUAL",
+      "GAMES_ARCADE"
+    ],
+    "secondary": "ENTERTAINMENT"
+  },
+  "localizations": {
+    "en-GB": {
+      "name": "Brim: Fold to Pour",
+      "subtitle": "Fill every glass to the line",
+      "privacyPolicyUrl": "https://pravegm.github.io/brim/site/privacy.html",
+      "description": "Your iPhone Duo is the jug.\n\nLay your Duo open on the table. The top half holds a jug of lemonade. Lift it like a laptop lid and the jug tips, pouring a stream across the fold into a glass waiting on the flat half. Lower it to stop. But the stream is still falling, so the trick is to stop just before the line.\n\nNo ads. No in-app purchases. No accounts. No data collected. Pay once and it's all yours.\n\nMADE FOR THE FOLD. PLAYS ON EVERY iPhone.\nOn iPhone Duo, the hinge is the only control. The glass stays still on the table while the jug half moves, and you pour by feel with slow, gentle lifts. You never need to close the phone or fold fast. On any other iPhone, drag up anywhere to tip the jug and let go to set it upright. Same glasses, same physics, same leaderboards.\n\nPOURING THAT FEELS TRUE\n• The drink in the jug stays level, so a full jug pours at a slight tip and a nearly empty one needs a steep one\n• The stream takes time to fall: stop early, or watch it sail past the line\n• The glass sings as it fills. The pitch rises, so you can pour by ear\n• Glugs you can feel, surfaces that wobble, foam that climbs and settles, and a bright ting on every Perfect\n\nFIVE VENUES, ONE SHIFT AT A TIME\n• Lemonade Stand: water, lemonade and orange juice, from tumblers to flutes\n• Soda Fountain: foam. Pour slowly, then top up\n• Milkshake Diner: thick shakes, honey and syrup that keep coming after you stop\n• The Conveyor: glasses that won't wait for you\n• Potion Shop: tiny vials, millilitre marks and lines that fade\nEarn stars to open the next venue. Collect enough to find out what's behind the counter.\n\nRUSH\nOne big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the run is over. Chase your best on the Game Center leaderboard.\n\nDAILY POUR\nTen glasses, the same for everyone today, and one scored try. Then share your row of results without giving the glasses away.\n\nCALLED TO THE DROP\nEvery glass gets a word: Perfect, Great, Good, Short, Over or Spill. Protect your Perfect streak, collect stars and watch your lifetime stats grow: litres poured, Perfects, best streak.\n\nGAME CENTER\nLeaderboards for Rush and the Daily Pour, and ten achievements. It's optional: Brim works fully without signing in.\n\nSOUND AND FEEL\nEvery sound is synthesised in the app as you pour. There are no recordings. Sound and haptics each switch off in Settings. Reduce Motion turns off screen shake and thins out the particles.\n\nEVERY DRINK IS NON-ALCOHOLIC\nLemonade, juice, sodas, shakes, syrups and potions (the fizzy, colourful, entirely made-up kind).\n\nPRIVATE BY DESIGN\nNo accounts, no tracking, no data collected. Your progress stays on your iPhone.",
+      "keywords": "bartender,drink,juice,soda,lemonade,milkshake,potion,physics,tilt,hinge,foldable,jug,splash,fizz,cup",
+      "promotionalText": "On iPhone Duo, lift the top half to pour across the fold. On any other iPhone, drag up. Stop right on the line. No ads, no in-app purchases, no data collected.",
+      "supportUrl": "https://pravegm.github.io/brim/site/support.html",
+      "marketingUrl": "https://pravegm.github.io/brim/site/"
+    },
+    "en-US": {
+      "name": "Brim: Fold to Pour",
+      "subtitle": "Fill every glass to the line",
+      "privacyPolicyUrl": "https://pravegm.github.io/brim/site/privacy.html",
+      "description": "Your iPhone Duo is the jug.\n\nLay your Duo open on the table. The top half holds a jug of lemonade. Lift it like a laptop lid and the jug tips, pouring a stream across the fold into a glass waiting on the flat half. Lower it to stop. But the stream is still falling, so the trick is to stop just before the line.\n\nNo ads. No in-app purchases. No accounts. No data collected. Pay once and it's all yours.\n\nMADE FOR THE FOLD. PLAYS ON EVERY iPhone.\nOn iPhone Duo, the hinge is the only control. The glass stays still on the table while the jug half moves, and you pour by feel with slow, gentle lifts. You never need to close the phone or fold fast. On any other iPhone, drag up anywhere to tip the jug and let go to set it upright. Same glasses, same physics, same leaderboards.\n\nPOURING THAT FEELS TRUE\n• The drink in the jug stays level, so a full jug pours at a slight tip and a nearly empty one needs a steep one\n• The stream takes time to fall: stop early, or watch it sail past the line\n• The glass sings as it fills. The pitch rises, so you can pour by ear\n• Glugs you can feel, surfaces that wobble, foam that climbs and settles, and a bright ting on every Perfect\n\nFIVE VENUES, ONE SHIFT AT A TIME\n• Lemonade Stand: water, lemonade and orange juice, from tumblers to flutes\n• Soda Fountain: foam. Pour slowly, then top up\n• Milkshake Diner: thick shakes, honey and syrup that keep coming after you stop\n• The Conveyor: glasses that won't wait for you\n• Potion Shop: tiny vials, milliliter marks and lines that fade\nEarn stars to open the next venue. Collect enough to find out what's behind the counter.\n\nRUSH\nOne big jug and glasses that keep coming. Every Perfect tops the jug up and grows your multiplier, all the way to ×5. Three spills, or an empty jug, and the run is over. Chase your best on the Game Center leaderboard.\n\nDAILY POUR\nTen glasses, the same for everyone today, and one scored try. Then share your row of results without giving the glasses away.\n\nCALLED TO THE DROP\nEvery glass gets a word: Perfect, Great, Good, Short, Over or Spill. Protect your Perfect streak, collect stars and watch your lifetime stats grow: liters poured, Perfects, best streak.\n\nGAME CENTER\nLeaderboards for Rush and the Daily Pour, and ten achievements. It's optional: Brim works fully without signing in.\n\nSOUND AND FEEL\nEvery sound is synthesized in the app as you pour. There are no recordings. Sound and haptics each switch off in Settings. Reduce Motion turns off screen shake and thins out the particles.\n\nEVERY DRINK IS NON-ALCOHOLIC\nLemonade, juice, sodas, shakes, syrups and potions (the fizzy, colorful, entirely made-up kind).\n\nPRIVATE BY DESIGN\nNo accounts, no tracking, no data collected. Your progress stays on your iPhone.",
+      "keywords": "bartender,drink,juice,soda,lemonade,milkshake,potion,physics,tilt,hinge,foldable,jug,splash,fizz,cup",
+      "promotionalText": "On iPhone Duo, lift the top half to pour across the fold. On any other iPhone, drag up. Stop right on the line. No ads, no in-app purchases, no data collected.",
+      "supportUrl": "https://pravegm.github.io/brim/site/support.html",
+      "marketingUrl": "https://pravegm.github.io/brim/site/"
+    }
+  },
+  "ageRating": {
+    "_comment": "metadata.md section 8 (re-checked 26 Oct 2026): 4+; every item None or No except Contests = Infrequent (the two optional Game Center leaderboards); not Made for Kids. Names from AgeRatingDeclarationUpdateRequest (API docs read 26 Oct 2026).",
+    "parentalControls": false,
+    "ageAssurance": false,
+    "unrestrictedWebAccess": false,
+    "userGeneratedContent": false,
+    "messagingAndChat": false,
+    "advertising": false,
+    "socialMedia": false,
+    "socialMediaAgeRestricted": false,
+    "profanityOrCrudeHumor": "NONE",
+    "horrorOrFearThemes": "NONE",
+    "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+    "matureOrSuggestiveThemes": "NONE",
+    "medicalOrTreatmentInformation": "NONE",
+    "healthOrWellnessTopics": false,
+    "sexualContentOrNudity": "NONE",
+    "sexualContentGraphicAndNudity": "NONE",
+    "violenceCartoonOrFantasy": "NONE",
+    "violenceRealistic": "NONE",
+    "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+    "gunsOrOtherWeapons": "NONE",
+    "gamblingSimulated": "NONE",
+    "contests": "INFREQUENT",
+    "gambling": false,
+    "lootBox": false,
+    "kidsAgeBand": null,
+    "ageRatingOverrideV2": "NONE",
+    "koreaAgeRatingOverride": "NONE"
+  },
+  "review": {
+    "notes": "Thanks for reviewing Brim: a paid game with no ads, no in-app purchases, no accounts, no data collection and no network requests of its own.\n\n1. ANY iPHONE (start here)\nYou don't need a Duo. Every mode, venue, unlock and achievement works on any iPhone and in the Simulator.\n- Tap Play. A jug sits at the top, a glass with a fill line on the counter below.\n- Drag UP anywhere: the jug tips and pours. Let go: it eases upright and the pour stops.\n- The stream takes a moment to fall, so stop just before the line. Each glass is judged Perfect / Great / Good / Short / Over (too full, nothing over the rim) / Spill (over the rim).\n\n2. iPHONE DUO (hinge)\nBrim reads the hinge angle only through the public iOS 27.1 API (SwiftUI onHingeChange), behind an availability check. No private API.\na) Upside down by default: as a fold starts, iOS blurs one physical half of the inner display for about 2 s (all apps), so Brim runs the inner screen upside down to keep the glasses on the half that stays sharp. If the game looks upside down, turn the phone round once (hold it up for a second so iOS turns too). Settings > Controls > \"Glasses on the sharp half\" (Duo only) switches this off and restores the usual orientation.\nb) Lay the Duo open on a table, inner screen up, fold running left to right: jug on the far half, glass on the near half. \"Lay it flat to start\" opens at about 168 degrees; after 6 s it also offers \"Use touch instead\".\nc) Lift the far half like a laptop lid: the jug tips and pours across the fold. Nothing pours until the lid is about 6 degrees up. Lower it to stop. Play stays between about 174 and 90 degrees, with slow, held angles.\nd) Book pose (fold top to bottom): the game pauses with \"Turn me so the fold runs side to side, then lay me flat.\" and a \"Use touch\" button.\ne) Below about 70 degrees a run pauses and nothing is judged; it resumes once open and flat. Closed, the outer display shows a status card (\"Open me to pour\").\nf) Split View, or any window smaller than the inner display: Brim uses touch (drag up), as on other iPhones.\ng) Settings > Controls > \"Touch controls on iPhone Duo\" uses drag full time.\n\n3. KIND TO THE DEVICE (Guidelines 2.4.2, 1.4.5)\n- Brim never asks the user to close the phone, fold quickly or fold repeatedly. The hinge is a slow dial in the middle of its range, read by angle, never by the closed state.\n- Nothing is placed on or between the screens.\n- Nothing rewards folding speed or fold count; flapping the lid only spills drinks, which costs points.\n\n4. MODES AND UNLOCKS (nothing hidden, nothing to buy)\n- Shifts: five venues (Lemonade Stand, Soda Fountain, Milkshake Diner, The Conveyor, Potion Shop). Stars open the next venue.\n- A sixth, secret venue (Sand Bar) opens at 105 of the 120 stars in the five main venues. No code, shortcut or purchase.\n- Rush: endless; ends after 3 spills or when the jug runs dry. Quitting from the pause menu keeps the score.\n- Daily Pour: 10 glasses, the same for everyone, new each day at 00:00 UTC; one scored attempt (leaving part-way keeps the score so far), then unscored practice. The result can be shared as text via the share sheet.\n\n5. CONTENT\nEvery drink is non-alcoholic: water, lemonade, juice, sodas (cola, root beer, cream soda), milkshakes, honey, syrup and fictional coloured potions. A spill makes a puddle; nothing is harmed.\n\n6. PRIVACY\nNo third-party SDKs, analytics, ads, accounts or tracking. Progress and settings stay on the device. App Privacy: Data Not Collected.\n\n7. GAME CENTER\nOptional. 2 leaderboards (Rush, Daily Pour) and 10 achievements (700 points, 1 hidden). Brim works fully when not signed in.\n\n8. OTHER\n- No notifications, no rating prompt.\n- Sound plays in Silent Mode (playback, mixes with other audio); Settings > \"Respect silent mode\" turns that off.\n- Debug and demo modes are disabled in Release builds.",
+    "demoAccountRequired": false,
+    "contact": {
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "email": null
+    }
+  },
+  "release": {
+    "type": "SCHEDULED",
+    "earliestReleaseDate": "2026-11-17T08:00:00Z"
+  },
+  "price": {
+    "baseTerritory": "GBR",
+    "customerPrice": "1.99"
+  },
+  "availability": {
+    "_comment": "COMPLIANCE.md #15: no NPPA (China mainland) or Vietnam game licence. #16 (Mac and Vision Pro off) has no public API: the tool prints the clicks.",
+    "excludedTerritories": [
+      "CHN",
+      "VNM"
+    ],
+    "availableInNewTerritories": true
+  },
+  "achievements": [
+    {
+      "vendorIdentifier": "brim.first.perfect",
+      "referenceName": "First Perfect",
+      "points": 25,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "First Perfect",
+          "beforeEarnedDescription": "Pour your first Perfect.",
+          "afterEarnedDescription": "Right on the line. Ting!"
+        },
+        "en-US": {
+          "name": "First Perfect",
+          "beforeEarnedDescription": "Pour your first Perfect.",
+          "afterEarnedDescription": "Right on the line. Ting!"
+        }
+      },
+      "image": "tools/appstore/badges/brim.first.perfect.png"
+    },
+    {
+      "vendorIdentifier": "brim.streak.10",
+      "referenceName": "Steady Hand",
+      "points": 50,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Steady Hand",
+          "beforeEarnedDescription": "Pour 10 Perfects in a row.",
+          "afterEarnedDescription": "Ten in a row. The glasses are getting nervous."
+        },
+        "en-US": {
+          "name": "Steady Hand",
+          "beforeEarnedDescription": "Pour 10 Perfects in a row.",
+          "afterEarnedDescription": "Ten in a row. The glasses are getting nervous."
+        }
+      },
+      "image": "tools/appstore/badges/brim.streak.10.png"
+    },
+    {
+      "vendorIdentifier": "brim.streak.25",
+      "referenceName": "Not a Drop Out of Place",
+      "points": 100,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Not a Drop Out of Place",
+          "beforeEarnedDescription": "Pour 25 Perfects in a row.",
+          "afterEarnedDescription": "Twenty-five. Not a drop out of place."
+        },
+        "en-US": {
+          "name": "Not a Drop Out of Place",
+          "beforeEarnedDescription": "Pour 25 Perfects in a row.",
+          "afterEarnedDescription": "Twenty-five. Not a drop out of place."
+        }
+      },
+      "image": "tools/appstore/badges/brim.streak.25.png"
+    },
+    {
+      "vendorIdentifier": "brim.litres.10",
+      "referenceName": "Ten Litres",
+      "points": 75,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Ten Litres",
+          "beforeEarnedDescription": "Pour 10 litres in total.",
+          "afterEarnedDescription": "Ten litres, give or take a drop."
+        },
+        "en-US": {
+          "name": "Ten Liters",
+          "beforeEarnedDescription": "Pour 10 liters in total.",
+          "afterEarnedDescription": "Ten liters, give or take a drop."
+        }
+      },
+      "image": "tools/appstore/badges/brim.litres.10.png"
+    },
+    {
+      "vendorIdentifier": "brim.venue.soda",
+      "referenceName": "Head for Foam",
+      "points": 50,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Head for Foam",
+          "beforeEarnedDescription": "Clear every shift at the Soda Fountain.",
+          "afterEarnedDescription": "Foam tamed. Slow, then top up."
+        },
+        "en-US": {
+          "name": "Head for Foam",
+          "beforeEarnedDescription": "Clear every shift at the Soda Fountain.",
+          "afterEarnedDescription": "Foam tamed. Slow, then top up."
+        }
+      },
+      "image": "tools/appstore/badges/brim.venue.soda.png"
+    },
+    {
+      "vendorIdentifier": "brim.venue.diner",
+      "referenceName": "Thick and Slow",
+      "points": 50,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Thick and Slow",
+          "beforeEarnedDescription": "Clear every shift at the Milkshake Diner.",
+          "afterEarnedDescription": "You stopped early. It paid off."
+        },
+        "en-US": {
+          "name": "Thick and Slow",
+          "beforeEarnedDescription": "Clear every shift at the Milkshake Diner.",
+          "afterEarnedDescription": "You stopped early. It paid off."
+        }
+      },
+      "image": "tools/appstore/badges/brim.venue.diner.png"
+    },
+    {
+      "vendorIdentifier": "brim.venue.conveyor",
+      "referenceName": "Moving Target",
+      "points": 75,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Moving Target",
+          "beforeEarnedDescription": "Clear every shift on The Conveyor.",
+          "afterEarnedDescription": "Nothing got past you."
+        },
+        "en-US": {
+          "name": "Moving Target",
+          "beforeEarnedDescription": "Clear every shift on The Conveyor.",
+          "afterEarnedDescription": "Nothing got past you."
+        }
+      },
+      "image": "tools/appstore/badges/brim.venue.conveyor.png"
+    },
+    {
+      "vendorIdentifier": "brim.venue.potions",
+      "referenceName": "Steady Alchemist",
+      "points": 75,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Steady Alchemist",
+          "beforeEarnedDescription": "Clear every shift at the Potion Shop.",
+          "afterEarnedDescription": "Measured to the drop."
+        },
+        "en-US": {
+          "name": "Steady Alchemist",
+          "beforeEarnedDescription": "Clear every shift at the Potion Shop.",
+          "afterEarnedDescription": "Measured to the drop."
+        }
+      },
+      "image": "tools/appstore/badges/brim.venue.potions.png"
+    },
+    {
+      "vendorIdentifier": "brim.allstars",
+      "referenceName": "All Stars",
+      "points": 100,
+      "showBeforeEarned": true,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "All Stars",
+          "beforeEarnedDescription": "Earn 3 stars on every shift in all five venues.",
+          "afterEarnedDescription": "Every shift, three stars. Not a drop out of place."
+        },
+        "en-US": {
+          "name": "All Stars",
+          "beforeEarnedDescription": "Earn 3 stars on every shift in all five venues.",
+          "afterEarnedDescription": "Every shift, three stars. Not a drop out of place."
+        }
+      },
+      "image": "tools/appstore/badges/brim.allstars.png"
+    },
+    {
+      "vendorIdentifier": "brim.sandbar",
+      "referenceName": "Grain by Grain",
+      "points": 100,
+      "showBeforeEarned": false,
+      "repeatable": false,
+      "localizations": {
+        "en-GB": {
+          "name": "Grain by Grain",
+          "beforeEarnedDescription": "There's one more venue. Keep pouring.",
+          "afterEarnedDescription": "You found the Sand Bar. Mind every grain."
+        },
+        "en-US": {
+          "name": "Grain by Grain",
+          "beforeEarnedDescription": "There's one more venue. Keep pouring.",
+          "afterEarnedDescription": "You found the Sand Bar. Mind every grain."
+        }
+      },
+      "image": "tools/appstore/badges/brim.sandbar.png"
+    }
+  ],
+  "leaderboards": [
+    {
+      "vendorIdentifier": "brim.rush.best",
+      "referenceName": "Rush best",
+      "defaultFormatter": "INTEGER",
+      "scoreSortType": "DESC",
+      "submissionType": "BEST_SCORE",
+      "scoreRangeStart": 0,
+      "scoreRangeEnd": 10000000,
+      "recurrence": null,
+      "localizations": {
+        "en-GB": {
+          "name": "Rush",
+          "formatterSuffix": " points",
+          "formatterSuffixSingular": " point"
+        },
+        "en-US": {
+          "name": "Rush",
+          "formatterSuffix": " points",
+          "formatterSuffixSingular": " point"
+        }
+      }
+    },
+    {
+      "vendorIdentifier": "brim.daily.score",
+      "referenceName": "Daily Pour",
+      "defaultFormatter": "INTEGER",
+      "scoreSortType": "DESC",
+      "submissionType": "BEST_SCORE",
+      "scoreRangeStart": 0,
+      "scoreRangeEnd": 1000000,
+      "recurrence": {
+        "startDate": "2026-11-01T00:00:00Z",
+        "duration": "P1D",
+        "rule": "FREQ=DAILY;INTERVAL=1"
+      },
+      "localizations": {
+        "en-GB": {
+          "name": "Daily Pour",
+          "formatterSuffix": " points",
+          "formatterSuffixSingular": " point"
+        },
+        "en-US": {
+          "name": "Daily Pour",
+          "formatterSuffix": " points",
+          "formatterSuffixSingular": " point"
+        }
+      }
+    }
+  ],
+  "screenshots": {
+    "_comment": "Paths inside a downloaded App Store screenshots run (store.yml; final run 40270623298). HANDOVER upload order: phones P1-P5; Duo D1, D2, D4, D5, D3 (D6 dropped).",
+    "APP_IPHONE_67": [
+      "store-69/store/P1-hero-pour.png",
+      "store-69/store/P2-perfect-streak.png",
+      "store-69/store/P3-soda-foam.png",
+      "store-69/store/P4-rush.png",
+      "store-69/store/P5-venues.png"
+    ],
+    "APP_IPHONE_61": [
+      "store-61/store/P1-hero-pour.png",
+      "store-61/store/P2-perfect-streak.png",
+      "store-61/store/P3-soda-foam.png",
+      "store-61/store/P4-rush.png",
+      "store-61/store/P5-venues.png"
+    ],
+    "duoInner": [
+      "store-duo/duo-screens/store/D1-hero-pour.png",
+      "store-duo/duo-screens/store/D2-perfect-streak.png",
+      "store-duo/duo-screens/store/D4-soda-foam.png",
+      "store-duo/duo-screens/store/D5-shake.png",
+      "store-duo/duo-screens/store/D3-rush.png"
+    ]
+  },
+  "nomination": {
+    "_comment": "docs/appstore/featuring-nomination.md. notes = Helpful Details. submit: true presses Submit (a saved draft is not a nomination). Deadline Tue 27 Oct 2026.",
+    "name": "Brim - App Launch - iPhone Duo fold-to-pour game",
+    "type": "APP_LAUNCH",
+    "description": "Brim makes iPhone Duo the jug. Lay the Duo open in tabletop pose and lift the top half like a laptop lid: a jug drawn on that half tips with it, and a stream pours across the fold into a glass on the flat half. Lower it to stop, but the stream is still falling, so the skill is stopping just before the line.\n\nThe hinge is an analogue control, not a switch. The liquid in the jug stays level, so a full jug pours at a slight lift and an empty one needs a steep one. The pitch rises as the glass fills, so players learn to pour by ear. Soda foams, milkshakes keep coming, potions demand precision.\n\nFive venues of shifts, an endless Rush mode with a Perfect-streak multiplier, and a seeded Daily Pour that is the same for everyone and shares as a row of emoji, with Game Center leaderboards.\n\nEvery iPhone can play by dragging up. One price, no ads, no in-app purchases, no data collected, and every drink is non-alcoholic.",
+    "notes": "Optimized for iPhone Duo, in every pose: hinge play in tabletop pose on the inner display, a turn card or touch play in book pose, touch play in Split View, and a status card on the outer display. It runs upside down by default so the fold blur misses the glasses. Uses the public iOS 27.1 hinge API with slow, held angles between flat and upright; it never asks players to close the phone or fold fast. Every sound is synthesized in the app. Also from us: Squish (launching 24 Nov).",
+    "publishStartDate": "2026-11-17T08:00:00Z",
+    "deviceFamilies": [
+      "IPHONE"
+    ],
+    "locales": [
+      "en-GB",
+      "en-US"
+    ],
+    "supplementalMaterialsUris": [
+      "https://pravegm.github.io/brim/site/"
+    ],
+    "hasInAppEvents": false,
+    "launchInSelectMarketsFirst": false,
+    "preOrderEnabled": false,
+    "submit": true
+  }
+}

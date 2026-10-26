@@ -1,0 +1,227 @@
+name: App Store Connect tool
+
+# tools/appstore (README there). Every push to the tool or the metadata: typecheck asc.swift and badges.swift, collect
+# the 10 Game Center badges the app renders (from a green CI run's `screenshots` artifact, badges/), and validate
+# docs/appstore/asc-metadata.json with the badges and the final store screenshots in place.
+# App Store Connect is only contacted on a manual run with `asc` ticked AND the ASC_* secrets set. `mode` decides how
+# far it goes: check (read-only), plan (check + dry run, read-only), push (check + plan + write). The key is written to
+# a temp file for that job and deleted afterwards; it is never echoed. Inherited personal fields are masked.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/appstore/**"
+      - "docs/appstore/asc-metadata.json"
+      - ".github/workflows/asc.yml"
+  workflow_dispatch:
+    inputs:
+      asc:
+        description: "Contact App Store Connect (needs secrets ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY)"
+        type: boolean
+        default: false
+      mode:
+        description: "check = read-only status; plan = check + dry run (read-only); push = check + plan + write"
+        type: choice
+        options: [plan, check, push]
+        default: plan
+      only:
+        description: "Optional step list, e.g. nomination or gamecenter,attach (empty = every step)"
+        type: string
+        default: ""
+      store_run:
+        description: "ID of a green 'App Store screenshots' run (empty = the final run in DEFAULT_STORE_RUN)"
+        type: string
+        default: ""
+      ci_run:
+        description: "ID of a green CI run whose screenshots/badges/ are the Game Center images (empty = latest green on main)"
+        type: string
+        default: ""
+      inherit_from:
+        description: "Bundle ID to read the copyright and App Review contact from at run time (empty = off)"
+        type: string
+        default: "com.pravegm.squish"
+
+env:
+  # The final store frames (docs/HANDOVER.md, 26 Oct 2026; MANIFESTs 0 flagged).
+  DEFAULT_STORE_RUN: "40270623298"
+
+concurrency:
+  group: asc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tool:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.1
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.1.app
+          xcrun swift --version
+
+      - name: Typecheck asc.swift and badges.swift
+        run: |
+          xcrun swiftc -typecheck tools/appstore/asc.swift
+          xcrun swiftc -typecheck tools/appstore/badges.swift
+
+      - name: Find the CI run with the app-rendered badges
+        id: ci
+        env:
+          CI_RUN: ${{ inputs.ci_run }}
+        run: |
+          run="$CI_RUN"
+          if [ -z "$run" ]; then
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success -L 1 --json databaseId -q '.[0].databaseId')
+          fi
+          [ -n "$run" ] || { echo "::error::no green CI run found"; exit 1; }
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "Badges from CI run $run"
+
+      - name: Download its screenshots artifact (badges/ and logs/)
+        run: gh run download "${{ steps.ci.outputs.run }}" -R "$GITHUB_REPOSITORY" -n screenshots -D "$RUNNER_TEMP/ci-shots"
+
+      - name: Collect the badges (IDs checked against the app, flattened to opaque RGB)
+        run: |
+          grep -h "BRIM-T badges" "$RUNNER_TEMP/ci-shots/logs/15-badges.txt" || echo "::warning::no BRIM-T badges line in logs/15-badges.txt"
+          xcrun swift tools/appstore/badges.swift --from "$RUNNER_TEMP/ci-shots/badges" --out tools/appstore/badges
+
+      - name: Self-test the validator on the fixture
+        run: |
+          xcrun swift tools/appstore/asc.swift help
+          xcrun swift tools/appstore/asc.swift validate --metadata tools/appstore/fixtures/asc-metadata.sample.json --inherit-from com.pravegm.squish
+
+      - name: Upload badges
+        uses: actions/upload-artifact@v4
+        with:
+          name: badges
+          path: tools/appstore/badges/*.png
+          if-no-files-found: error
+
+  validate:
+    # Separate job so a problem in the listing data shows up red without hiding the badges.
+    needs: tool
+    runs-on: xcode-27
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 27.1
+        run: sudo xcode-select -s /Applications/Xcode_27.1.app
+      - name: Badges from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: badges
+          path: tools/appstore/badges
+      - name: Store screenshots
+        env:
+          STORE_RUN: ${{ inputs.store_run }}
+        run: |
+          run="${STORE_RUN:-$DEFAULT_STORE_RUN}"
+          for name in store-69 store-61 store-duo; do
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n "$name" -D "$RUNNER_TEMP/store/$name" || echo "::warning::artifact $name not found in run $run"
+          done
+          echo "ASC_SCREENSHOTS_DIR=$RUNNER_TEMP/store" >> "$GITHUB_ENV"
+      - name: Validate docs/appstore/asc-metadata.json
+        run: xcrun swift tools/appstore/asc.swift validate --inherit-from com.pravegm.squish
+
+  asc:
+    needs: [tool, validate]
+    if: github.event_name == 'workflow_dispatch' && inputs.asc
+    runs-on: xcode-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      ASC_INHERIT_FROM: ${{ inputs.inherit_from }}
+      MODE: ${{ inputs.mode }}
+      ONLY: ${{ inputs.only }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the secrets exist
+        id: secrets
+        run: |
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_PRIVATE_KEY" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Secrets ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY are not all set; nothing contacted (tools/appstore/README.md)"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ok == 'true'
+
+      - name: Select Xcode 27.1
+        if: steps.secrets.outputs.ok == 'true'
+        run: sudo xcode-select -s /Applications/Xcode_27.1.app
+
+      - name: Badges from this run
+        if: steps.secrets.outputs.ok == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: badges
+          path: tools/appstore/badges
+
+      - name: Store screenshots
+        if: steps.secrets.outputs.ok == 'true'
+        env:
+          STORE_RUN: ${{ inputs.store_run }}
+        run: |
+          run="${STORE_RUN:-$DEFAULT_STORE_RUN}"
+          echo "Screenshots from store run $run"
+          for name in store-69 store-61 store-duo; do
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n "$name" -D "$RUNNER_TEMP/store/$name" || echo "::warning::artifact $name not found in run $run"
+          done
+          echo "ASC_SCREENSHOTS_DIR=$RUNNER_TEMP/store" >> "$GITHUB_ENV"
+
+      - name: Write the API key to a temp file
+        if: steps.secrets.outputs.ok == 'true'
+        run: |
+          umask 077
+          # Accept the .p8 pasted as-is, or with literal \n sequences.
+          printf '%s\n' "$ASC_PRIVATE_KEY" | sed 's/\\n/\n/g' > "$RUNNER_TEMP/AuthKey.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/out"
+
+      - name: check (read-only)
+        if: steps.secrets.outputs.ok == 'true'
+        run: ASC_OUTPUT_FILE="$RUNNER_TEMP/out/check.txt" xcrun swift tools/appstore/asc.swift check
+
+      - name: plan (dry run, read-only)
+        if: steps.secrets.outputs.ok == 'true' && (inputs.mode == 'plan' || inputs.mode == 'push')
+        run: |
+          if [ -n "$ONLY" ]; then set -- --only "$ONLY"; fi
+          ASC_OUTPUT_FILE="$RUNNER_TEMP/out/plan.txt" xcrun swift tools/appstore/asc.swift plan "$@"
+
+      - name: push (writes to App Store Connect)
+        if: steps.secrets.outputs.ok == 'true' && inputs.mode == 'push'
+        run: |
+          if [ -n "$ONLY" ]; then set -- --only "$ONLY"; fi
+          ASC_OUTPUT_FILE="$RUNNER_TEMP/out/push.txt" xcrun swift tools/appstore/asc.swift push "$@"
+
+      - name: Delete the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      # ASC_OUTPUT_FILE receives the tool's masked lines only (never the ::add-mask:: commands): no personal data.
+      - name: Upload the check/plan/push output
+        if: always() && steps.secrets.outputs.ok == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: asc-output
+          path: ${{ runner.temp }}/out/*.txt
+          if-no-files-found: ignore
