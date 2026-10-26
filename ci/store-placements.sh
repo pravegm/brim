@@ -151,6 +151,21 @@ if (( ${#extras[@]} > 0 )); then
     || warn "review/search-trio.png failed"
 fi
 thumb() { [[ -f "$1" ]] && to 30 sips --resampleWidth "$2" "$1" --out "$3" > /dev/null 2>&1; }
+
+# Review only: BANNER_VARIANTS="name=--kind search --yaw 14; name2=--kind header --device 0.8" renders each into
+# review/variant-<name>.png (and a 1206 px wide copy), so one run can compare several looks.
+if [[ -n "${BANNER_VARIANTS:-}" ]]; then
+  IFS=';' read -r -a variants <<< "$BANNER_VARIANTS"
+  for v in "${variants[@]}"; do
+    vname=$(sed 's/=.*//; s/[^A-Za-z0-9_-]//g' <<< "$v"); vargs="${v#*=}"
+    [[ -n "$vname" && "$vargs" != "$v" ]] || continue
+    # shellcheck disable=SC2086
+    vrep=$(render --hero "$hero" --out "$OUT/review/variant-$vname.png" $vargs 2>&1) || warn "variant $vname failed: $(tail -1 <<< "$vrep")"
+    note "variant $vname: $vargs"
+    note "    $(grep -m1 '^store-banner:' <<< "$vrep" | sed "s#$OUT/##")"
+    thumb "$OUT/review/variant-$vname.png" 1206 "$OUT/review/variant-$vname-1206.png"
+  done
+fi
 thumb "$OUT/search-3840x2560.png" 365 "$OUT/review/search-365pt@1x.png"
 thumb "$OUT/search-3840x2560.png" 1095 "$OUT/review/search-365pt@3x.png"
 thumb "$OUT/review/search-trio.png" 365 "$OUT/review/search-trio-365pt@1x.png"

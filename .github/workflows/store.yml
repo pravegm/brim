@@ -52,6 +52,10 @@ on:
         description: "Extra ci/store-banner.swift options for the search art; empty = defaults"
         type: string
         default: ""
+      banner_variants:
+        description: "Review-only looks to compare: name=--kind search --yaw 14; name2=--kind header --device 0.8"
+        type: string
+        default: ""
 
 # A placements-only run (placements_from set) has its own group, so it never cancels a capture run.
 concurrency:
@@ -333,6 +337,7 @@ jobs:
           SOURCE_RUN: ${{ inputs.placements_from || github.run_id }}
           BANNER_ARGS_HEADER: ${{ inputs.banner_args_header }}
           BANNER_ARGS_SEARCH: ${{ inputs.banner_args_search }}
+          BANNER_VARIANTS: ${{ inputs.banner_variants }}
         run: bash ci/store-placements.sh store-duo/duo-screens store-placements
 
       - name: Upload the placements
