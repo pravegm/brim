@@ -24,7 +24,15 @@ struct RootView: View {
         GeometryReader { safeGeo in
             let safe = safeGeo.safeAreaInsets
             GeometryReader { geo in
+                // Founder's real-Duo recording (26 Oct): lifting the top half from flat blurred the flat half for
+                // ~2 s. That is the moment iOS switches the fold's `.division` reserved region on. Apple's guidance
+                // is to read reserved regions in the GeometryReader body so the view updates when they arrive; Brim
+                // never read them, so nothing in our layout answered the change. The body now depends on the active
+                // division (and commits a change when it flips), and the flip is logged for CI.
+                let fold = Self.activeDivision(in: geo)
                 content(canvas: geo.size, safe: merged(safe, windowInsets))
+                    .background(Color.clear.frame(width: 1, height: fold == nil ? 1 : 2))
+                    .onChange(of: fold ?? .zero) { _, frame in logFold(frame) }
             }
             .ignoresSafeArea()
         }
@@ -132,6 +140,25 @@ struct RootView: View {
         guard pose == .play else { return }
         if canvas.height >= canvas.width { controller.clearBookTouchOverride() }
         controller.updateCanvas(PoseRule.playRect(in: canvas).size, hasFold: fold)
+    }
+
+    /// The active fold (`.division` reserved region, iOS 27.1): present only while the Duo is partly folded.
+    private static func activeDivision(in proxy: GeometryProxy) -> CGRect? {
+        if #available(iOS 27.1, *) {
+            return proxy.reservedRegions(kind: .division).first?.frame
+        }
+        return nil
+    }
+
+    private func logFold(_ frame: CGRect) {
+        #if DEBUG
+        if frame == .zero {
+            print("BRIM-T fold inactive")
+        } else {
+            print(String(format: "BRIM-T fold active %.0f,%.0f %.0fx%.0f", frame.minX, frame.minY, frame.width, frame.height))
+        }
+        fflush(stdout)
+        #endif
     }
 
     private func logCanvas(_ canvas: CGSize, hasFold: Bool, pose: DevicePose) {
