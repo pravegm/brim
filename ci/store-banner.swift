@@ -263,6 +263,9 @@ func path(_ pts: [CGPoint], _ map: (CGPoint) -> V3) -> CGPath {
     return p
 }
 
+/// Pixels per display point at the hinge (for line widths).
+let pxPerPt = hypot(toImage(basePoint(halfW, 0, 0)).x - toImage(basePoint(-halfW, 0, 0)).x,
+                    toImage(basePoint(halfW, 0, 0)).y - toImage(basePoint(-halfW, 0, 0)).y) / (2 * halfW)
 var deviceRectCG = CGRect.null
 for q in lidBody { for off in [0, -thick] { deviceRectCG = deviceRectCG.union(CGRect(origin: toImage(lidPoint(q.x, q.y, off)), size: .zero)) } }
 for q in baseBody { for off in [0, -thick] { deviceRectCG = deviceRectCG.union(CGRect(origin: toImage(basePoint(q.x, q.y, off)), size: .zero)) } }
@@ -385,7 +388,7 @@ func drawHalf(body: [CGPoint], glass: [CGPoint], screen: [CGPoint], map: @escapi
     // Edge light on the frame.
     ctx.addPath(front)
     ctx.setStrokeColor(srgb(0xFFFFFF, 0.22))
-    ctx.setLineWidth(max(1.5, projScale * 0.9))
+    ctx.setLineWidth(max(1.5, pxPerPt * 0.8))   // (projScale is per projected unit, not per point: never a width)
     ctx.strokePath()
 }
 
