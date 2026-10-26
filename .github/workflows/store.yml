@@ -8,6 +8,10 @@ name: App Store screenshots
 #    1206 × 2622) when the image has none; the MANIFEST header says which. Artifacts store-69, store-61.
 #  • duo: the iPhone Duo (iOS 27.1 runtime, same setup as duo.yml) store pass, D1–D6 on the tabletop inner canvas
 #    (2007 × 2853). Artifact store-duo.
+#  • placements: after the Duo pass, the two optional creative assets (docs/appstore/header-search.md): the product
+#    page header (3840 × 1646) and the search results art (3840 × 2560), drawn by ci/store-placements.sh and
+#    ci/store-banner.swift from the Duo pass's upright captures. Artifact store-placements. With placements_from set
+#    (and phones and duo unticked) it only re-renders from that earlier run's store-duo artifact: minutes, no capture.
 # One bad frame never fails the run: it is listed in its MANIFEST (and in the run summary) as MISSING or FLAGGED.
 on:
   workflow_dispatch:
@@ -36,9 +40,22 @@ on:
         description: "Regex of ci/store-scenarios.txt names for the Duo set"
         type: string
         default: "^D[0-9]"
+      placements_from:
+        description: "Placements only: ID of an earlier run whose store-duo artifact to draw from (untick phones and duo)"
+        type: string
+        default: ""
+      banner_args_header:
+        description: "Extra ci/store-banner.swift options for the header (e.g. --yaw 12 --elev 25); empty = defaults"
+        type: string
+        default: ""
+      banner_args_search:
+        description: "Extra ci/store-banner.swift options for the search art; empty = defaults"
+        type: string
+        default: ""
 
+# A placements-only run (placements_from set) has its own group, so it never cancels a capture run.
 concurrency:
-  group: store-${{ github.ref }}
+  group: store-${{ github.ref }}${{ inputs.placements_from != '' && '-placements' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -276,3 +293,52 @@ jobs:
         if: always()
         continue-on-error: true
         run: xcrun simctl shutdown all || true
+
+  placements:
+    needs: duo
+    # After a green Duo pass in this run, or on its own from an earlier run's store-duo artifact (placements_from).
+    if: ${{ !cancelled() && (inputs.placements_from != '' || (inputs.duo && needs.duo.result == 'success')) }}
+    runs-on: xcode-27
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FROM: ${{ inputs.placements_from }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.1
+        timeout-minutes: 10
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.1.app
+          xcrun swift --version
+          command -v gtimeout >/dev/null || brew install coreutils
+
+      - name: The Duo captures (this run)
+        if: ${{ inputs.placements_from == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: store-duo
+          path: store-duo
+
+      - name: The Duo captures (an earlier run)
+        if: ${{ inputs.placements_from != '' }}
+        run: gh run download "$FROM" -R "$GITHUB_REPOSITORY" -n store-duo -D store-duo
+
+      - name: Draw the header and the search results art
+        timeout-minutes: 20
+        env:
+          SOURCE_RUN: ${{ inputs.placements_from || github.run_id }}
+          BANNER_ARGS_HEADER: ${{ inputs.banner_args_header }}
+          BANNER_ARGS_SEARCH: ${{ inputs.banner_args_search }}
+        run: bash ci/store-placements.sh store-duo/duo-screens store-placements
+
+      - name: Upload the placements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-placements
+          path: store-placements/
+          if-no-files-found: ignore
