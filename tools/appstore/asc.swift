@@ -499,9 +499,11 @@ func quotedStrings(_ s: String) -> [String] {
 func contractAchievementIDs() -> [String]? {
     guard let text = try? String(contentsOf: repoRoot.appendingPathComponent(gameCenterSource), encoding: .utf8),
           let start = text.range(of: "static let achievementIDs") else { return nil }
-    let tail = text[start.upperBound...]
-    guard let open = tail.firstIndex(of: "="), let close = tail.range(of: "\n    ]")?.lowerBound ?? tail.firstIndex(of: "]") else { return nil }
-    let ids = quotedStrings(String(tail[open..<close]))
+    // `static let achievementIDs: [String] = [ ... ]`: the list starts after "= [".
+    guard let open = text[start.upperBound...].range(of: "= [") else { return nil }
+    let tail = text[open.upperBound...]
+    guard let close = tail.firstIndex(of: "]") else { return nil }
+    let ids = quotedStrings(String(tail[..<close]))
     return ids.isEmpty ? nil : ids
 }
 

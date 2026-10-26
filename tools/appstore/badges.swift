@@ -73,7 +73,9 @@ func appIDs() -> [String] {
     let url = repoRoot.appendingPathComponent("Brim/App/GameCenterManager.swift")
     guard let text = try? String(contentsOf: url, encoding: .utf8),
           let start = text.range(of: "static let achievementIDs") else { fail("\(url.path): achievementIDs not found") }
-    let tail = text[start.upperBound...]
+    // `static let achievementIDs: [String] = [ ... ]`: the list starts after "= [".
+    guard let open = text[start.upperBound...].range(of: "= [") else { fail("\(url.path): achievementIDs list not found") }
+    let tail = text[open.upperBound...]
     guard let close = tail.firstIndex(of: "]") else { fail("\(url.path): achievementIDs list not closed") }
     return quoted(tail[..<close])
 }
