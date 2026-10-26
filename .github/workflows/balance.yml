@@ -1,0 +1,44 @@
+name: Balance
+
+# Runs only BrimTests/BalanceTests with the full seeded player sweep (novice / casual / expert over every level, Rush
+# and the Daily) and publishes the BRIM-BAL lines. design/BALANCE.md explains the model and the target curve.
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "smoke | standard | full"
+        type: choice
+        options: [full, standard, smoke]
+        default: full
+
+jobs:
+  balance:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 27.1
+        run: sudo xcode-select -s /Applications/Xcode_27.1.app
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Run the balance sweep
+        env:
+          TEST_RUNNER_BRIM_BAL: ${{ inputs.tier }}
+        run: |
+          set -o pipefail
+          xcodebuild test -project Brim.xcodeproj -scheme Brim \
+            -destination "platform=iOS Simulator,name=iPhone 18 Pro" -derivedDataPath build \
+            -only-testing:BrimTests/BalanceTests CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E "BRIM-BAL|error:|✘|Test run with" || true
+          grep -E "BRIM-BAL" build.log | sed -E 's/^.*(BRIM-BAL)/\1/' > balance.txt || true
+          { echo '### Balance sweep'; echo '```'; grep -E "venue=|rush |daily |WARN|timing" balance.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: balance
+          path: |
+            balance.txt
+            build.log
+          if-no-files-found: ignore

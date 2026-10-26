@@ -871,7 +871,10 @@ struct CoreTests {
         var events: [GameEvent] = []
         run(gated, seconds: 4.0, tilt: 50, events: &events)
         let left: Double? = gated.snapshot.glasses.first?.patienceLeft
-        #expect(left == Double(14))
+        // Whatever 1-3's first glass allows (balance tuning moves it), none of it is spent behind the gate.
+        let full: Double? = gated.snapshot.glasses.first?.patienceTotal
+        #expect(full != nil)
+        #expect(left == full)
 
         let phone: GameSession = GameSession(mode: .shift("1-1"), layout: phoneLayout(), seed: 2)
         #expect(!phone.snapshot.needsFlat)
