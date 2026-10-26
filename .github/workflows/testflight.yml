@@ -127,7 +127,13 @@ jobs:
             xcodebuild archive "${common[@]}" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
               2>&1 | tee archive.log | grep -E "error:|warning: .*Brim/|\*\* ARCHIVE" || true
             grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log
-            echo "ARCHIVE_MODE=unsigned" >> "$GITHUB_ENV"
+            # Run 40268420116: an unsigned archive exports fine but without the Game Center entitlement (the export
+            # carries over only what the archived binary's signature declares). Stamp the entitlements on with a local
+            # ad-hoc signature (no certificate involved); the export then re-signs for the App Store and keeps them.
+            APP="$RUNNER_TEMP/Brim.xcarchive/Products/Applications/Brim.app"
+            codesign --force --sign - --timestamp=none --entitlements Brim/Brim.entitlements "$APP"
+            codesign -d --entitlements :- "$APP" 2>/dev/null | grep -c "game-center" || true
+            echo "ARCHIVE_MODE=unsigned+adhoc-entitlements" >> "$GITHUB_ENV"
           fi
 
       - name: Check the archive
