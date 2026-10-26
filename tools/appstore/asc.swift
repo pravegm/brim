@@ -2697,6 +2697,79 @@ func selectedSteps() -> Set<String> {
     return s
 }
 
+/// Read-back of the editable version as App Store Connect holds it (26 Oct: the founder saw no screenshots on the 1.0
+/// page after a green library push). Read-only; every part is independent, so one failing read never hides the rest.
+func auditVersion(_ api: ASC, appID: String, version: JSON) async {
+    let vid = idOf(version)
+    out("")
+    out("── AUDIT of version \(attrs(version)["versionString"] as? String ?? "?") (\(vid)) as App Store Connect holds it")
+    do {
+        let b = try await api.getOptional("/v1/appStoreVersions/\(vid)/build")
+        if let build = dataOne(b) {
+            out("  build: \(attrs(build)["version"] as? String ?? "?")  \(attrs(build)["processingState"] as? String ?? "")")
+        } else { out("  build: NONE attached (pick it on the 1.0 page)") }
+    } catch { out("  build: can't read (\(error))") }
+    do {
+        let v = try await api.get("/v1/appStoreVersions/\(vid)")
+        let a = attrs(dataOne(v) ?? [:])
+        out("  copyright: \((a["copyright"] as? String).map { $0.isEmpty ? "EMPTY" : "set" } ?? "EMPTY")  release: \(a["releaseType"] as? String ?? "?") \(a["earliestReleaseDate"] as? String ?? "")")
+    } catch { out("  version attributes: can't read (\(error))") }
+    do {
+        let r = try await api.getOptional("/v1/appStoreVersions/\(vid)/appStoreReviewDetail")
+        if let d = dataOne(r) {
+            let a = attrs(d)
+            let contact = ["contactFirstName", "contactLastName", "contactPhone", "contactEmail"].map { k in (a[k] as? String).map { $0.isEmpty ? "\(k) EMPTY" : "\(k) set" } ?? "\(k) EMPTY" }
+            out("  review details: notes \((a["notes"] as? String)?.utf8.count ?? 0) bytes; \(contact.joined(separator: ", ")); demo account required \(a["demoAccountRequired"] as? Bool ?? false)")
+        } else { out("  review details: NONE") }
+    } catch { out("  review details: can't read (\(error))") }
+    do {
+        let (locs, _) = try await api.getAll("/v1/appStoreVersions/\(vid)/appStoreVersionLocalizations")
+        for loc in locs {
+            let la = attrs(loc)
+            let locale = la["locale"] as? String ?? "?"
+            let fields = ["description", "keywords", "promotionalText", "supportUrl", "marketingUrl"].map { k in
+                "\(k) \((la[k] as? String).map { $0.isEmpty ? "EMPTY" : "\($0.count)" } ?? "EMPTY")"
+            }
+            out("  [\(locale)] \(fields.joined(separator: ", "))")
+            do {
+                let (sets, _) = try await api.getAll("/v1/appStoreVersionLocalizations/\(idOf(loc))/appScreenshotSets")
+                if sets.isEmpty { out("    classic screenshot sets: none") }
+                for s in sets {
+                    let (shots, _) = try await api.getAll("/v1/appScreenshotSets/\(idOf(s))/appScreenshots", [("limit", "50")])
+                    let states = shots.map { ((attrs($0)["assetDeliveryState"] as? JSON)?["state"] as? String) ?? "?" }
+                    out("    classic set \(attrs(s)["screenshotDisplayType"] as? String ?? "?"): \(shots.count) (\(Set(states).sorted().joined(separator: "/")))")
+                }
+            } catch { out("    classic screenshot sets: can't read (\(error))") }
+            do {
+                let (pls, inc) = try await api.getAll("/v1/appStoreVersionLocalizations/\(idOf(loc))/placements",
+                                                      [("include", "image"), ("fields[appAssetLibraryImages]", "referenceName,state"), ("limit", "50")])
+                var imgState: [String: String] = [:]
+                for i in inc where i["type"] as? String == "appAssetLibraryImages" { imgState[idOf(i)] = attrs(i)["state"] as? String ?? "?" }
+                var groups: [String: [String]] = [:]
+                for p in pls {
+                    let pa = attrs(p)
+                    let key = "\(pa["placementType"] as? String ?? "?") \(pa["placementGroup"] as? String ?? "?")"
+                    let imgID = ((p["relationships"] as? JSON)?["image"] as? JSON).flatMap { ($0["data"] as? JSON).map { idOf($0) } } ?? ""
+                    groups[key, default: []].append(imgState[imgID] ?? "?")
+                }
+                if groups.isEmpty { out("    library placements: none") }
+                for (k, states) in groups.sorted(by: { $0.key < $1.key }) {
+                    out("    library placement \(k): \(states.count) (\(Set(states).sorted().joined(separator: "/")))")
+                }
+            } catch { out("    library placements: can't read (\(error))") }
+        }
+    } catch { out("  version localizations: can't read (\(error))") }
+    do {
+        let (subs, _) = try await api.getAll("/v1/reviewSubmissions", [("filter[app]", appID), ("filter[platform]", "IOS"), ("limit", "20")])
+        for s in subs {
+            let (items, _) = try await api.getAll("/v1/reviewSubmissions/\(idOf(s))/items", [("limit", "50")])
+            out("  review submission \(idOf(s)) \(attrs(s)["state"] as? String ?? "?"): \(items.count) item(s)")
+        }
+    } catch { out("  review submissions: can't read (\(error))") }
+    out("── end of audit")
+    out("")
+}
+
 func runCheck() async -> Int32 {
     let v = Validation()
     let meta = loadMetadata(v)
@@ -2731,6 +2804,7 @@ func runCheck() async -> Int32 {
         } else {
             out("editable version: none (push creates \(target))")
         }
+        if let e = editable { await auditVersion(api, appID: appID, version: e) }
         let gc = try await api.getOptional("/v1/apps/\(appID)/gameCenterDetail")
         out("Game Center: \(dataOne(gc) != nil ? "enabled (detail \(idOf(dataOne(gc))))" : "not enabled yet (push enables it)")")
         if let d = dataOne(gc) {
