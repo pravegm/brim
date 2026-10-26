@@ -318,7 +318,9 @@ enum DemoOrientation {
                 let w = window?.bounds.size ?? .zero
                 let s = scene.screen.bounds.size
                 // Run 40203342285 logged "ok" for a 469 × 669 letterboxed column: the window must fill the screen.
-                let portrait = scene.effectiveGeometry.interfaceOrientation.isPortrait
+                // With `flip` the tabletop is upside down (OrientationLock.sharpSide).
+                let wanted: UIInterfaceOrientation = OrientationLock.sharpSide ? .portraitUpsideDown : .portrait
+                let portrait = scene.effectiveGeometry.interfaceOrientation == wanted
                     && w.height > w.width && s.height > s.width
                     && w.width >= s.width - 2 && w.height >= s.height - 2
                 let shape = "window=\(Int(w.width))x\(Int(w.height)) screen=\(Int(s.width))x\(Int(s.height))"
@@ -328,7 +330,8 @@ enum DemoOrientation {
                     if !reported && Date().timeIntervalSince(since) >= 0.8 {
                         reported = true
                         lostLogged = false
-                        print("BRIM-T orient portrait ok \(shape)")
+                        let upsideDown = scene.effectiveGeometry.interfaceOrientation == .portraitUpsideDown
+                        print("BRIM-T orient portrait ok \(shape) upsideDown=\(upsideDown ? 1 : 0)")
                     }
                 } else {
                     matchedSince = nil
@@ -340,7 +343,7 @@ enum DemoOrientation {
                     if Date().timeIntervalSince(lastRequest) >= 2 {
                         lastRequest = Date()
                         window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-                        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { error in
+                        scene.requestGeometryUpdate(.iOS(interfaceOrientations: OrientationLock.tabletop)) { error in
                             print("BRIM-T orient request error: \(error.localizedDescription)")
                         }
                     }

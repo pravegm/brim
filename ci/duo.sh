@@ -112,11 +112,14 @@ if [[ " $PASSES " == *" hinge "* ]]; then
   hinge_sweep 140 1.2; sleep 0.7; shoot duo-11-turned-pouring inner
   hinge_sweep 178 0.8; sleep 2.0; shoot duo-12-turned-served inner
   TL="$OUT_ABS/logs/turned.txt"
-  grep -nE "BRIM-T (turned|canvas|flat|served)" "$TL" | head -20 >>"$RUNLOG"
-  if grep -q "BRIM-T turned round 1" "$TL" && grep -q "BRIM-T served" "$TL"; then
-    log "TURNED-ROUND PASS"
+  grep -nE "BRIM-T (turned|interface|orient|canvas|flat|served)" "$TL" | head -24 >>"$RUNLOG"
+  # Best: iOS itself runs upside down (system banners turn too). Fallback: Brim draws turned round in an upright UI.
+  if grep -q "upsideDown=1" "$TL" && grep -q "BRIM-T served" "$TL"; then
+    log "TURNED-ROUND PASS (system upside down)"
+  elif grep -q "BRIM-T turned round 1" "$TL" && grep -q "BRIM-T served" "$TL"; then
+    log "TURNED-ROUND PASS (fallback: drawn turned round, system upright)"
   else
-    log "TURNED-ROUND FAIL: turned=$(grep -c 'BRIM-T turned round 1' "$TL") served=$(grep -c 'BRIM-T served' "$TL")"
+    log "TURNED-ROUND FAIL: upside=$(grep -c 'upsideDown=1' "$TL") turned=$(grep -c 'BRIM-T turned round 1' "$TL") served=$(grep -c 'BRIM-T served' "$TL")"
   fi
 
   # ROUND-3 decision 1 proof: close the phone FAST in the middle of a pour, reopen, and check that no glass was

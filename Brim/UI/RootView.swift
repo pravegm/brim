@@ -63,6 +63,9 @@ struct RootView: View {
         .onChange(of: reduceMotion) { _, on in controller.setReduceMotion(on) }
         .onChange(of: settings.calmMotion) { _, _ in controller.refreshMotion() }
         .onChange(of: settings.touchOnDuo) { _, _ in controller.refreshInputMode() }
+        .onChange(of: settings.sharpSide) { _, on in
+            if demo == nil { OrientationLock.setSharpSide(on) }
+        }
         .preferredColorScheme(.light)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
@@ -139,26 +142,35 @@ struct RootView: View {
         let read = OrientationLock.windowSafeArea()
         if read != windowInsets { windowInsets = read }
         let flipped = OrientationLock.interfaceIsUpsideDown()
-        if flipped != upsideDown { upsideDown = flipped }
+        if flipped != upsideDown {
+            upsideDown = flipped
+            logUpsideDown(flipped)
+        }
         // The window settles its insets a beat after a rotation or a display handover.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 350_000_000)
             let later = OrientationLock.windowSafeArea()
             if later != windowInsets { windowInsets = later }
             let laterFlipped = OrientationLock.interfaceIsUpsideDown()
-            if laterFlipped != upsideDown { upsideDown = laterFlipped }
+            if laterFlipped != upsideDown {
+                upsideDown = laterFlipped
+                logUpsideDown(laterFlipped)
+            }
         }
     }
 
     /// Whether to draw the game turned round right now (see the GeometryReader note in `body`).
     private func turnsRound(_ canvas: CGSize) -> Bool {
         let wanted = demo.map { $0.flip } ?? settings.sharpSide
+        // Read live (the interface turns before our orientation notification lands); the state only re-renders.
+        _ = upsideDown
         return Self.turnsRound(wanted: wanted, pose: pose(for: canvas), hasFold: hasFold(canvas),
-                               upsideDown: upsideDown)
+                               upsideDown: OrientationLock.interfaceIsUpsideDown())
     }
 
     /// Pure rule (tested): only the Duo's tabletop canvas turns round, and never when the interface is already upside
-    /// down: either way the counter lands on the phone's natural top half, which iOS's fold blur leaves sharp.
+    /// down: either way the counter lands on the phone's natural top half, which iOS's fold blur leaves sharp. Brim asks
+    /// iOS for upside down (OrientationLock.sharpSide), so system banners turn too; this is the fallback if iOS won't.
     static func turnsRound(wanted: Bool, pose: DevicePose, hasFold: Bool, upsideDown: Bool) -> Bool {
         wanted && pose == .play && hasFold && !upsideDown
     }
@@ -175,6 +187,7 @@ struct RootView: View {
         logCanvas(canvas, hasFold: fold, pose: pose)
         controller.setPose(pose)
         guard pose == .play else { return }
+        if fold { OrientationLock.settleTabletop() }
         if canvas.height >= canvas.width { controller.clearBookTouchOverride() }
         controller.updateCanvas(PoseRule.playRect(in: canvas).size, hasFold: fold)
     }
@@ -194,6 +207,13 @@ struct RootView: View {
         } else {
             print(String(format: "BRIM-T fold active %.0f,%.0f %.0fx%.0f", frame.minX, frame.minY, frame.width, frame.height))
         }
+        fflush(stdout)
+        #endif
+    }
+
+    private func logUpsideDown(_ on: Bool) {
+        #if DEBUG
+        print("BRIM-T interface upside down \(on ? 1 : 0)")
         fflush(stdout)
         #endif
     }
@@ -219,6 +239,7 @@ struct RootView: View {
         guard !launched else { return }
         launched = true
         controller.setReduceMotion(reduceMotion)
+        OrientationLock.setSharpSide(demo.map { $0.flip } ?? settings.sharpSide)
         controller.launch()
         if demo?.orientPortrait == true { DemoOrientation.requestPortrait() }
     }

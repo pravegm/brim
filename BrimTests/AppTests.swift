@@ -29,6 +29,15 @@ struct TurnedRoundTests {
         #expect(RootView.deferredEdges(paused: true, turnedRound: true) == [])
     }
 
+    @Test func duoMaskSwapsUprightForUpsideDownOnTheInnerDisplay() {
+        let inner = CGSize(width: 669, height: 951)
+        let cover = CGSize(width: 466, height: 678)
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: inner) == [.portraitUpsideDown, .landscapeLeft, .landscapeRight])
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: CGSize(width: 951, height: 669)).contains(.portraitUpsideDown))
+        #expect(OrientationLock.duoMask(sharpSide: false, screen: inner) == .allButUpsideDown)
+        #expect(OrientationLock.duoMask(sharpSide: true, screen: cover) == .allButUpsideDown)
+    }
+
     @Test func sharpSideIsOnByDefaultAndOffInDemo() throws {
         let name = "brim.test.sharp.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
